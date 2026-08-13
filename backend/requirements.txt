@@ -1,0 +1,38 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+# Required by pydantic's EmailStr, used in the auth, candidate and public schemas.
+# Pydantic imports it lazily, so a missing install only fails at app startup.
+email-validator==2.3.0
+python-multipart==0.0.20
+
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+greenlet==3.1.1
+
+passlib[bcrypt]==1.7.4
+bcrypt==4.2.1
+pyjwt==2.10.1
+
+httpx==0.28.1
+# Official SDK, used only by app/llm/anthropic.py. Gemini and Ollama have no
+# Python SDK worth the dependency, so those providers speak REST over httpx.
+anthropic==0.69.0
+
+# Document handling
+pymupdf==1.25.1
+python-docx==1.1.2
+openpyxl==3.1.5
+reportlab==4.2.5
+
+# Local NER for redaction. Models are installed in the Dockerfile.
+spacy==3.8.3
+
+# S3-compatible storage backend
+boto3==1.35.90
+
+pytest==8.3.4
+pytest-asyncio==0.25.0
+aiosqlite==0.20.0

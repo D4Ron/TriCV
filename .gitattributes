@@ -1,0 +1,19 @@
+# This repo is authored on Windows but its containers run Linux. Without this,
+# core.autocrlf=true rewrites entrypoint.sh with CRLF on checkout and the image
+# fails at startup with: bad interpreter: /usr/bin/env bash^M
+* text=auto eol=lf
+
+*.sh        text eol=lf
+# Windows PowerShell 5.1 mis-parses here-strings in LF-only files.
+*.ps1       text eol=crlf
+Dockerfile  text eol=lf
+Makefile    text eol=lf
+*.conf      text eol=lf
+
+# Binary — never touch these.
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary

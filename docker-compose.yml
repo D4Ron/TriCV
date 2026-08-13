@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tricv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tricv}
+      POSTGRES_DB: ${POSTGRES_DB:-tricv}
+    volumes:
+      - tricv_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tricv} -d ${POSTGRES_DB:-tricv}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      # Root context: the image also builds and bakes in widget/.
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://tricv:tricv@db:5432/tricv}
+      STORAGE_PATH: /data/cv
+    volumes:
+      - tricv_cvdata:/data/cv
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+  # Local, fully offline LLM. Enable with:  docker compose --profile local-llm up
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    volumes:
+      - tricv_ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+
+volumes:
+  tricv_pgdata:
+  tricv_cvdata:
+  tricv_ollama:

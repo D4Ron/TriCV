@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TriCV widget — page hôte de test</title>
+    <!--
+      Deliberately hostile host styles. If the widget still renders correctly
+      here, the Shadow DOM boundary is doing its job.
+    -->
+    <style>
+      * { font-family: "Comic Sans MS", cursive; color: hotpink; box-sizing: content-box; }
+      body { background: #fdf2f8; margin: 0; padding: 40px 20px; line-height: 3; }
+      input, button, label { border: 4px dashed lime !important; font-size: 22px !important; }
+      div { text-align: center; }
+      h2, h3, p { text-transform: uppercase; letter-spacing: 3px; }
+    </style>
+  </head>
+  <body>
+    <h1>Careers — Groupe Kapi</h1>
+    <p>Cette page applique volontairement des styles agressifs à tous les éléments.</p>
+
+    <div id="tricv-widget"></div>
+
+    <p>Le widget ci-dessus doit rester lisible malgré le CSS de cette page.</p>
+
+    <!--
+      In production the snippet is exactly what the dashboard's Share panel
+      generates. Here `data-api-url` points at a local backend because this file
+      is opened from disk.
+    -->
+    <script
+      src="/widget.js"
+      data-session-key="REPLACE_WITH_PUBLIC_KEY"
+      data-api-url="http://localhost:8000"
+      data-lang="fr"
+    ></script>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+.env
+*.pyc
+__pycache__/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+node_modules/
+dist/
+.vite/
+
+data/
+*.sqlite3
+
+# Built by the widget/ package and baked in by the backend Dockerfile.
+backend/static/
+.DS_Store
+.idea/
+.vscode/
+/backend/alembic/env.py
