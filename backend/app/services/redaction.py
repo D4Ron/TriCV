@@ -198,6 +198,11 @@ RE_ADDRESS_POBOX = re.compile(r"\b(?:B\.?P\.?|P\.?O\.?\s*Box)\s*[:\-]?\s*\d{1,6}
 
 RE_POSTCODE_CITY = re.compile(r"\b\d{5}\s+[A-ZÀ-Þ][A-Za-zÀ-ÿ\-']{2,30}\b")
 
+# Un mot de valeur : lettres, apostrophes et traits d'union, jamais un saut de
+# ligne. Sert aux champs « Nationalité : … » et « Situation de famille : … »,
+# dont la capture doit s'arrêter au champ suivant de la même ligne.
+_MOT = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\-]{2,29}"
+
 RE_GENDER = re.compile(
     r"(?:sexe|genre|gender)\s*[:\-]?\s*(?P<v>masculin|f[ée]minin|male|female|homme|femme|m|f)\b"
     r"|\b(?P<v2>masculin|f[ée]minin)\b",
@@ -211,15 +216,21 @@ RE_AGE = re.compile(
 )
 
 RE_MARITAL = re.compile(
-    r"(?:situation\s+(?:de\s+)?famill\w*|[ée]tat\s+civil|marital\s+status)\s*[:\-]?\s*"
-    r"(?P<v>[^\n,;]{3,30})"
+    r"(?:situation\s+(?:de\s+)?famill\w*|[ée]tat\s+civil|marital\s+status)[ \t]*[:\-]?[ \t]*"
+    rf"(?P<v>{_MOT}(?:[ \t]+{_MOT})?)"
     r"|\b(?P<v2>c[ée]libataire|mari[ée]e?|divorc[ée]e?|veuf|veuve|pacs[ée]e?"
     r"|single|married|divorced|widowed)\b",
     re.IGNORECASE,
 )
 
+# Une nationalité est un adjectif d'un ou deux mots. Capturer « jusqu'au
+# prochain saut de ligne » avalait le champ suivant de la même ligne
+# — « Togolaise — Sexe : Masculin » — et faisait disparaître le sexe avec lui.
+# [ \t]+ et non \s+ : \s englobe le saut de ligne, ce qui recollait la valeur
+# avec le premier mot de la ligne suivante (« Togolaise\nLinkedIn »).
 RE_NATIONALITY = re.compile(
-    r"(?:nationalit[ée]|nationality|citizenship)\s*[:\-]?\s*(?P<v>[^\n,;]{3,30})",
+    rf"(?:nationalit[ée]|nationality|citizenship)[ \t]*[:\-]?[ \t]*"
+    rf"(?P<v>{_MOT}(?:[ \t]+{_MOT})?)",
     re.IGNORECASE,
 )
 
@@ -326,7 +337,21 @@ def _load_nlp(lang: str):
 
 
 def loaded_ner_models() -> list[str]:
-    return sorted(_NLP_CACHE)
+    """Les modèles NER *disponibles*, et non seulement ceux déjà en mémoire.
+
+    Le chargement est paresseux : signaler le cache ferait dire à l'écran
+    Paramètres qu'aucun modèle n'est installé tant qu'aucune expurgation n'a
+    tourné, ce qui est faux et inquiétant à lire.
+    """
+    if _NLP_CACHE:
+        return sorted(_NLP_CACHE)
+    try:
+        from spacy.util import get_installed_models
+
+        attendus = {"fr_core_news_md", "en_core_web_md"}
+        return sorted(attendus & set(get_installed_models()))
+    except ImportError:
+        return []
 
 
 # Institutions whose names contain a place name. spaCy labels "Université de
@@ -341,27 +366,84 @@ INSTITUTION_MARKERS = re.compile(
 )
 
 
-def _is_bare_place(ent) -> bool:
-    """True only for a plain place reference such as `Lomé` or `Togo`.
+# Months and weekdays are routinely mislabelled as places by the French model
+# ("Mars 2009" → LOC). Redacting them shreds every employment date.
+_CALENDAR_WORDS = frozenset(
+    """janvier fevrier février mars avril mai juin juillet aout août septembre
+    octobre novembre decembre décembre lundi mardi mercredi jeudi vendredi
+    samedi dimanche january february march april may june july august september
+    october november december""".split()
+)
 
-    Three guards, most reliable first. Each errs toward *keeping* text, because
-    over-redacting career history destroys the analysis while leaving a city in
-    costs almost nothing.
+# How far to look left of an entity for the institution it belongs to.
+_LEFT_CONTEXT = 40
+
+
+# Étiquettes et valeurs de champs que le modèle prend régulièrement pour des
+# lieux ou des personnes : « Nationalité », « Sexe », « Masculin »… Les
+# redacter détruit le champ voisin et fait disparaître la donnée réelle.
+_NON_ENTITES = frozenset(
+    """nationalite nationality citizenship sexe genre gender age adresse address
+    telephone email courriel situation famille etat civil masculin feminin male
+    female homme femme celibataire marie mariee divorce divorcee veuf veuve
+    formation experience competences langues certifications profil objectif
+    diplome diplomes stage stages""".split()
+)
+
+
+def _entite_suspecte(ent) -> bool:
+    """Filtres communs à PERSON et aux lieux.
+
+    Chacun penche du côté de *conserver* le texte : sur-expurger un parcours
+    détruit l'analyse, alors qu'une ville laissée en clair ne coûte presque
+    rien.
     """
     text = ent.text.strip()
+    if not text:
+        return True
 
-    # 1. spaCy itself called an overlapping span an organisation.
+    # Une entité à cheval sur un saut de ligne est un artefact de découpage :
+    # « Kara\n\nEXPERIENCE » avalait le titre de section suivant.
+    if "\n" in ent.text:
+        return True
+
+    normalise = strip_accents(text.lower())
+
+    # Un mois ou un jour est une date, quoi qu'en dise le modèle.
+    if normalise in {strip_accents(w) for w in _CALENDAR_WORDS}:
+        return True
+
+    # Une étiquette de champ ou une valeur de champ n'est ni un lieu ni un nom.
+    if normalise in _NON_ENTITES:
+        return True
+
+    # L'établissement est souvent juste à gauche : le modèle étiquette « Lomé »
+    # dans « Université de Lomé », jamais le groupe entier. Expurger la queue
+    # mutile le nom de l'école, qui doit rester intact.
+    debut_ligne = ent.doc.text.rfind("\n", 0, ent.start_char) + 1
+    gauche = ent.doc.text[max(debut_ligne, ent.start_char - _LEFT_CONTEXT) : ent.start_char]
+    return bool(INSTITUTION_MARKERS.search(gauche))
+
+
+def _is_bare_place(ent) -> bool:
+    """True only for a plain place reference such as `Lomé` or `Togo`."""
+    if _entite_suspecte(ent):
+        return False
+
+    text = ent.text.strip()
+
+    # spaCy itself called an overlapping span an organisation.
     if any(
         other.label_ == "ORG" and other.start_char < ent.end_char and ent.start_char < other.end_char
         for other in ent.doc.ents
     ):
         return False
 
-    # 2. The entity names an institution.
+    # The entity names an institution.
     if INSTITUTION_MARKERS.search(text):
         return False
 
-    # 3. A bare city or country is short. "Orabank Togo" is not a place.
+    # A bare city or country is short. "Orabank Togo" is not a place.
     return len(text.split()) <= 2
 
 
@@ -383,6 +465,11 @@ def _ner_spans(text: str) -> tuple[list[_Span], list[str]]:
 
     for ent in doc.ents:
         if ent.label_ in ("PER", "PERSON"):
+            # Les mêmes garde-fous que pour les lieux : sans eux, « Masculin »
+            # devenait un nom de personne, et « Université de Lomé » perdait sa
+            # ville — le nom propagé ensuite dans tout le document.
+            if _entite_suspecte(ent):
+                continue
             spans.append(_Span(ent.start_char, ent.end_char, NAME, ent.text, from_ner=True))
             if len(ent.text.strip()) >= 3:
                 person_names.append(ent.text.strip())

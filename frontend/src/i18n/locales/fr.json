@@ -36,7 +36,24 @@
     "submit": "Se connecter",
     "submitting": "Connexion…",
     "failed": "Email ou mot de passe incorrect.",
-    "demoHint": "Démo : {{email}} / {{password}}"
+    "demoHint": "Démo : {{email}} / {{password}}",
+    "noAccount": "Pas encore de compte ?",
+    "createAccount": "Créer un compte"
+  },
+  "signup": {
+    "title": "Créer un compte",
+    "subtitle": "Réservé aux équipes RH. Les candidats n'ont pas besoin de compte.",
+    "fullName": "Nom complet",
+    "confirm": "Confirmer le mot de passe",
+    "code": "Code d'inscription",
+    "codeHint": "Fourni par la personne qui vous a transmis ce lien.",
+    "submit": "Créer le compte",
+    "submitting": "Création du compte…",
+    "haveAccount": "Vous avez déjà un compte ? Se connecter",
+    "mismatch": "Les deux mots de passe ne correspondent pas.",
+    "tooShort": "Le mot de passe doit contenir au moins {{count}} caractères.",
+    "failed": "Impossible de créer le compte.",
+    "disabled": "L'inscription libre est désactivée sur ce déploiement. Demandez à un administrateur de créer votre compte."
   },
   "sessions": {
     "title": "Fiches de recrutement",

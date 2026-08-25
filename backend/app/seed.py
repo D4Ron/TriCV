@@ -412,7 +412,17 @@ async def seed() -> None:
         )
         await db.commit()
 
-        logger.info("seeded 2 sessions and %d analysed candidates", len(PROFILES))
+        # Chaîne de recrutement : c'est elle que l'interface montre.
+        from app.seed_recrutement import semer
+
+        resume = await semer(db)
+        logger.info(
+            "chaine de recrutement : %d clients, %d mandats, %d postes, %d candidatures",
+            resume["clients"], resume["mandats"], resume["postes"], resume["candidatures"],
+        )
+        logger.info("page de candidature : /apply/%s", resume["cle_publique_avis"])
+
+        logger.info("(ancien module) %d sessions, %d candidats", 2, len(PROFILES))
         logger.info("dashboard login: %s / %s", admin.email, settings.seed_admin_password)
         logger.info(
             "public application page: /apply/%s", open_session.public_key

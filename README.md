@@ -1,318 +1,316 @@
 # TriCV
 
-AI-assisted CV screening for HR departments.
+Recruitment tooling for Kapi Consult (Lomé). It runs on the firm's own machines and covers the
+chain a mandate actually follows:
 
-HR defines a **fiche de recrutement** — a recruitment session with weighted criteria. CVs arrive
-either through a public application form or by bulk upload. Each CV is analysed against that
-session's criteria and given a score, a per-criterion breakdown with justifications, a list of
-strengths and gaps, and a recommendation. HR sees a live ranked list, can override any judgement,
-and exports a shortlist as PDF, Excel or DocX with the original CVs attached.
+```
+Client → Mandat → Fiche de poste → Avis de recrutement → Candidatures → Grille de présélection
+```
 
-**TriCV ranks and recommends. HR decides.** No screen presents the model's verdict as final; every
-override is one click away and every one is recorded.
+A **fiche de poste** states the requirements in computable form — minimum degree level and field,
+years of general and specific experience, required documents, and any restrictive condition the
+client imposes (age, nationality, sex). The **avis** is the notice published from it. Applications
+arrive by email or through the public form, are scored against the fiche's barème, and come out as a
+**grille de présélection** — the spreadsheet handed to the client — alongside a table of eliminations
+with the arithmetic behind each one.
+
+**TriCV ranks and recommends. HR decides.** No AI output can eliminate or shortlist anyone. Anything
+a model proposes is marked as such and holds the file at *À vérifier* until a human confirms it.
+
+The interface, and the codebase, are in French. This README is the exception.
 
 ---
 
 ## Quick start
 
-Two ways to run it. Docker is the one to ship; the script is the one to develop with.
-
-### Without Docker (fastest)
-
 ```powershell
 .\start-dev.ps1 -Seed
 ```
 
-Builds a Python virtualenv on first run, creates a SQLite database, loads the demo
-data and starts both servers. Stop with `.\start-dev.ps1 -Stop`.
-
-Needs Python and Node on PATH, nothing else. Two caveats:
-
-- It uses **SQLite** rather than PostgreSQL — fine for development, and the PostgreSQL
-  migration is verified separately.
-- **spaCy needs Python 3.12**; on 3.13 the script skips it and says so. Redaction then
-  falls back to regex plus the values typed into the form, which is weaker at catching
-  bare city names. Add `-WithNer` on Python 3.12 to install the models.
-
-### With Docker (what you ship)
-
-```bash
-cp .env.example .env
-docker compose up -d --build
-```
-
-Then load the offline demo:
-
-```bash
-docker compose exec backend python -m app.seed
-```
+First run builds a Python virtualenv, creates a SQLite database, loads demo data and starts both
+servers. Needs Python and Node on PATH, nothing else.
 
 | | |
 |---|---|
-| Dashboard | http://localhost:5173 |
+| HR dashboard | http://localhost:5173/login |
+| Careers page (candidates) | http://localhost:5173/careers |
 | API docs | http://localhost:8000/docs |
-| Login | `admin@tricv.example` / `admin1234` |
 
-The seed creates two sessions — one open with 15 fully analysed candidates spanning the whole score
-range, one draft — plus realistic criteria and generated CV PDFs. **Every seeded candidate carries
-complete analysis data written straight to the database**, so the dashboard, the rankings and all
-three export formats work with no network access and no API key.
+Credentials are printed by the script, and come from `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`
+in `.env`.
 
-`make up`, `make seed`, `make down`, `make reset`, `make logs`, `make test` wrap the same commands.
+| Switch | Effect |
+|---|---|
+| `-Seed` | reload the demo data |
+| `-Fresh` | **wipe** the database and stored files, start empty |
+| `-Check` | run the pre-flight report and exit |
+| `-Stop` | stop both servers |
+| `-WithNer` | install the spaCy models (needs Python 3.12) |
 
-### Analysing real CVs
-
-The demo needs no key. Analysing a CV you upload does. Set one in `.env`:
-
-```bash
-LLM_PROVIDER=gemini
-GEMINI_API_KEY=...        # free tier, no credit card
-```
-
-or run entirely locally, with nothing leaving the machine:
-
-```bash
-LLM_PROVIDER=ollama
-docker compose --profile local-llm up -d
-docker compose exec ollama ollama pull llama3.1
-```
+Two caveats on the script: it uses **SQLite** rather than PostgreSQL, and **spaCy needs Python
+3.12** — on 3.13 the script skips it and says so, and redaction falls back to regex plus form
+values, which is weaker at catching bare city names.
 
 ---
 
-## Privacy — read this before deploying
+## Before a real test
 
-**CVs are personal data.** Everything below is a statement of what this system does, not a
-disclaimer.
+Demo data and real candidates must never share a database. Seeded dossiers skew the grids and fill
+the talent pool with people who do not exist.
 
-### PII redaction is the primary control
+```powershell
+.\start-dev.ps1 -Fresh    # wipes everything, asks for confirmation
+.\start-dev.ps1 -Check    # reports what still stands in the way
+```
 
-With `PII_REDACTION=true` (the default), a CV never leaves the system as a file. Instead:
+`-Check` runs `backend/preflight.py`, which reports three levels — **BLOQUANT**, **À VOIR**, **OK**
+— and exits non-zero while any blocker remains. It checks:
 
-1. Text is extracted locally (PyMuPDF for PDF, python-docx for DOCX).
-2. Identifiers are detected by three means, most reliable first — the values the applicant typed
-   into the form, then regex, then local spaCy NER.
-3. They are replaced with stable placeholders: `[CANDIDATE_NAME]`, `[EMAIL]`, `[PHONE]`,
-   `[ADDRESS]`, `[ID_NUMBER]`, `[URL]`.
-4. Only that redacted text is sent to the provider.
+- `JWT_SECRET` is not the one shipped in the repo, and is long enough. Anyone who has seen this
+  repository can otherwise forge a token and read every dossier.
+- the admin password is not a demo password;
+- `PII_REDACTION` is on, and which spaCy models actually loaded;
+- the LLM provider — and warns that Google's **free** Gemini tier may train on what you send;
+- the file store is writable, and CORS is not wide open;
+- **no `@example.com` candidates are left in the database**;
+- whether the application mailbox is configured.
 
-Nothing in this pipeline makes a network call. You can inspect the exact payload for any candidate
-from the dashboard — the candidate drawer has a **"See the exact text that was sent"** link — or via
-`GET /api/v1/candidates/{id}/redaction-preview`.
+Generate a real token secret with:
 
-**Never redacted:** employers, schools, job titles, employment dates, skills, certifications,
-languages. Those are exactly what the criteria score against; removing them would destroy the
-analysis.
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
 
-### This is pseudonymization, not anonymization
+Then create the accounts the team needs, and turn `ALLOW_SELF_REGISTRATION` back off.
 
-A CV that still names employers, schools and dates **can be re-identified**, particularly in a small
-job market like Togo's. Anyone who knows the local industry may recognise a candidate from
-"Ingénieur backend senior, Orabank Togo, 2019–2024" alone.
+---
 
-The accurate claim is: *identity attributes irrelevant to scoring never leave the system.* It is not:
-*the data is anonymous.* Do not tell candidates otherwise.
+## What it does
 
-Two further limits worth stating plainly:
+### Deterministic first, AI only where nothing else works
 
-- **City and region names depend on spaCy NER, not regex.** With the models loaded — as they are in
-  the Docker image — a bare `Lomé, Togo` line is redacted. Without them, it survives. The dashboard's
-  Settings page shows which models actually loaded, so you can always see which case you are in.
-- Redaction is best-effort pattern matching over unstructured documents. It is very good; it is not
-  a guarantee.
+Scoring, eligibility, age and seniority are pure arithmetic in `backend/app/domain/` — no database,
+no network, no model. The same functions produce the grid, the eliminations and the talent pool, so
+those three can never disagree.
 
-### Where NER is deliberately held back
+The model is used for one thing: reading an unstructured CV into structured fields when no one has
+typed them in. Everything it produces is stamped `EXTRAIT_IA`.
 
-spaCy labels `Université de Lomé` as a *single place*, because a city name sits inside it. Taken at
-face value that would redact a school — and schools, like employers, are exactly what the criteria
-score against. So NER output is filtered before use:
+### Provenance is the safety property
 
-- an entity naming an institution (université, école, banque, groupe, …) is never treated as an address;
-- an entity spaCy also considers an organisation is left alone;
-- an entity longer than two words is not a bare city.
+Every piece of candidate data carries where it came from:
 
-NER also loses to any labelled match it overlaps, reflecting the reliability order in spec 6.2
-(known values → regex → NER). Without that rule, `Nationalité : Togolaise` loses to spaCy calling
-"Togolaise" a place, and a nationality gets stripped as an address even with `REDACT_DEMOGRAPHICS=false`.
+| | |
+|---|---|
+| `SAISI_RH` | typed in by HR |
+| `VERIFIE_RH` | read and confirmed against the document |
+| `DECLARE` | stated by the candidate on the form |
+| `EXTRAIT_IA` | proposed by the model, unconfirmed |
 
-Both behaviours are covered by tests. The net effect is that redaction errs toward *keeping* career
-history: over-redacting destroys the analysis, while leaving a city in costs almost nothing.
+**Any unconfirmed `EXTRAIT_IA` value forces the file to `À VÉRIFIER`, in both directions.** An
+invented degree cannot push someone onto the shortlist, and a missed one cannot eliminate them.
+Confirming data, lifting an elimination and entering a manual score all require a written reason and
+are recorded in the audit log.
 
-### Free API tiers may train on what you send
+### Age and seniority are computed at the closing date
 
-Google's free Gemini tier may use submitted content to improve its models. Sending candidate CVs
-through it — even redacted ones, which still contain full career histories — means handing that
-history to a third party with training rights.
+Not at today's date. A grid recalculated six months later gives the same numbers as the one sent to
+the client. Overlapping jobs are merged before counting, so two roles held in parallel are not
+counted twice.
 
-For production, either:
+### Restrictive conditions
 
-- use a **paid** Gemini or Anthropic key, where training on API content is not the default, or
-- use `LLM_PROVIDER=ollama`, where nothing leaves your infrastructure at all.
+Age, nationality and sex are stored locally, shown to HR, and used in scoring **only** when the
+fiche de poste declares a condition about them — which requires a written justification, recorded at
+creation. They are stripped from anything sent to a model when `REDACT_DEMOGRAPHICS` is on.
 
-Anthropic is the intended production provider for the full-document path: it reads PDFs natively,
-including scanned ones, and paid keys carry no free-tier training concern.
+### Duplicates
 
-### Why demographics are redacted by default
+Attachments are fingerprinted (SHA-256). An identical file arriving twice for the same poste is
+dropped rather than tagged, with a note in the report. Replaying a mailbox fetch is therefore safe.
 
-`REDACT_DEMOGRAPHICS=true` is the default. Gender, age, date of birth, marital status and
-nationality are still **extracted, stored, and shown to HR** in the candidate profile — HR loses no
-visibility, and the original CV is one click away regardless. They are replaced with placeholders
-only in the payload used for scoring.
+---
 
-Scoring candidates on those attributes is discriminatory in most jurisdictions, and an automated
-pipeline leaves a durable record that they were present in the scoring input — a materially worse
-position than unrecorded human bias. It also removes the system's strongest guarantee: that scoring
-is blind to who the candidate is.
+## The screens
 
-If a role genuinely requires such an attribute, make it an explicit criterion HR defines and can
-justify, rather than ambient context the model weighs at its own discretion.
+**Mandats** — clients, mandates, fiches de poste, avis. The grid and the elimination table are
+produced by a single call, so the totals in two exported files cannot drift apart. Excel export.
 
-Setting it to `false` should be a knowing decision by the deploying organisation. It is logged at
-startup and surfaced, with a warning, on the dashboard's Settings page.
+**Vivier** — everyone the firm has ever seen, searchable by trade rather than only by name:
+"contrôle de gestion", "Sarakawa", "hôpital" all match diplomas, job titles and employers. Filters
+on degree level, years of experience, field, nationality, sex and age.
 
-### The full-document escape hatch
+One person is one row: each application creates its own identity record — deliberately, so old
+grids stay reproducible — and the talent pool groups them at display time by email, falling back to
+name plus date of birth.
 
-Some CVs parse badly — heavy multi-column layouts, or scans with no text layer. The candidate drawer
-offers **"Re-analyse with the full document"**, which sends the original unredacted file to the
-provider. It shows an explicit confirmation naming the provider first, and writes an `audit_log`
-entry recording which user triggered it. That entry is highlighted in the session's Activity tab.
+Filtering on sex, age or nationality is legitimate when the client sets the condition, but it is not
+an ordinary search: those queries are written to the audit log, and the screen says so. Plain
+searches are not logged, so the journal stays readable.
+
+**Archives** — archive first, delete second. Nothing can be permanently deleted from a working
+list; it has to be archived, then deleted from here, on a file you came looking for.
+
+Archived mandates can have their **files purged**: CVs, cover letters and diplomas are deleted from
+disk, while the parsed career history, the score with its breakdown, the elimination reasons and the
+audit trail all survive. The `PieceCandidature` row survives too — completeness is judged on the
+document *received*, not the file *retained* — so a grid recalculated after a purge gives an
+identical result. This is how storage is controlled; there is deliberately **no file size limit** on
+authenticated uploads.
+
+**Paramètres** — default preselection threshold, demographic redaction, self-registration, and the
+application mailbox.
+
+---
+
+## The application mailbox
+
+Configured in the app, at **Paramètres › Boîte de candidatures**: address, password, IMAP server,
+port, folder, plus a **Tester la connexion** button. No restart, no file access. The values in
+`.env` only seed a fresh install.
+
+The password is write-only: it goes to the server and never comes back — the API reports whether one
+is set, never its value, and the audit log records which settings changed, not their contents.
+Saving with the field left blank keeps the existing password.
+
+**Gmail** needs 2-Step Verification and an **App password** (Google Account → Security → App
+passwords); the account password is rejected over IMAP. IMAP also has to be enabled in Gmail's
+settings. App passwords are displayed in groups of four — the spaces are stripped automatically.
+
+### How a message becomes an application
+
+In order, stopping at the first failure:
+
+1. **Unread messages** are fetched with `BODY.PEEK` — nothing is marked read until it is
+   successfully processed, so a crash mid-fetch loses nothing.
+2. **Already seen?** Matched on `Message-ID`. Re-running creates no duplicates.
+3. **Attached to a poste** by the bracketed reference in the **subject** — `[AVIS-2026-014]` — which
+   must match an existing avis. No reference, or an unknown one, and the message is reported as
+   *non rattaché*: nothing is created and it stays unread for a human. This is the only gate.
+4. **Attachments** are checked on their **magic bytes**, never the extension: only real PDF, DOCX
+   and DOC survive. Signatures and inline images are dropped. Nothing usable → reported as *sans
+   pièce jointe*, no application created. This is what filters out acknowledgements and auto-replies.
+5. **Identical file** already received for this poste → ignored.
+6. **Created**, with the sender's name guessed from the `From` header and marked `EXTRAIT_IA`, so
+   the file lands at *À vérifier*.
+7. **Each attachment is classified by filename keyword** — `motivation`/`lm`/`lettre`, then
+   `diplome`/`attestation`, then `cv`/`resume`/`curriculum`.
+
+Two known limits, both deliberate for now: step 7 **falls back to "CV"** for any unrecognised
+filename, and step 3 puts all the weight on the subject line. Once the firm's imposed CV format is
+settled, the candidate's name can be parsed from a standardised subject instead of guessed, and an
+unrecognised attachment name can be flagged rather than assumed to be a CV.
+
+**Aperçu** shows exactly what a fetch would create, without writing anything. Use it first on a real
+mailbox.
+
+---
+
+## Privacy
+
+CVs are personal data. What follows is a description of what the system does, not a disclaimer.
+
+### Redaction
+
+With `PII_REDACTION=true` (the default) a file never leaves the machine. Text is extracted locally
+(PyMuPDF, python-docx); identifiers are found by three means, most reliable first — values typed
+into the form, then regex, then local spaCy NER — and replaced with stable placeholders. Only that
+text is sent.
+
+**Never redacted:** employers, schools, job titles, dates, skills, certifications, languages. Those
+are exactly what the barème scores.
+
+**This is pseudonymization, not anonymization.** A CV still naming employers, schools and dates can
+be re-identified, particularly in a market the size of Togo's. The accurate claim is *identity
+attributes irrelevant to scoring never leave the system* — not *the data is anonymous*.
+
+NER output is filtered before use, because spaCy labels `Université de Lomé` a single *place*, and
+taken at face value that would redact a school. An entity naming an institution is never treated as
+an address; one spaCy also reads as an organisation is left alone; a labelled match always beats an
+overlapping NER guess. Both behaviours are covered by tests.
+
+### Free API tiers
+
+Google's free Gemini tier may train on what you send. For real CVs, use a **paid** key, or
+`LLM_PROVIDER=ollama`, where nothing leaves the building. The pre-flight check says so too.
 
 ### Other controls
 
-- Session-level `retention_days`: once a session is closed, candidate files and rows are deleted
-  after that many days. The sweep runs at startup and writes an audit entry.
-- `audit_log` records every score override, status change, bulk action, export and deletion.
-- Passwords are bcrypt-hashed; JWT secret comes from the environment; CORS is restricted to an
-  env-configured origin list; public endpoints are rate-limited by IP.
-- Uploads are validated on **magic bytes**, not on the file extension, and stored under a UUID name.
+- Passwords are bcrypt-hashed; JWT secret comes from the environment; CORS is an explicit list;
+  public endpoints are rate-limited by IP.
+- Uploads are validated on magic bytes and stored under a UUID name.
+- The audit log records overrides, verifications, lifted eliminations, exports, deletions, purges,
+  settings changes and sensitive talent-pool searches.
+- Deleting a client or mandate also removes candidates left with no remaining application — personal
+  data with no purpose.
 
 ---
 
 ## Architecture
 
 ```
-backend/     FastAPI (async) + SQLAlchemy 2 + Alembic + PostgreSQL 16
-frontend/    React 18 + Vite + TypeScript + Tailwind, Zustand + TanStack Query
-widget/      Vanilla TS, one self-contained file, Shadow DOM
+backend/app/domain/     pure calculation: barème, eligibility, profiles. No DB, no network, no LLM.
+backend/app/services/   persistence, extraction, redaction, mailbox, purge, talent pool, exports
+backend/app/api/        HTTP layer
+frontend/               React 18 + Vite + TypeScript + Tailwind, Zustand + TanStack Query
+widget/                 embeddable application form, one self-contained file, Shadow DOM
 ```
 
-The API is the product; the UIs are clients. Both deployment modes — the full web app and the
-drop-in widget — are served by the same backend.
+`NiveauDiplome` is an `IntEnum` on the BAC+N scale, stored as an integer, so "degree at least BAC+5"
+is an ordered comparison in SQL as well as in Python.
 
-### Why this stack
+The barème is serialised per poste, and a **copy of the barème used** is stored with each score.
+Without it, editing a poste's barème would retroactively rewrite grids already delivered.
 
-The web layer is straightforward CRUD plus file upload; any framework handles it. The demanding
-parts are PDF/DOCX text extraction, named-entity recognition for redaction, and generating three
-document formats — and Python's libraries there (PyMuPDF, python-docx, openpyxl, ReportLab, spaCy)
-have no real equivalent elsewhere. Node's PDF extraction is weak and it has no serious local NER
-option; Go's document libraries are thin. On throughput, the binding constraint is LLM latency
-measured in seconds, not CPU, so what matters is async concurrency and never blocking on upload.
+### Legacy module
 
-### Analysis flow
-
-Upload persists the candidate as `PENDING`, returns `202` immediately, and schedules the work via
-FastAPI `BackgroundTasks`. The dashboard polls every 3 seconds while anything is pending. No Celery,
-no Redis — the volumes here do not justify the infrastructure.
-
-Per CV: extract → redact → send to provider → validate against a Pydantic model → compute the score.
-
-**The model is never asked for the overall score.** It scores each criterion; the arithmetic happens
-in `app/services/scoring.py`. That keeps scores consistent across candidates and makes any ranking
-reproducible from the stored criterion scores.
-
-```
-ai_score = Σ(criterion_score × weight) / Σ(weight)
-```
-
-Bands: `≥80` STRONG_FIT, `≥60` FIT, `≥40` MAYBE, else NOT_FIT. **If any must-have criterion scores
-below 40, the recommendation is forced to NOT_FIT** and the missing items are named — but the
-computed score is still stored, so HR can see how close the candidate was.
-
-`effective_score` is `manual_score` when HR has set one, otherwise `ai_score`. Rankings and exports
-both sort on it.
-
-### Swapping providers
-
-`LLM_PROVIDER` selects `gemini`, `anthropic` or `ollama`. **No provider-specific code exists outside
-`backend/app/llm/`** — `factory.py` is the only module that knows the concrete classes. All three
-share one retry schedule (1s, 2s, 4s, 8s on 429 and 5xx, four attempts) and one concurrency cap
-(`LLM_MAX_CONCURRENCY`, default 3, since free tiers have low per-minute limits).
-
-Adding a provider means writing one `complete()` method: prompting, JSON recovery, schema validation
-and the one-shot repair retry are all shared in `llm/base.py`.
+The original session/candidate model is still mounted and reachable, so its data is not lost. It is
+no longer in the navigation, and the mandate chain replaces it entirely.
 
 ---
 
-## The embeddable widget
+## Tests
 
-Any site can host the application form:
-
-```html
-<div id="tricv-widget"></div>
-<script src="https://your-tricv-host/widget.js"
-        data-session-key="PUBLIC_KEY"
-        data-lang="fr"></script>
+```powershell
+cd backend; .\.venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
-The dashboard's **Share** tab generates this snippet with the right key. The widget renders inside a
-Shadow DOM, so host-page CSS cannot break it — `widget/demo.html` is a deliberately hostile host page
-for checking that. It is ~9 KB (3.9 KB gzipped) with no framework runtime.
-
-Add every embedding site's origin to `CORS_ORIGINS`.
-
----
-
-## Development
-
-```bash
-# backend
-cd backend
-pip install -r requirements.txt
-python -m spacy download fr_core_news_md && python -m spacy download en_core_web_md
-uvicorn app.main:app --reload
-
-# frontend
-cd frontend && npm install && npm run dev
-
-# widget
-cd widget && npm install && npm run build
-```
-
-### Tests
-
-```bash
-make test          # or: cd backend && pytest
-```
-
-The suite runs against SQLite with a stub provider — no database server, no network, no API key.
-It covers the redaction guarantees (including that no identifier reaches the payload), the scoring
-maths and must-have rule, the full upload → analysis → ranking → override → export flow, and that
-all three export formats open.
-
-### i18n
-
-Full FR/EN through `react-i18next`; French is the default and the toggle persists in localStorage.
-All UI strings live in `frontend/src/i18n/locales/`. A session's own language also drives the
-analysis prompt language and the export language, independently of the dashboard's UI language.
+233 tests, against SQLite with a stub provider — no database server, no network, no API key. They
+cover the domain arithmetic, the provenance guard in both directions, redaction (including that no
+identifier reaches the payload), duplicate detection, the mailbox fetch against a fake mailbox, the
+archive-then-delete path, purge (including that a grid is identical before and after), the talent
+pool, and that every export format opens.
 
 ---
 
 ## Configuration
 
-Every variable is documented in [`.env.example`](.env.example). The ones that change behaviour most:
+Everything is documented in [`.env.example`](.env.example). `.env` lives at the repository root and
+is read regardless of the working directory.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `PII_REDACTION` | `true` | `false` sends original CV files to the provider |
-| `REDACT_DEMOGRAPHICS` | `true` | `false` includes gender/age/etc. in the scoring payload |
+| `JWT_SECRET` | dev value | **Must be changed.** Signs every session token |
+| `PII_REDACTION` | `true` | `false` sends original files to the provider |
+| `REDACT_DEMOGRAPHICS` | `true` | `false` includes age/sex/nationality in the scoring payload |
 | `LLM_PROVIDER` | `gemini` | `gemini` · `anthropic` · `ollama` |
-| `LLM_MAX_CONCURRENCY` | `3` | In-flight provider calls |
 | `STORAGE_BACKEND` | `local` | `s3` for any S3-compatible endpoint |
-| `CORS_ORIGINS` | localhost | Must include every widget-embedding origin |
-| `MAX_UPLOAD_MB` | `10` | Per-file upload limit |
+| `CORS_ORIGINS` | localhost | Every origin the app is reached from |
+| `ALLOW_SELF_REGISTRATION` | `false` | Account creation from the login page |
+
+There is no upload size limit to configure. Authenticated uploads are unlimited; the public form has
+a fixed anti-abuse ceiling in code. Storage is controlled by purging archived mandates.
 
 ---
 
-## Not in v1
+## Known gaps
 
-Interview scheduling, candidate accounts, email campaigns, billing, multi-company tenancy, CV
-editing, video interviews, job-board integrations.
+- **The barème does not match the firm's real one.** The default split in
+  `backend/app/domain/bareme.py` was written before the real documents arrived. Their actual grid is
+  Consistance du dossier 3 / Formation 7 / Expérience générale 5 / Expérience spécifique 15 = **30**,
+  and those 30 points are **30 % of a total out of 100**, the interviews carrying the other 70 %.
+  Selection is **top-N** ("les cinq (05) premiers candidats"), not a threshold, with a distinction
+  between *préqualifiés* and *proposés*. "Consistance du dossier" is scored, not just a completeness
+  check. This needs its own pass before a grid is shown to a client.
+- The imposed CV/email format is not yet encoded (see the mailbox section above).
+- PostgreSQL is configured but the local script runs on SQLite.

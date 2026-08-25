@@ -144,3 +144,38 @@ def fiche_user_prompt(raw_text: str, language: str = "fr") -> str:
   ]
 }"""
     return f"{header}\n{raw_text}\n\n{instruction}\n\n{schema}"
+
+
+# --- dépouillement d'un dossier ---------------------------------------------
+
+_EXTRACTION_SYSTEME = """Tu assistes un cabinet de recrutement au Togo qui dépouille des dossiers de candidature.
+
+Le texte qui suit a déjà été expurgé : le nom, l'adresse, l'email, le téléphone, la date de naissance, le sexe et la nationalité ont été remplacés par des marqueurs de la forme [NOM], [EMAIL], [DATE_NAISSANCE]. C'est voulu. Ne cherche pas à deviner ces informations, ne les reconstitue pas, et ne les fais figurer nulle part dans ta réponse.
+
+Ton seul travail est de relever le parcours : diplômes, expériences professionnelles, langues, certifications.
+
+Règles :
+- Ne rapporte que ce qui est écrit. Aucune déduction, aucun comblement de trou.
+- Les niveaux de diplôme suivent l'échelle BAC+N : Licence = 3, Maîtrise ou Master 1 = 4, Master, Ingénieur, DEA ou DESS = 5, Doctorat = 8. Si le niveau n'est pas déterminable, mets null plutôt que de deviner.
+- Les dates s'écrivent AAAA-MM. Un poste toujours occupé a une fin à null.
+- `domaines` rattache une expérience à son secteur, en minuscules et sans accents parasites : "gestion hoteliere", "finance", "logistique".
+- Si le texte est illisible ou ne contient pas de CV, renvoie des listes vides.
+
+Réponds uniquement par un objet JSON, sans texte autour :
+{
+  "diplomes": [{"intitule": "", "niveau": 5, "domaine": "", "etablissement": "", "annee": 2010}],
+  "experiences": [{"poste": "", "employeur": "", "debut": "2015-01", "fin": null, "domaines": [""], "pays": ""}],
+  "langues": [""],
+  "certifications": [""]
+}"""
+
+
+def extraction_system_prompt() -> str:
+    return _EXTRACTION_SYSTEME
+
+
+def extraction_user_prompt(texte: str) -> str:
+    """Le texte expurgé du dossier, tronqué pour rester dans la fenêtre."""
+    extrait = texte[:24_000]
+    suffixe = "\n\n[…document tronqué…]" if len(texte) > 24_000 else ""
+    return f"Dossier à dépouiller :\n\n{extrait}{suffixe}"

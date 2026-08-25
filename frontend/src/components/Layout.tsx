@@ -3,39 +3,13 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/auth'
 import { initials } from '@/lib/format'
 
-function LanguageToggle() {
-  const { i18n, t } = useTranslation()
-  const current = i18n.resolvedLanguage ?? 'fr'
-  return (
-    <div
-      className="flex items-center rounded-lg border border-ink-200 bg-white p-0.5"
-      role="group"
-      aria-label={t('nav.language')}
-    >
-      {(['fr', 'en'] as const).map((lang) => (
-        <button
-          key={lang}
-          type="button"
-          onClick={() => void i18n.changeLanguage(lang)}
-          aria-pressed={current === lang}
-          className={`rounded-md px-2 py-1 text-xs font-semibold uppercase transition-colors ${
-            current === lang ? 'bg-ink-900 text-white' : 'text-ink-500 hover:text-ink-800'
-          }`}
-        >
-          {lang}
-        </button>
-      ))}
-    </div>
-  )
-}
-
 export function Logo() {
   return (
     <span className="flex items-center gap-2">
-      <span className="grid h-7 w-7 place-items-center rounded-md bg-ink-900 text-[11px] font-bold text-white">
-        Tri
+      <span className="grid h-7 w-7 place-items-center rounded-md bg-ink-900 text-[13px] font-bold text-white">
+        T
       </span>
-      <span className="text-[15px] font-semibold tracking-tight text-ink-900">CV</span>
+      <span className="text-[15px] font-semibold tracking-tight text-ink-900">TriCV</span>
     </span>
   )
 }
@@ -54,22 +28,33 @@ export default function Layout() {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-ink-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-6 px-4 sm:px-6">
-          <NavLink to="/sessions" className="shrink-0">
+        <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-4 sm:gap-6 sm:px-6">
+          <NavLink to="/mandats" className="shrink-0">
             <Logo />
           </NavLink>
 
-          <nav className="flex items-center gap-1">
-            <NavLink to="/sessions" className={navClass}>
-              {t('nav.sessions')}
+          {/* La barre a gagné une entrée : sur écran étroit, c'est elle qui
+              défile, pas la page entière. */}
+          <nav className="flex min-w-0 items-center gap-1 overflow-x-auto">
+            <NavLink to="/mandats" className={navClass}>
+              Mandats
             </NavLink>
+            <NavLink to="/vivier" className={navClass}>
+              Vivier
+            </NavLink>
+            <NavLink to="/archives" className={navClass}>
+              Archives
+            </NavLink>
+            {/* L'ancien modèle (session/candidat) n'est plus proposé dans la
+                navigation : la chaîne mandat -> poste -> avis le couvre
+                entièrement. Ses routes restent joignables le temps que ses
+                données soient reprises, puis le module sera retiré. */}
             <NavLink to="/settings" className={navClass}>
               {t('nav.settings')}
             </NavLink>
           </nav>
 
-          <div className="ml-auto flex items-center gap-3">
-            <LanguageToggle />
+          <div className="ml-auto flex shrink-0 items-center gap-3">
             {user && (
               <div className="flex items-center gap-2">
                 <span

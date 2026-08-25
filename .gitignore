@@ -1,22 +1,79 @@
+# --- secrets et configuration locale ----------------------------------------
+# .env porte la clé du modèle, le secret des jetons, le mot de passe de la
+# boîte de candidatures et celui de l'administrateur. .env.example, lui, est
+# suivi : c'est la documentation des variables, sans aucune valeur.
 .env
+.env.*
+!.env.example
+
+# --- données réelles ---------------------------------------------------------
+# Tout ce qui touche à de vraies personnes. Un dépôt est copié, cloné, poussé
+# et sauvegardé : rien de tout cela ne doit y entrer, même une fois.
+#
+# Documents du cabinet : AMI, offres techniques, grilles remplies, rapports
+# d'entretien. Plusieurs orthographes, la casse variant selon les machines.
+Example docs/
+example docs/
+Exemples/
+exemples/
+Documents reels/
+docs-reels/
+docs-réels/
+
+# Base de données et pièces jointes déposées. `data/` est l'emplacement du
+# script de développement ; les motifs qui suivent rattrapent une base ou un
+# dossier de stockage créés ailleurs.
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Documents produits par l'application — grilles, exports, dossiers de
+# candidature. Ils contiennent des noms, des notes et des coordonnées.
+# Exception : les gabarits versionnés sous templates/, s'il en existe un jour.
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.pdf
+!**/templates/**
+
+# --- environnements et caches -----------------------------------------------
 *.pyc
+*.pyo
 __pycache__/
 .venv/
 venv/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 node_modules/
 dist/
 .vite/
+*.tsbuildinfo
 
-data/
-*.sqlite3
-
-# Built by the widget/ package and baked in by the backend Dockerfile.
+# --- construits --------------------------------------------------------------
+# Produit par le paquet widget/ et intégré à l'image par le Dockerfile.
 backend/static/
+
+# --- journaux et fichiers de travail ----------------------------------------
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# --- outils et systèmes ------------------------------------------------------
 .DS_Store
+Thumbs.db
+desktop.ini
 .idea/
 .vscode/
 /backend/alembic/env.py

@@ -3,6 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import Layout from '@/components/Layout'
 import LoginPage from '@/pages/LoginPage'
+import SignupPage from '@/pages/SignupPage'
+import MandatsPage from '@/pages/MandatsPage'
+import MandatDetailPage from '@/pages/MandatDetailPage'
+import PosteDetailPage from '@/pages/PosteDetailPage'
+import ArchivesPage from '@/pages/ArchivesPage'
+import VivierPage from '@/pages/VivierPage'
 import SessionsPage from '@/pages/SessionsPage'
 import SessionBuilderPage from '@/pages/SessionBuilderPage'
 import SessionDetailPage from '@/pages/SessionDetailPage'
@@ -37,6 +43,8 @@ export default function App() {
       <Route path="/careers" element={<CareersPage />} />
       <Route path="/apply/:publicKey" element={<ApplyPage />} />
       <Route path="/login" element={<LoginPage />} />
+      {/* HR self-registration. The page itself reports when it is disabled. */}
+      <Route path="/signup" element={<SignupPage />} />
 
       <Route
         element={
@@ -45,7 +53,13 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<Navigate to="/sessions" replace />} />
+        <Route path="/" element={<Navigate to="/mandats" replace />} />
+        {/* Chaîne de recrutement : mandat -> poste -> grille. */}
+        <Route path="/mandats" element={<MandatsPage />} />
+        <Route path="/mandats/:mandatId" element={<MandatDetailPage />} />
+        <Route path="/postes/:posteId" element={<PosteDetailPage />} />
+        <Route path="/vivier" element={<VivierPage />} />
+        <Route path="/archives" element={<ArchivesPage />} />
         <Route path="/sessions" element={<SessionsPage />} />
         <Route path="/sessions/new" element={<SessionBuilderPage />} />
         <Route path="/sessions/:sessionId/edit" element={<SessionBuilderPage />} />

@@ -49,3 +49,55 @@ class HrStatus(StrEnum):
 class Language(StrEnum):
     FR = "fr"
     EN = "en"
+
+
+# --- chaîne de recrutement --------------------------------------------------
+
+
+class Provenance(StrEnum):
+    """D'où vient une donnée du dossier.
+
+    Décisif pour la règle centrale : une donnée seulement proposée par
+    l'assistance automatique ne peut pas, à elle seule, éliminer quelqu'un.
+    """
+
+    DECLARE = "DECLARE"  # saisi par le candidat dans le formulaire
+    EXTRAIT_IA = "EXTRAIT_IA"  # proposé par l'extraction, non confirmé
+    VERIFIE_RH = "VERIFIE_RH"  # relu et confirmé par un humain
+    SAISI_RH = "SAISI_RH"  # saisi directement par les RH
+
+    @property
+    def fiable(self) -> bool:
+        """Vrai si la donnée peut fonder une élimination sans relecture."""
+        return self is not Provenance.EXTRAIT_IA
+
+
+class SourceCandidature(StrEnum):
+    EMAIL = "EMAIL"
+    FORMULAIRE = "FORMULAIRE"
+    IMPORT_MANUEL = "IMPORT_MANUEL"
+
+
+class StatutCandidature(StrEnum):
+    RECUE = "RECUE"
+    A_VERIFIER = "A_VERIFIER"  # éliminable, mais sur des données non confirmées
+    ELIGIBLE = "ELIGIBLE"
+    ELIMINEE = "ELIMINEE"
+    PRESELECTIONNEE = "PRESELECTIONNEE"
+    NON_RETENUE = "NON_RETENUE"
+    RETENUE = "RETENUE"
+
+
+class StatutMandat(StrEnum):
+    PROSPECT = "PROSPECT"
+    AMI_SOUMIS = "AMI_SOUMIS"
+    OFFRE_SOUMISE = "OFFRE_SOUMISE"
+    GAGNE = "GAGNE"
+    PERDU = "PERDU"
+    CLOTURE = "CLOTURE"
+
+
+class StatutAvis(StrEnum):
+    BROUILLON = "BROUILLON"
+    PUBLIE = "PUBLIE"
+    CLOTURE = "CLOTURE"

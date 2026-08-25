@@ -28,7 +28,7 @@ openpyxl==3.1.5
 reportlab==4.2.5
 
 # Local NER for redaction. Models are installed in the Dockerfile.
-spacy==3.8.3
+spacy==3.8.15
 
 # S3-compatible storage backend
 boto3==1.35.90

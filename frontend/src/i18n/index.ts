@@ -1,34 +1,23 @@
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
-import LanguageDetector from 'i18next-browser-languagedetector'
 import fr from './locales/fr.json'
-import en from './locales/en.json'
 
-export const STORAGE_KEY = 'tricv-lang'
-
-void i18n
-  .use(LanguageDetector)
-  .use(initReactI18next)
-  .init({
-    resources: {
-      fr: { translation: fr },
-      en: { translation: en },
-    },
-    // French is the product default, full stop — the browser's locale does not
-    // override it. Only an explicit toggle does, and that choice persists.
-    lng: localStorage.getItem(STORAGE_KEY) ?? 'fr',
-    fallbackLng: 'fr',
-    supportedLngs: ['fr', 'en'],
-    detection: {
-      order: ['localStorage'],
-      lookupLocalStorage: STORAGE_KEY,
-      caches: ['localStorage'],
-    },
-    interpolation: { escapeValue: false },
-  })
-
-i18n.on('languageChanged', (lng) => {
-  document.documentElement.lang = lng
+/**
+ * Application francophone, sans bascule de langue.
+ *
+ * Les avis, les grilles et les rapports sont produits en français ; une
+ * interface bilingue laissait croire qu'un avis pouvait être servi en anglais
+ * alors que rien en aval ne l'était. i18next reste en place pour que les
+ * libellés vivent hors des composants, pas pour traduire.
+ */
+void i18n.use(initReactI18next).init({
+  resources: { fr: { translation: fr } },
+  lng: 'fr',
+  fallbackLng: 'fr',
+  supportedLngs: ['fr'],
+  interpolation: { escapeValue: false },
 })
+
+document.documentElement.lang = 'fr'
 
 export default i18n

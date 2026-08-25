@@ -7,9 +7,16 @@ from sqlalchemy import desc, select
 
 from app.api.sessions import get_session_or_404
 from app.config import settings
-from app.deps import CurrentUser, DbSession
+from app.deps import AdminUser, CurrentUser, DbSession
 from app.models import AuditLog, Candidate
-from app.schemas.stats import AuditLogOut, ScoreBucket, SessionStats, SettingsOut
+from app.schemas.stats import (
+    AuditLogOut,
+    ReglagesIn,
+    ScoreBucket,
+    SessionStats,
+    SettingsOut,
+)
+from app.services import audit, parametres, uploads
 from app.services.redaction import loaded_ner_models
 
 router = APIRouter(tags=["stats"])
@@ -103,15 +110,52 @@ async def session_audit(
 
 
 @router.get("/settings", response_model=SettingsOut)
-async def deployment_settings(_: CurrentUser) -> SettingsOut:
-    """Surfaces the deployment's privacy posture in the dashboard, so
-    REDACT_DEMOGRAPHICS=false is a visible decision rather than a hidden one."""
+async def deployment_settings(db: DbSession, _: CurrentUser) -> SettingsOut:
+    """L'état du déploiement, réglages modifiables compris.
+
+    L'expurgation des données démographiques y figure explicitement : la
+    désactiver doit être une décision visible, pas un réglage oublié.
+    """
+    reglages = await parametres.lire(db)
     return SettingsOut(
         llm_provider=settings.llm_provider,
-        llm_model=settings.llm_model or "(provider default)",
+        llm_model=settings.llm_model or "(défaut du fournisseur)",
         pii_redaction=settings.pii_redaction,
-        redact_demographics=settings.redact_demographics,
-        max_upload_mb=settings.max_upload_mb,
+        redact_demographics=reglages.redact_demographics,
+        max_upload_mb=uploads.PLAFOND_ABSOLU_MO,
         storage_backend=settings.storage_backend,
         spacy_models_loaded=loaded_ner_models(),
+        seuil_preselection_defaut=reglages.seuil_preselection_defaut,
+        allow_self_registration=reglages.allow_self_registration,
+        courriel_actif=reglages.courriel_actif,
+        imap_host=reglages.imap_host,
+        imap_port=reglages.imap_port,
+        imap_user=reglages.imap_user,
+        imap_folder=reglages.imap_folder,
+        # Le secret lui-même ne sort jamais de la machine.
+        imap_password_defini=bool(reglages.imap_password),
+        courriel_utilisable=reglages.courriel_utilisable,
     )
+
+
+@router.patch("/settings", response_model=SettingsOut)
+async def modifier_reglages(
+    payload: ReglagesIn, db: DbSession, user: AdminUser
+) -> SettingsOut:
+    """Réservé aux administrateurs : ces réglages valent pour tout le cabinet.
+
+    Le fournisseur de modèle, le stockage et les secrets restent hors de
+    portée — ils appartiennent au déploiement, pas à l'écran.
+    """
+    changees = await parametres.ecrire(db, payload.model_dump(exclude_unset=True))
+    if changees:
+        await audit.record(
+            db,
+            action="parametres.update",
+            entity_type="parametres",
+            entity_id=None,
+            user_id=user.id,
+            details={"reglages": sorted(changees)},
+        )
+    await db.commit()
+    return await deployment_settings(db, user)

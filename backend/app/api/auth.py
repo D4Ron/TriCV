@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import secrets
+
 import jwt
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.config import settings
-from app.deps import AdminUser, CurrentUser, DbSession
+from app.deps import AdminUser, CurrentUser, DbSession, client_ip
 from app.models import User, UserRole
 from app.schemas.auth import (
     LoginRequest,
     RefreshRequest,
+    SignupConfig,
+    SignupRequest,
     TokenPair,
     UserCreate,
     UserOut,
@@ -21,7 +25,8 @@ from app.security import (
     hash_password,
     verify_password,
 )
-from app.services import audit
+from app.services import audit, parametres
+from app.services.ratelimit import signup_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -43,6 +48,61 @@ async def login(payload: LoginRequest, db: DbSession) -> TokenPair:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
     if not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This account is disabled")
+    return _token_pair(user)
+
+
+@router.get("/signup-config", response_model=SignupConfig)
+async def signup_config(db: DbSession) -> SignupConfig:
+    """Public: the sign-in page needs this to decide whether to offer signup."""
+    reglages = await parametres.lire(db)
+    return SignupConfig(
+        enabled=reglages.allow_self_registration,
+        requires_code=bool(settings.signup_code),
+    )
+
+
+@router.post("/signup", response_model=TokenPair, status_code=status.HTTP_201_CREATED)
+async def signup(payload: SignupRequest, request: Request, db: DbSession) -> TokenPair:
+    reglages = await parametres.lire(db)
+    if not reglages.allow_self_registration:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Self-registration is disabled. Ask an administrator for an account.",
+        )
+
+    signup_limiter.check(client_ip(request))
+
+    # compare_digest so a wrong code cannot be found by timing the response.
+    if settings.signup_code and not secrets.compare_digest(
+        payload.signup_code, settings.signup_code
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "That sign-up code is not valid")
+
+    email = payload.email.lower()
+    existing = await db.execute(select(User.id).where(User.email == email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status.HTTP_409_CONFLICT, "That email address is already registered")
+
+    # Always RECRUITER. ADMIN can create and list users, so letting anyone
+    # grant themselves that role over the network would defeat the check.
+    user = User(
+        email=email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name.strip(),
+        role=UserRole.RECRUITER,
+    )
+    db.add(user)
+    await db.flush()
+    await audit.record(
+        db,
+        action="user.signup",
+        entity_type="user",
+        entity_id=user.id,
+        user_id=user.id,
+        details={"email": email, "ip": client_ip(request)},
+    )
+    await db.commit()
+    await db.refresh(user)
     return _token_pair(user)
 
 

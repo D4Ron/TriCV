@@ -214,7 +214,12 @@ export function Modal({
             ×
           </button>
         </div>
-        <div className="px-5 py-4 text-sm text-ink-700">{children}</div>
+        {/* Un profil complet ou un aperçu de boîte dépasse l'écran : c'est le
+            contenu qui défile, pas la fenêtre, sinon l'en-tête et les boutons
+            sortent du champ. */}
+        <div className="max-h-[75vh] overflow-y-auto px-5 py-4 text-sm text-ink-700">
+          {children}
+        </div>
         {footer && (
           <div className="flex justify-end gap-2 border-t border-ink-200 px-5 py-3">{footer}</div>
         )}

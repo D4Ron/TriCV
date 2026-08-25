@@ -46,3 +46,6 @@ class SlidingWindowLimiter:
 
 
 public_limiter = SlidingWindowLimiter(settings.public_rate_limit_per_hour)
+# Separate budget: a burst of failed signup attempts must not lock candidates
+# out of applying, and vice versa.
+signup_limiter = SlidingWindowLimiter(settings.signup_rate_limit_per_hour)

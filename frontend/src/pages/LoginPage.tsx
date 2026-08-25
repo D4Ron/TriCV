@@ -1,12 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/auth'
+import { authApi } from '@/lib/api'
 import { Logo } from '@/components/Layout'
 import { Field, Spinner } from '@/components/ui'
 
 export default function LoginPage() {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const login = useAuthStore((state) => state.login)
   const token = useAuthStore((state) => state.accessToken)
@@ -15,8 +16,25 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Only offer the link where the deployment actually accepts signups.
+  const [signupOpen, setSignupOpen] = useState(false)
 
-  if (token) return <Navigate to="/sessions" replace />
+  useEffect(() => {
+    let cancelled = false
+    authApi
+      .signupConfig()
+      .then((config) => {
+        if (!cancelled) setSignupOpen(config.enabled)
+      })
+      .catch(() => {
+        /* no link is the safe default */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (token) return <Navigate to="/mandats" replace />
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -24,7 +42,7 @@ export default function LoginPage() {
     setBusy(true)
     try {
       await login(email.trim(), password)
-      navigate('/sessions')
+      navigate('/mandats')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('login.failed'))
     } finally {
@@ -35,15 +53,8 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-12">
       <div className="w-full max-w-sm">
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8">
           <Logo />
-          <button
-            type="button"
-            className="text-xs font-semibold uppercase text-ink-500 hover:text-ink-900"
-            onClick={() => void i18n.changeLanguage(i18n.resolvedLanguage === 'fr' ? 'en' : 'fr')}
-          >
-            {i18n.resolvedLanguage === 'fr' ? 'EN' : 'FR'}
-          </button>
         </div>
 
         <div className="card p-6">
@@ -86,6 +97,15 @@ export default function LoginPage() {
               {busy ? t('login.submitting') : t('login.submit')}
             </button>
           </form>
+
+          {signupOpen && (
+            <p className="mt-4 border-t border-ink-100 pt-4 text-center text-sm text-ink-500">
+              {t('login.noAccount')}{' '}
+              <Link to="/signup" className="font-medium text-ink-900 hover:underline">
+                {t('login.createAccount')}
+              </Link>
+            </p>
+          )}
         </div>
 
         <p className="mt-6 text-center text-xs text-ink-400">{t('app.tagline')}</p>

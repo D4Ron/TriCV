@@ -8,7 +8,19 @@ from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
-from app.api import auth, candidates, exports, public, sessions, stats
+from app.api import (
+    auth,
+    candidates,
+    candidatures,
+    exports,
+    mandats,
+    postes,
+    public,
+    public_avis,
+    sessions,
+    stats,
+    vivier,
+)
 from app.config import settings
 from app.logging_config import configure_logging
 from app.services.retention import run_retention_sweep
@@ -107,12 +119,20 @@ async def root() -> dict:
         "service": "TriCV",
         "docs": "/docs",
         "api": API_PREFIX,
-        "note": "TriCV ranks and recommends. HR decides.",
+        "note": "TriCV classe et recommande. Les RH décident.",
     }
 
 
 for router in (
     auth.router,
+    # Chaîne de recrutement : Client -> Mandat -> Poste -> Avis -> Candidature.
+    mandats.router,
+    postes.router,
+    candidatures.router,
+    public_avis.router,
+    vivier.router,
+    # Ancien modèle (session/candidat), encore servi à l'interface le temps de
+    # la bascule.
     sessions.router,
     candidates.router,
     exports.router,

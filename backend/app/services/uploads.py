@@ -25,17 +25,37 @@ class AcceptedFile:
     sha256: str
 
 
-async def validate(file: UploadFile) -> AcceptedFile:
-    """Size, then magic bytes. The extension is never trusted."""
+# Garde-fou, pas une politique de gestion.
+#
+# Il n'y a plus de limite de taille réglable : un scan de diplômes en couleur
+# pèse ce qu'il pèse, et refuser un dossier valable pour cette raison n'a aucun
+# sens. Le stockage se maîtrise en purgeant les fichiers des mandats archivés,
+# pas en rabotant les dépôts.
+#
+# Ce plafond-ci subsiste pour une raison différente : `validate` lit le fichier
+# entier en mémoire, et le formulaire public est ouvert à tout venant. Sans
+# plafond, un seul envoi suffirait à saturer la mémoire du serveur. Il est donc
+# volontairement très haut — aucun dossier légitime ne l'atteint — et ne
+# s'applique qu'aux dépôts non authentifiés.
+PLAFOND_ABSOLU_MO = 100
+
+
+async def validate(file: UploadFile, max_mb: int | None = None) -> AcceptedFile:
+    """Size, then magic bytes. The extension is never trusted.
+
+    `max_mb` ne sert qu'au garde-fou anti-abus du formulaire public ; les
+    dépôts authentifiés n'ont pas de limite de taille.
+    """
     data = await file.read()
     await file.close()
 
     if not data:
-        raise RejectedUpload("The file is empty.")
-    if len(data) > settings.max_upload_bytes:
+        raise RejectedUpload("Le fichier est vide.")
+    if max_mb is not None and len(data) > max_mb * 1024 * 1024:
         raise RejectedUpload(
-            f"The file is {len(data) / 1_048_576:.1f} MB. The limit is "
-            f"{settings.max_upload_mb} MB."
+            f"Le fichier « {(file.filename or 'sans nom')[:60]} » fait "
+            f"{len(data) / 1_048_576:.0f} Mo, ce qui dépasse la limite de {max_mb} Mo "
+            "applicable aux dépôts par le formulaire public."
         )
 
     filename = (file.filename or "cv").strip()[:255]

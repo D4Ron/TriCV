@@ -1,6 +1,13 @@
 import { useAuthStore } from '@/store/auth'
 import type {
   AuditEntry,
+  Avis,
+  CandidaturesPage,
+  Candidature,
+  Client,
+  Grille,
+  Mandat,
+  Poste,
   CandidateDetail,
   CriterionDraft,
   DeploymentSettings,
@@ -16,8 +23,9 @@ import type {
   User,
 } from '@/types'
 
-export const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
-const BASE = `${API_URL}/api/v1`
+import { API_BASE as BASE, API_URL } from '@/lib/config'
+
+export { API_URL }
 
 export class ApiError extends Error {
   constructor(
@@ -128,6 +136,8 @@ export const authApi = {
       auth: false,
     }),
   me: () => request<User>('/auth/me'),
+  signupConfig: () =>
+    request<{ enabled: boolean; requires_code: boolean }>('/auth/signup-config', { auth: false }),
 }
 
 // --- sessions ---------------------------------------------------------------
@@ -264,10 +274,374 @@ export const candidatesApi = {
   },
 }
 
+// --- chaîne de recrutement --------------------------------------------------
+
+export interface SuppressionResultat {
+  supprime: string
+  mandats: number
+  postes: number
+  avis: number
+  candidatures: number
+  candidats_supprimes?: number
+}
+
+/** Fichiers effacés d'un mandat archivé. Les dossiers, eux, restent. */
+export interface PurgeResultat {
+  fichiers: number
+  mo: number
+  candidatures: number
+}
+
+export const recrutementApi = {
+  clients: (recherche?: string, archives = false) => {
+    const query = new URLSearchParams()
+    if (recherche) query.set('recherche', recherche)
+    if (archives) query.set('archives', 'true')
+    const suffix = query.toString()
+    return request<Client[]>(`/clients${suffix ? `?${suffix}` : ''}`)
+  },
+  creerClient: (payload: { nom: string; secteur?: string }) =>
+    request<Client>('/clients', { method: 'POST', body: payload }),
+  supprimerClient: (id: string, confirmer = false) =>
+    request<SuppressionResultat>(`/clients/${id}?confirmer=${confirmer}`, { method: 'DELETE' }),
+  supprimerMandat: (id: string, confirmer = false) =>
+    request<SuppressionResultat>(`/mandats/${id}?confirmer=${confirmer}`, { method: 'DELETE' }),
+  archiverMandat: (id: string) =>
+    request<{ archive: boolean }>(`/mandats/${id}/archiver`, { method: 'POST' }),
+  desarchiverMandat: (id: string) =>
+    request<{ archive: boolean }>(`/mandats/${id}/desarchiver`, { method: 'POST' }),
+  archiverClient: (id: string) =>
+    request<{ archive: boolean }>(`/clients/${id}/archiver`, { method: 'POST' }),
+  desarchiverClient: (id: string) =>
+    request<{ archive: boolean }>(`/clients/${id}/desarchiver`, { method: 'POST' }),
+
+  /** Ce qu'une purge libérerait. Ne supprime rien. */
+  estimerPurge: (id: string) => request<PurgeResultat>(`/mandats/${id}/purge`),
+  /** Supprime les fichiers d'un mandat archivé ; les dossiers restent. */
+  purgerMandat: (id: string) =>
+    request<PurgeResultat>(`/mandats/${id}/purge`, { method: 'POST' }),
+
+  mandats: (params: { statut?: string; client_id?: string; archives?: boolean } = {}) => {
+    const query = new URLSearchParams()
+    if (params.statut) query.set('statut', params.statut)
+    if (params.client_id) query.set('client_id', params.client_id)
+    if (params.archives) query.set('archives', 'true')
+    const suffix = query.toString()
+    return request<Mandat[]>(`/mandats${suffix ? `?${suffix}` : ''}`)
+  },
+  mandat: (id: string) => request<Mandat>(`/mandats/${id}`),
+  creerMandat: (payload: { client_id: string; intitule: string; type_attribution?: string }) =>
+    request<Mandat>('/mandats', { method: 'POST', body: payload }),
+  modifierMandat: (id: string, payload: Record<string, unknown>) =>
+    request<Mandat>(`/mandats/${id}`, { method: 'PATCH', body: payload }),
+
+  postes: (mandatId: string) => request<Poste[]>(`/mandats/${mandatId}/postes`),
+  poste: (id: string) => request<Poste>(`/postes/${id}`),
+  creerPoste: (mandatId: string, payload: Record<string, unknown>) =>
+    request<Poste>(`/mandats/${mandatId}/postes`, { method: 'POST', body: payload }),
+  modifierPoste: (id: string, payload: Record<string, unknown>) =>
+    request<Poste>(`/postes/${id}`, { method: 'PATCH', body: payload }),
+  changerSeuil: (id: string, seuil: number, justification: string) =>
+    request<Poste>(`/postes/${id}/seuil`, { method: 'POST', body: { seuil, justification } }),
+  evaluerPoste: (id: string) =>
+    request<{ candidatures_evaluees: number }>(`/postes/${id}/evaluer`, { method: 'POST' }),
+  grille: (id: string) => request<Grille>(`/postes/${id}/grille`),
+  /** Le fichier est protégé par le jeton : on le récupère puis on le remet
+   *  au navigateur, un lien direct renverrait un 401. */
+  telechargerGrille: async (id: string): Promise<void> => {
+    const response = await fetch(`${BASE}/postes/${id}/grille.xlsx`, {
+      headers: { Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}` },
+    })
+    if (!response.ok) throw new ApiError(response.status, "L'export a échoué")
+
+    const disposition = response.headers.get('content-disposition') ?? ''
+    const nom = /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? 'grille-preselection.xlsx'
+    const url = URL.createObjectURL(await response.blob())
+    const lien = document.createElement('a')
+    lien.href = url
+    lien.download = nom
+    document.body.appendChild(lien)
+    lien.click()
+    lien.remove()
+    URL.revokeObjectURL(url)
+  },
+
+  avis: (posteId: string) => request<Avis[]>(`/postes/${posteId}/avis`),
+  creerAvis: (posteId: string, payload: Record<string, unknown>) =>
+    request<Avis>(`/postes/${posteId}/avis`, { method: 'POST', body: payload }),
+  publierAvis: (id: string) => request<Avis>(`/avis/${id}/publier`, { method: 'POST' }),
+  cloturerAvis: (id: string) => request<Avis>(`/avis/${id}/cloturer`, { method: 'POST' }),
+
+  candidatures: (posteId: string, params: Record<string, string | number> = {}) => {
+    const query = new URLSearchParams()
+    Object.entries(params).forEach(([cle, valeur]) => {
+      if (valeur !== undefined && valeur !== '') query.set(cle, String(valeur))
+    })
+    const suffix = query.toString()
+    return request<CandidaturesPage>(
+      `/postes/${posteId}/candidatures${suffix ? `?${suffix}` : ''}`,
+    )
+  },
+  candidature: (id: string) => request<Candidature>(`/candidatures/${id}`),
+  /** Dépôt en lot : un fichier = une candidature, à relire ensuite. */
+  depotMultiple: (posteId: string, fichiers: File[], depouiller: boolean) => {
+    const formData = new FormData()
+    fichiers.forEach((f) => formData.append('fichiers', f))
+    formData.append('type_piece', 'CV')
+    formData.append('depouiller_aussitot', String(depouiller))
+    return request<{
+      deposes: number
+      refuses: number
+      doublons_ignores: number
+      doublons: number
+      resultats: Array<{
+        fichier: string
+        accepte: boolean
+        erreur?: string
+        doublon_de?: string
+        candidature_id?: string
+        doublons?: Array<{ candidature_id: string; nom: string; motif: string }>
+      }>
+    }>(`/postes/${posteId}/candidatures/depot-multiple`, { method: 'POST', formData })
+  },
+  creerCandidature: (posteId: string, payload: Record<string, unknown>) =>
+    request<Candidature>(`/postes/${posteId}/candidatures`, { method: 'POST', body: payload }),
+  depouiller: (id: string) =>
+    request<{
+      diplomes: number
+      experiences: number
+      langues: number
+      certifications: number
+      pieces_lues: number
+      avertissements: string[]
+    }>(`/candidatures/${id}/depouiller`, { method: 'POST' }),
+  verifier: (id: string, payload: Record<string, boolean>) =>
+    request<Candidature>(`/candidatures/${id}/verifier`, { method: 'POST', body: payload }),
+  leverMotif: (id: string, motif: string, justification: string) =>
+    request<unknown>(`/candidatures/${id}/eliminations/${motif}/lever`, {
+      method: 'POST',
+      body: { motif: justification },
+    }),
+  noteManuelle: (id: string, note: number | null, motif: string) =>
+    request<Candidature>(`/candidatures/${id}/note`, { method: 'PATCH', body: { note, motif } }),
+  joindrePiece: (id: string, typePiece: string, fichier: File) => {
+    const formData = new FormData()
+    formData.append('type_piece', typePiece)
+    formData.append('fichier', fichier)
+    return request<Candidature>(`/candidatures/${id}/pieces`, { method: 'POST', formData })
+  },
+  retirerPiece: (id: string, pieceId: string) =>
+    request<Candidature>(`/candidatures/${id}/pieces/${pieceId}`, { method: 'DELETE' }),
+  /** Même contrainte que les CV : le jeton ne passe pas dans une balise src. */
+  pieceObjectUrl: async (id: string, pieceId: string): Promise<string> => {
+    const response = await fetch(`${BASE}/candidatures/${id}/pieces/${pieceId}`, {
+      headers: { Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}` },
+    })
+    if (!response.ok) throw new ApiError(response.status, `Pièce indisponible (${response.status})`)
+    return URL.createObjectURL(await response.blob())
+  },
+
+  etatCourriel: () =>
+    request<{ actif: boolean; boite: string | null; dossier: string | null }>('/courriel/etat'),
+  testerCourriel: () =>
+    request<{ boite: string; dossier: string; messages: number; non_lus: number }>(
+      '/courriel/tester',
+      { method: 'POST' },
+    ),
+  apercuCourriel: () =>
+    request<{
+      messages: number
+      details: Array<{
+        action: string
+        expediteur: string
+        nom_devine: string
+        sujet: string
+        recu_le: string
+        references: string[]
+        poste: string | null
+        pieces: Array<{ nom: string; octets: number; type: string; retenue: boolean }>
+      }>
+    }>('/courriel/apercu', { method: 'POST' }),
+  releverCourriel: () =>
+    request<{
+      crees: number
+      ignores: number
+      non_rattaches: string[]
+      sans_piece: string[]
+    }>('/courriel/relever', { method: 'POST' }),
+}
+
+// --- vivier -----------------------------------------------------------------
+
+/**
+ * Les profils déjà connus du cabinet.
+ *
+ * Ce que la purge d'un mandat archivé conserve : identité, coordonnées,
+ * diplômes, parcours, notes obtenues. Le fichier disparaît, la personne reste
+ * trouvable.
+ */
+export interface VivierItem {
+  id: string
+  nom: string
+  prenom: string
+  email: string | null
+  telephone: string | null
+  sexe: 'M' | 'F' | null
+  age: number | null
+  nationalites: string[]
+  provenance: string
+  verifie: boolean
+  niveau_max: number | null
+  niveau_libelle: string | null
+  diplome_principal: string | null
+  domaine_principal: string | null
+  annees_experience: number
+  dernier_poste: string | null
+  dernier_employeur: string | null
+  nombre_candidatures: number
+  derniere_candidature: string | null
+  postes_vises: string[]
+  pieces_conservees: number
+  pieces_purgees: number
+}
+
+export interface ProfilVivier extends VivierItem {
+  adresse: string | null
+  date_naissance: string | null
+  langues: string[]
+  certifications: string[]
+  diplomes: Array<{
+    intitule: string
+    niveau: number
+    niveau_libelle: string | null
+    domaine: string
+    etablissement: string | null
+    annee: number | null
+    provenance: string
+  }>
+  experiences: Array<{
+    poste: string
+    employeur: string
+    debut: string
+    fin: string | null
+    domaines: string[]
+    pays: string | null
+    provenance: string
+  }>
+  historique: Array<{
+    candidature_id: string
+    poste_id: string
+    poste: string
+    mandat: string
+    client: string
+    recue_le: string
+    statut: string
+    source: string
+    note: number | null
+    note_max: number | null
+    atteint_le_seuil: boolean | null
+    pieces_conservees: number
+    pieces_purgees: number
+    mandat_archive: boolean
+  }>
+}
+
+export interface CriteresVivier {
+  recherche?: string
+  niveau_min?: number
+  domaine?: string
+  annees_experience_min?: number
+  sexe?: 'M' | 'F'
+  age_min?: number
+  age_max?: number
+  nationalite?: string
+  page?: number
+  page_size?: number
+}
+
+export const vivierApi = {
+  rechercher: (criteres: CriteresVivier = {}) => {
+    const params = new URLSearchParams()
+    Object.entries(criteres).forEach(([cle, valeur]) => {
+      if (valeur !== undefined && valeur !== null && valeur !== '') {
+        params.set(cle, String(valeur))
+      }
+    })
+    const suffix = params.toString()
+    return request<{ items: VivierItem[]; total: number; page: number; page_size: number }>(
+      `/vivier${suffix ? `?${suffix}` : ''}`,
+    )
+  },
+  profil: (id: string) => request<ProfilVivier>(`/vivier/${id}`),
+}
+
 // --- misc -------------------------------------------------------------------
 
 export const settingsApi = {
   get: () => request<DeploymentSettings>('/settings'),
+  modifier: (payload: {
+    seuil_preselection_defaut?: number
+    redact_demographics?: boolean
+    allow_self_registration?: boolean
+    courriel_actif?: boolean
+    imap_host?: string
+    imap_port?: number
+    imap_user?: string
+    /** Omis ou vide = inchangé. Le serveur ne renvoie jamais le secret. */
+    imap_password?: string
+    imap_folder?: string
+  }) => request<DeploymentSettings>('/settings', { method: 'PATCH', body: payload }),
+}
+
+export interface AvisPublicItem {
+  cle_publique: string
+  intitule: string
+  departement: string | null
+  type_avis: string
+  date_cloture: string | null
+  publie_le: string | null
+}
+
+export interface AvisPublic extends AvisPublicItem {
+  description: string | null
+  missions: string[]
+  profil: string[]
+  pieces_attendues: Array<{ code: string; libelle: string }>
+  pieces_facultatives: Array<{ code: string; libelle: string }>
+  taille_max_mo: number
+  formats_acceptes: string[]
+  accepte_candidatures: boolean
+}
+
+/** Façade publique de la chaîne de recrutement : aucun jeton, aucun score. */
+export const avisPublicApi = {
+  ouverts: () => request<AvisPublicItem[]>('/public/avis', { auth: false }),
+  detail: (cle: string) => request<AvisPublic>(`/public/avis/${cle}`, { auth: false }),
+  candidater: (
+    cle: string,
+    payload: {
+      nom: string
+      prenom: string
+      email: string
+      telephone?: string
+      pieces: Array<{ code: string; fichier: File }>
+    },
+  ) => {
+    const formData = new FormData()
+    formData.append('nom', payload.nom)
+    formData.append('prenom', payload.prenom)
+    formData.append('email', payload.email)
+    if (payload.telephone) formData.append('telephone', payload.telephone)
+    // Les deux listes sont appariées par position côté serveur.
+    payload.pieces.forEach(({ code, fichier }) => {
+      formData.append('types_pieces', code)
+      formData.append('fichiers', fichier)
+    })
+    return request<{ ok: boolean; message: string; candidature_id: string }>(
+      `/public/avis/${cle}/candidater`,
+      { method: 'POST', formData, auth: false },
+    )
+  },
 }
 
 export const publicApi = {

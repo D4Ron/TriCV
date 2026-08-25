@@ -7,8 +7,14 @@ from pathlib import Path
 import pytest
 
 # Configure the environment before anything imports app.config.
+#
+# TRICV_IGNORE_ENV_FILE tells app.config not to read the repository's .env at
+# all. Without it the suite inherits whatever the developer happens to have
+# configured — a real mailbox, self-registration left open — and the result
+# stops meaning anything. Everything the tests depend on is pinned here.
 _TMP = Path(tempfile.mkdtemp(prefix="tricv-tests-"))
 os.environ.update(
+    TRICV_IGNORE_ENV_FILE="1",
     DATABASE_URL=f"sqlite+aiosqlite:///{(_TMP / 'test.db').as_posix()}",
     JWT_SECRET="test-secret",
     STORAGE_BACKEND="local",
@@ -20,6 +26,14 @@ os.environ.update(
     CORS_ORIGINS="http://localhost:5173",
     LLM_LOG_PAYLOAD="false",
     PUBLIC_RATE_LIMIT_PER_HOUR="1000",
+    SIGNUP_RATE_LIMIT_PER_HOUR="1000",
+    # Fermé par défaut : plusieurs tests vérifient qu'on l'ouvre explicitement.
+    ALLOW_SELF_REGISTRATION="false",
+    SIGNUP_CODE="",
+    # Aucune boîte : un test ne doit jamais ouvrir de connexion IMAP réelle.
+    IMAP_HOST="",
+    IMAP_USER="",
+    IMAP_PASSWORD="",
 )
 
 import httpx  # noqa: E402

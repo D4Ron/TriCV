@@ -164,6 +164,75 @@ def parse_json_object(raw: str) -> dict:
 # --- the interface ----------------------------------------------------------
 
 
+class DiplomeExtrait(BaseModel):
+    """Un diplôme lu dans un dossier. `niveau` est le N de BAC+N."""
+
+    intitule: str = ""
+    niveau: int | None = None
+    domaine: str = ""
+    etablissement: str | None = None
+    annee: int | None = None
+
+    @field_validator("niveau", mode="before")
+    @classmethod
+    def _borner_niveau(cls, v: object) -> object:
+        if v in (None, ""):
+            return None
+        try:
+            niveau = int(float(str(v).lower().replace("bac+", "").strip()))
+        except (TypeError, ValueError):
+            return None
+        return niveau if 0 <= niveau <= 8 else None
+
+    @field_validator("annee", mode="before")
+    @classmethod
+    def _borner_annee(cls, v: object) -> object:
+        try:
+            annee = int(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        return annee if 1900 <= annee <= 2100 else None
+
+
+class ExperienceExtraite(BaseModel):
+    """Une expérience lue dans un dossier. Dates au format AAAA-MM."""
+
+    poste: str = ""
+    employeur: str = ""
+    debut: str | None = None
+    fin: str | None = None
+    domaines: list[str] = Field(default_factory=list)
+    pays: str | None = None
+
+    @field_validator("domaines", mode="before")
+    @classmethod
+    def _en_liste(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v or []
+
+
+class DossierExtrait(BaseModel):
+    """Ce qu'un modèle peut proposer à partir d'un dossier.
+
+    Volontairement dépourvu d'état civil : le nom, l'email, la date de
+    naissance, le sexe et la nationalité sont retirés du texte avant l'envoi et
+    détectés localement. Le modèle ne lit que le parcours professionnel.
+    """
+
+    diplomes: list[DiplomeExtrait] = Field(default_factory=list)
+    experiences: list[ExperienceExtraite] = Field(default_factory=list)
+    langues: list[str] = Field(default_factory=list)
+    certifications: list[str] = Field(default_factory=list)
+
+    @field_validator("langues", "certifications", mode="before")
+    @classmethod
+    def _en_liste(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v or []
+
+
 class LLMProvider(ABC):
     name: str = "base"
 
@@ -172,6 +241,14 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def structure_fiche(self, raw_text: str, language: str = "fr") -> list[CriterionDraft]: ...
+
+    async def extraire_dossier(self, texte: str) -> DossierExtrait:
+        """Propose le parcours lu dans un dossier déjà expurgé.
+
+        Non abstraite : un fournisseur qui ne sait pas le faire renvoie un
+        dossier vide, ce qui laisse simplement le dépouillement à un humain.
+        """
+        return DossierExtrait()
 
 
 @dataclass(slots=True)
@@ -239,6 +316,18 @@ class BaseLLMProvider(LLMProvider):
                 f"The model's response did not match the expected schema after a retry: "
                 f"{second_error}"
             ) from second_error
+
+    async def extraire_dossier(self, texte: str) -> DossierExtrait:
+        raw = await self._guarded(
+            prompts.extraction_system_prompt(), prompts.extraction_user_prompt(texte), None
+        )
+        try:
+            return DossierExtrait.model_validate(parse_json_object(raw))
+        except (ValidationError, LLMError) as exc:
+            # Une extraction illisible n'est pas une panne : le dossier reste
+            # à dépouiller à la main, ce qui était déjà le cas avant l'appel.
+            logger.warning("[%s] extraction illisible, dossier laissé vide : %s", self.name, exc)
+            return DossierExtrait()
 
     async def structure_fiche(self, raw_text: str, language: str = "fr") -> list[CriterionDraft]:
         system = prompts.fiche_system_prompt(language)

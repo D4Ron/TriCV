@@ -1,14 +1,21 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { User } from '@/types'
+import { API_BASE } from '@/lib/config'
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
+export interface SignupPayload {
+  email: string
+  password: string
+  fullName: string
+  signupCode: string
+}
 
 interface AuthState {
   accessToken: string | null
   refreshToken: string | null
   user: User | null
   login: (email: string, password: string) => Promise<void>
+  signup: (payload: SignupPayload) => Promise<void>
   refresh: () => Promise<boolean>
   loadUser: () => Promise<void>
   logout: () => void
@@ -27,7 +34,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
 
       login: async (email, password) => {
-        const response = await fetch(`${API_URL}/api/v1/auth/login`, {
+        const response = await fetch(`${API_BASE}/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password }),
@@ -43,10 +50,44 @@ export const useAuthStore = create<AuthState>()(
         await get().loadUser()
       },
 
+      // The API signs the new account straight in, so this mirrors login().
+      signup: async ({ email, password, fullName, signupCode }) => {
+        const response = await fetch(`${API_BASE}/auth/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            password,
+            full_name: fullName,
+            signup_code: signupCode,
+          }),
+        })
+        if (!response.ok) {
+          const body = await response.json().catch(() => null)
+          const detail = (body as { detail?: unknown } | null)?.detail
+          throw new Error(
+            typeof detail === 'string'
+              ? detail
+              : Array.isArray(detail)
+                ? detail
+                    .map((item) =>
+                      typeof item === 'object' && item !== null && 'msg' in item
+                        ? String((item as { msg: unknown }).msg)
+                        : String(item),
+                    )
+                    .join(' · ')
+                : 'Could not create the account',
+          )
+        }
+        const data = (await response.json()) as { access_token: string; refresh_token: string }
+        set({ accessToken: data.access_token, refreshToken: data.refresh_token })
+        await get().loadUser()
+      },
+
       refresh: async () => {
         const token = get().refreshToken
         if (!token) return false
-        const response = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+        const response = await fetch(`${API_BASE}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ refresh_token: token }),
@@ -60,7 +101,7 @@ export const useAuthStore = create<AuthState>()(
       loadUser: async () => {
         const token = get().accessToken
         if (!token) return
-        const response = await fetch(`${API_URL}/api/v1/auth/me`, {
+        const response = await fetch(`${API_BASE}/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         })
         if (response.ok) {
