@@ -16,7 +16,7 @@ import httpx
 import pytest
 
 from app.llm import http
-from app.llm.base import LLMError, LLMQuotaError
+from app.llm.base import LLMError, LLMIndisponible, LLMQuotaError
 
 pytestmark = pytest.mark.anyio
 
@@ -75,17 +75,21 @@ async def test_un_429_qui_se_resout_ne_leve_rien(monkeypatch, sans_attente):
     assert await http.post_json("https://exemple/v1", json={}) == {"ok": True}
 
 
-async def test_une_panne_serveur_persistante_reste_une_panne(monkeypatch, sans_attente):
-    """503 quatre fois : le fournisseur est cassé, pas épuisé.
+async def test_une_panne_serveur_persistante_rend_le_fournisseur_indisponible(
+    monkeypatch, sans_attente
+):
+    """503 quatre fois : le fournisseur est en panne, donc inutilisable.
 
-    Basculer ici changerait de lecteur pour une raison qui n'a rien à voir
-    avec l'allocation.
+    Ce n'est pas un quota — le message doit le dire — mais c'est bien un cas
+    où le secours prend le relais. Un « 503, forte demande » de Gemini qui
+    survit aux quatre tentatives laissait sinon le rapport sans rédacteur
+    pendant qu'une seconde clé, en état de marche, ne servait à rien.
     """
     poser(monkeypatch, [(503, "unavailable")] * 4)
 
-    with pytest.raises(LLMError) as echec:
+    with pytest.raises(LLMIndisponible) as echec:
         await http.post_json("https://exemple/v1", json={})
-    assert not isinstance(echec.value, LLMQuotaError)
+    assert not isinstance(echec.value, LLMQuotaError), "une panne n'est pas un quota"
 
 
 async def test_un_403_qui_parle_de_quota_est_un_quota(monkeypatch, sans_attente):
@@ -113,22 +117,27 @@ async def test_un_401_n_est_jamais_un_quota(monkeypatch, sans_attente):
     assert not isinstance(echec.value, LLMQuotaError)
 
 
-async def test_une_panne_reseau_persistante_n_est_pas_un_quota(monkeypatch, sans_attente):
+async def test_un_fournisseur_injoignable_est_indisponible(monkeypatch, sans_attente):
+    """Injoignable quatre fois : autant essayer ailleurs."""
     poser(monkeypatch, [httpx.ConnectError("injoignable")] * 4)
 
-    with pytest.raises(LLMError) as echec:
+    with pytest.raises(LLMIndisponible) as echec:
         await http.post_json("https://exemple/v1", json={})
     assert not isinstance(echec.value, LLMQuotaError)
 
 
 async def test_un_429_suivi_d_une_panne_reseau_n_est_pas_un_quota(monkeypatch, sans_attente):
-    """Le verdict porte sur la *dernière* tentative, pas sur la pire."""
+    """Le verdict porte sur la *dernière* tentative, pas sur la pire.
+
+    Indisponible dans les deux cas — la nuance ne change pas la bascule, elle
+    change ce que le journal raconte.
+    """
     poser(
         monkeypatch,
         [(429, "slow down"), (429, "slow down"), httpx.ConnectError("coupure"),
          httpx.ConnectError("coupure")],
     )
 
-    with pytest.raises(LLMError) as echec:
+    with pytest.raises(LLMIndisponible) as echec:
         await http.post_json("https://exemple/v1", json={})
     assert not isinstance(echec.value, LLMQuotaError)

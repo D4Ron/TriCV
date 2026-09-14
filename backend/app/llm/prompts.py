@@ -169,11 +169,14 @@ Règles :
 
 Réponds uniquement par un objet JSON, sans texte autour :
 {
-  "diplomes": [{"intitule": "", "niveau": 5, "domaine": "", "etablissement": "", "annee": 2010}],
+  "diplomes": [{"intitule": "", "niveau": 5, "domaine": "", "domaine_dossier": "", "etablissement": "", "annee": 2010}],
   "experiences": [{"poste": "", "employeur": "", "debut": "2015-01", "fin": null, "domaines": [""], "pays": ""}],
   "langues": [""],
   "certifications": [""]
-}"""
+}
+
+`domaine_dossier` porte les mots du dossier, sans reformulation. Quand aucune
+liste de domaines n'est fournie, il vaut la même chose que `domaine`."""
 
 
 def extraction_system_prompt(domaines: Sequence[str] = ()) -> str:
@@ -197,9 +200,22 @@ def extraction_system_prompt(domaines: Sequence[str] = ()) -> str:
         f"{_EXTRACTION_SYSTEME}\n\n"
         "Le poste visé emploie les intitulés de domaine suivants :\n"
         f"{liste}\n"
-        "Quand un diplôme ou une expérience relève de l'un d'eux, reprends "
-        "l'intitulé mot pour mot plutôt qu'une reformulation. Sinon, garde le "
-        "domaine tel que le dossier le nomme : ne force aucun rapprochement."
+        # « Relève de l'un d'eux » se lisait « a un rapport avec l'un d'eux ».
+        # Sur des dossiers réels, une « Licence en mathématiques appliquées »
+        # ressortait en « informatique » : le rapprochement n'est plus une
+        # traduction, c'est un élargissement, et il vaut au candidat les points
+        # d'un domaine qu'il n'a pas étudié. La consigne dit donc la règle et
+        # son contre-exemple.
+        "Cette liste sert à **renommer**, jamais à **élargir**.\n"
+        "- Reprends l'un de ces intitulés mot pour mot uniquement si le dossier "
+        "désigne le *même* domaine sous d'autres mots : « gestion du personnel » "
+        "et « politique RH » sont des façons de dire « ressources humaines ».\n"
+        "- Si le dossier nomme un domaine simplement *voisin* — mathématiques "
+        "et informatique, droit et gestion, biologie et santé —, garde les mots "
+        "du dossier. Ce sont deux domaines, pas deux noms d'un seul.\n"
+        "- Dans le doute, garde les mots du dossier.\n"
+        "Renseigne en plus `domaine_dossier` avec les mots exacts du dossier, "
+        "toujours, même quand tu as repris un intitulé de la liste."
     )
 
 

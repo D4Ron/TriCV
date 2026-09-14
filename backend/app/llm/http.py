@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 import httpx
 
 from app.config import settings
-from app.llm.base import LLMError, LLMQuotaError
+from app.llm.base import LLMError, LLMIndisponible, LLMQuotaError
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +94,13 @@ async def post_json(
                 delay = BACKOFF_SECONDS[attempt] * (1 + random.random() * 0.25)
                 await asyncio.sleep(delay)
 
+    # Survivre aux quatre tentatives, c'est ne pas être disponible : 5xx à
+    # répétition, ou pas de réponse du tout. Un secours doit pouvoir prendre le
+    # relais — c'est le jour de panne qui justifie qu'on ait une seconde clé.
     message = f"{provider} unreachable after {MAX_ATTEMPTS} attempts: {last_error}"
-    raise LLMQuotaError(message) if dernier_429 else LLMError(message)
+    if dernier_429:
+        raise LLMQuotaError(message)
+    raise LLMIndisponible(message)
 
 
 async def retry_async(

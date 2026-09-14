@@ -7,16 +7,22 @@ affiche « Extraction indisponible » et arrête le travail alors qu'une seconde
 clé dort à côté.
 
 La chaîne essaie les fournisseurs dans l'ordre déclaré et ne passe au suivant
-que sur un **quota épuisé**. C'est la seule bascule légitime :
+que lorsque celui-ci **ne peut pas servir** — quota épuisé, ou service en panne
+après les quatre tentatives. Ce sont les deux seules bascules légitimes :
 
 - une réponse illisible se relance chez le même fournisseur, elle ne dit rien
-  de son allocation ;
+  de son état ;
 - une clé refusée est une erreur de configuration, que masquer chez le voisin
-  ferait découvrir des semaines plus tard ;
-- une panne réseau a déjà été retentée quatre fois avant d'arriver ici.
+  ferait découvrir des semaines plus tard.
 
-Basculer sur autre chose que le quota reviendrait à changer de lecteur pour une
-raison qui n'a rien à voir avec la lecture.
+Basculer pour autre chose reviendrait à changer de lecteur pour une raison qui
+n'a rien à voir avec la lecture.
+
+La panne compte au même titre que le quota, et l'expérience l'a montré : un
+« 503, forte demande » de Gemini qui survit aux quatre tentatives laissait le
+rapport sans rédacteur pendant qu'une seconde clé, en état de marche, ne
+servait à rien. Un 5xx passager se dissipe dans les quinze secondes du repli ;
+celui qui y survit est une indisponibilité.
 
 **Ce que la bascule coûte, et pourquoi elle se trace.** Deux modèles ne lisent
 pas un CV de la même façon. Un mandat dépouillé moitié par l'un, moitié par
@@ -48,6 +54,7 @@ from app.llm.base import (
     DossierExtrait,
     FichePayload,
     LLMError,
+    LLMIndisponible,
     LLMProvider,
     LLMQuotaError,
 )
@@ -121,22 +128,24 @@ class ChaineFournisseurs(LLMProvider):
         for rang, fournisseur in enumerate(candidats):
             try:
                 resultat = await appel(fournisseur)
-            except LLMQuotaError as exc:
+            except LLMIndisponible as exc:
                 epuises.append(fournisseur.name)
-                # Inutile de redécouvrir son épuisement au dossier suivant.
+                # Inutile de redécouvrir son indisponibilité au dossier suivant.
                 self._mettre_au_repos(fournisseur)
                 reste = candidats[rang + 1 :]
                 if not reste:
-                    raise LLMQuotaError(
-                        f"Plus d'allocation chez {' ni '.join(epuises)} pour « {operation} ». "
-                        f"Attendez la remise à zéro du quota, ou saisissez à la main."
+                    raise LLMIndisponible(
+                        f"Aucun fournisseur disponible pour « {operation} » : "
+                        f"{' ni '.join(epuises)}. Quota épuisé ou service en panne — "
+                        f"réessayez plus tard, ou saisissez à la main."
                     ) from exc
                 logger.warning(
-                    "[chaîne] %s n'a plus de quota pour « %s » ; bascule sur %s, et "
+                    "[chaîne] %s indisponible pour « %s » (%s) ; bascule sur %s, et "
                     "mise au repos %d min. Les dossiers de ce mandat ne sont donc "
                     "plus tous lus par le même modèle.",
                     fournisseur.name,
                     operation,
+                    "quota épuisé" if isinstance(exc, LLMQuotaError) else "service en panne",
                     reste[0].name,
                     self.repos_secondes // 60,
                 )

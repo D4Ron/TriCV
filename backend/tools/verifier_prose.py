@@ -88,7 +88,10 @@ def noms_inventes(texte: str, contexte: str) -> list[str]:
 
 async def main() -> int:
     print(f"Fournisseur : {settings.llm_provider} — modèle : {settings.llm_model or 'défaut'}\n")
-    section = rapports.PAR_CODE["PUBLICATION"]
+    # Une section qui annonce des chiffres : c'est là qu'un modèle comble les
+    # blancs — canaux de diffusion, motifs d'élimination — quand les données
+    # n'en donnent pas.
+    section = rapports.PAR_CODE["RESULTATS_PRESELECTION"]
 
     texte = await get_provider().rediger(section.consigne, CONTEXTE, titre=section.titre)
 

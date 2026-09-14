@@ -46,13 +46,29 @@ class LLMConfigError(LLMError):
     """Missing key, unknown provider, unsupported payload — not worth retrying."""
 
 
-class LLMQuotaError(LLMError):
-    """Ce fournisseur n'a plus d'allocation, et attendre n'y changera rien.
+class LLMIndisponible(LLMError):
+    """Ce fournisseur ne peut pas servir maintenant : essayez-en un autre.
 
-    Distincte d'une panne : une réponse illisible se relance, un quota épuisé
-    ne se relance pas — il se contourne. C'est cette distinction qui permet à
-    une chaîne de fournisseurs de basculer sur le suivant sans basculer aussi
-    pour une erreur passagère.
+    Deux cas la lèvent, et un seul les réunit utilement — dans les deux,
+    insister chez le même fournisseur ne donnera rien avant longtemps :
+
+    - son allocation est épuisée (`LLMQuotaError`) ;
+    - il est en panne, c'est-à-dire qu'il a rendu 5xx ou n'a pas répondu
+      pendant les quatre tentatives.
+
+    Ce qu'elle ne couvre pas, délibérément : une réponse illisible, qui ne dit
+    rien de l'état du fournisseur, et une clé refusée, qui est une erreur de
+    configuration à voir plutôt qu'à contourner chez le voisin.
+
+    Toujours levée **après** l'échec des quatre tentatives. Un 503 « forte
+    demande » se dissipe souvent dans les quinze secondes du repli ; celui qui
+    y survit est une indisponibilité, et c'est exactement le jour où la seconde
+    clé gagne son existence.
+    """
+
+
+class LLMQuotaError(LLMIndisponible):
+    """Plus d'allocation chez ce fournisseur, et attendre n'y changera rien.
 
     Levée seulement après l'échec des quatre tentatives : une limite *par
     minute* se rattrape dans le temps du repli, une limite *par jour* non.
@@ -223,10 +239,18 @@ class DiplomeExtrait(BaseModel):
     intitule: str = ""
     niveau: int | None = None
     domaine: str = ""
+    # Les mots du dossier, avant tout rapprochement avec le vocabulaire du
+    # poste. Donner ce vocabulaire au modèle règle un vrai problème — « gestion
+    # du personnel » et « ressources humaines » sont le même métier — mais le
+    # pousse aussi à ranger sous l'intitulé attendu ce qui n'en est que voisin.
+    # Garder les mots d'origine rend le rapprochement visible : le relecteur
+    # voit qu'une « licence en mathématiques appliquées » a été comptée en
+    # informatique, et peut le refuser.
+    domaine_dossier: str = ""
     etablissement: str | None = None
     annee: int | None = None
 
-    @field_validator("intitule", "domaine", mode="before")
+    @field_validator("intitule", "domaine", "domaine_dossier", mode="before")
     @classmethod
     def _tolerer_null(cls, v: object) -> object:
         return _texte_propre(v)
@@ -512,6 +536,7 @@ __all__ = [
     "FichePayload",
     "LLMConfigError",
     "LLMError",
+    "LLMIndisponible",
     "LLMProvider",
     "LLMQuotaError",
     "parse_json_object",

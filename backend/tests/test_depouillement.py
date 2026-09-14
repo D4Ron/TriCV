@@ -444,7 +444,12 @@ def test_le_vocabulaire_du_poste_est_donne_au_modele():
     assert '"droit social"' in avec
     # Répété deux fois dans l'appel, listé une seule.
     assert avec.count('"gestion des ressources humaines"') == 1
-    assert "ne force aucun rapprochement" in avec
+    # Le vocabulaire sert à renommer, pas à élargir : sans cette limite, le
+    # modèle range sous l'intitulé attendu ce qui n'en est que voisin. Éprouvé
+    # sur dix CV réels : une « licence en mathématiques appliquées » ressortait
+    # en « informatique ». C'est la règle qui est vérifiée ici, pas sa
+    # formulation — voir `test_rapprochement_domaine.py`.
+    assert "renommer" in avec and "élargir" in avec
 
 
 def test_sans_poste_la_consigne_reste_celle_d_origine():

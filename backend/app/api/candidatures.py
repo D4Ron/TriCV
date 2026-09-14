@@ -7,6 +7,7 @@ manuelle. Toutes les trois exigent un motif écrit et passent au journal.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from pathlib import Path
@@ -68,6 +69,8 @@ from app.services.preselection import (
     construire_bareme,
     evaluer_candidature,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["candidatures"])
 
@@ -420,8 +423,24 @@ async def depot_multiple(
         # Le lot est le cas où les doublons apparaissent : on les signale tout
         # de suite plutôt que de laisser les RH les découvrir dans la grille.
         repetitions = await doublons.detecter(db, chargee)
+        lecture: str | None = None
         if depouiller_aussitot:
-            await depouillement.depouiller(db, chargee)
+            try:
+                resume = await depouillement.depouiller(db, chargee)
+                lecture = (
+                    f"{resume.diplomes} diplôme(s), {resume.experiences} expérience(s)"
+                )
+            except Exception as exc:
+                # Le dépôt est acquis ; la lecture est un service rendu en plus.
+                # Sans ce garde-fou, un seul CV illisible — ou une panne du
+                # fournisseur sur le trentième fichier — remontait en 500, le
+                # `commit` final n'avait jamais lieu, et **tout le lot était
+                # perdu**. Cent dossiers déposés à la main disparaissaient parce
+                # qu'un modèle n'avait pas répondu.
+                logger.warning(
+                    "dépouillement impossible au dépôt de %s : %s", candidature.id, exc
+                )
+                lecture = f"lecture impossible : {exc}"
 
         resultats.append(
             {
@@ -429,6 +448,7 @@ async def depot_multiple(
                 "accepte": True,
                 "candidature_id": candidature.id,
                 "pieces": len(acceptees),
+                "lecture": lecture,
                 "doublons": [
                     {"candidature_id": d.candidature_id, "nom": d.nom_complet, "motif": d.libelle}
                     for d in repetitions

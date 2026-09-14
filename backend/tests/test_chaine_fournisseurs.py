@@ -19,6 +19,7 @@ from app.llm.base import (
     DossierExtrait,
     LLMConfigError,
     LLMError,
+    LLMIndisponible,
     LLMProvider,
     LLMQuotaError,
     modele_configure,
@@ -132,10 +133,24 @@ async def test_tous_epuises_le_dit_clairement():
         [Faux("mistral", LLMQuotaError("vide")), Faux("gemini", LLMQuotaError("vide"))]
     )
 
-    with pytest.raises(LLMQuotaError) as echec:
+    with pytest.raises(LLMIndisponible) as echec:
         await chaine.rediger("Rédigez.", "…")
 
     assert "mistral" in str(echec.value) and "gemini" in str(echec.value)
+
+
+async def test_une_panne_fait_basculer_comme_un_quota():
+    """Un 503 qui survit aux quatre tentatives est une indisponibilité.
+
+    Le laisser passer pour une panne ordinaire privait le rapport de rédacteur
+    pendant qu'une seconde clé, en état de marche, ne servait à rien.
+    """
+    premier = Faux("gemini", LLMIndisponible("HTTP 503: forte demande"))
+    second = Faux("mistral")
+
+    assert await ChaineFournisseurs([premier, second]).rediger("R.", "…") == (
+        "prose de mistral"
+    )
 
 
 # --- le repos d'un fournisseur épuisé ---------------------------------------
@@ -177,7 +192,7 @@ async def test_tous_au_repos_on_frappe_quand_meme():
     second = Faux("gemini", LLMQuotaError("vide"))
     chaine = ChaineFournisseurs([premier, second])
 
-    with pytest.raises(LLMQuotaError):
+    with pytest.raises(LLMIndisponible):
         await chaine.rediger("Rédigez.", "…")
 
     premier.erreur = None

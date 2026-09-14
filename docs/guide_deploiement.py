@@ -608,8 +608,11 @@ def contenu() -> list:
                 ],
                 [
                     "<b>LLM_FALLBACK</b>",
-                    "Le fournisseur de secours, essayé quand le principal n'a plus "
-                    "d'allocation — et seulement dans ce cas.",
+                    "Le fournisseur de secours, essayé quand le principal ne peut "
+                    "pas servir : allocation épuisée, ou service en panne après "
+                    "quatre tentatives. Dans ces deux cas seulement — une réponse "
+                    "illisible ou une clé refusée sont des défauts à voir, pas à "
+                    "contourner.",
                     "Utile si le cabinet dispose de deux clés. Lire la réserve de "
                     "confidentialité en section 6 bis avant de l'activer.",
                 ],
@@ -701,6 +704,28 @@ def contenu() -> list:
             "les conserve : c'est une décision à prendre une fois, en connaissance de "
             "cause. Dans tous les cas, l'expurgation retire le nom, l'adresse, le "
             "téléphone, le courriel et la date de naissance avant l'envoi."
+        )
+    )
+    h.append(
+        para(
+            "<b>Deux clés valent mieux qu'une, et pas seulement pour le quota.</b> "
+            "Un fournisseur tombe en panne comme il s'épuise : un « 503, forte "
+            "demande » qui survit aux quatre tentatives laisse l'application sans "
+            "modèle, alors qu'une seconde clé en état de marche ne servirait à "
+            "rien. Le secours prend le relais dans les deux cas, et le fournisseur "
+            "écarté est mis de côté un quart d'heure plutôt que réinterrogé à "
+            "chaque dossier. Le journal dit lequel des deux motifs a joué."
+        )
+    )
+    h.extend(
+        encadre(
+            "Ce qu'une bascule change, et qu'il faut savoir",
+            "Deux modèles ne lisent pas un dossier de la même façon. Un mandat "
+            "dépouillé moitié par l'un, moitié par l'autre produit une grille dont "
+            "les lignes ne viennent pas du même lecteur, et un candidat qui "
+            "conteste son élimination a le droit de savoir lequel a lu son "
+            "dossier. Chaque bascule est donc journalisée en nommant les deux "
+            "fournisseurs.",
         )
     )
     h.append(

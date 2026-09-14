@@ -27,7 +27,12 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.referentiel import NiveauDiplome, Sexe, normaliser_domaine
+from app.domain.referentiel import (
+    NiveauDiplome,
+    Sexe,
+    domaine_correspond,
+    normaliser_domaine,
+)
 from app.llm.base import DossierExtrait, LLMError
 from app.llm.factory import get_provider
 from app.models import (
@@ -339,6 +344,38 @@ async def _faire_place(
     return True
 
 
+def _signaler_rapprochement(
+    diplome, retenu: str, resultat: ResultatDepouillement
+) -> None:
+    """Dit tout haut qu'un domaine a été renommé, et en quoi.
+
+    Donner au modèle le vocabulaire du poste règle un vrai problème — « gestion
+    du personnel » et « ressources humaines » sont le même métier, et la grille
+    ne le devinait pas. Mais cela le pousse aussi à ranger sous l'intitulé
+    attendu ce qui n'en est que voisin : sur des dossiers réels, une « licence
+    en mathématiques appliquées » est ressortie en « informatique ».
+
+    Le rapprochement n'est pas annulé — le modèle a peut-être raison, et le
+    refuser d'office rendrait la grille aveugle aux synonymes. Il devient
+    **visible** : le relecteur lit les deux mots et tranche. C'est la même règle
+    que partout ailleurs ici, une proposition n'est jamais une conclusion.
+    """
+    dit = normaliser_domaine(getattr(diplome, "domaine_dossier", "") or "")
+    if not dit or dit == retenu:
+        return
+    # « mathematiques appliquees » compté en « mathematiques » n'est pas un
+    # rapprochement : c'est le même domaine, dit plus court. Le signaler noierait
+    # les vrais écarts — « data science » compté en « informatique » — sous des
+    # avertissements que personne ne lirait plus.
+    if domaine_correspond(dit, retenu):
+        return
+    resultat.avertissements.append(
+        f"« {diplome.intitule or 'diplôme sans intitulé'} » : domaine du dossier "
+        f"« {dit} », compté comme « {retenu} » — vérifiez que c'est le même "
+        f"domaine et non un domaine voisin."
+    )
+
+
 def _appliquer_parcours(
     candidat: Candidat, dossier: DossierExtrait, resultat: ResultatDepouillement
 ) -> list[object]:
@@ -354,12 +391,14 @@ def _appliquer_parcours(
                 f"Diplôme ignoré, niveau indéterminable : {diplome.intitule or 'sans intitulé'}"
             )
             continue
+        retenu = normaliser_domaine(diplome.domaine or diplome.intitule)[:255]
+        _signaler_rapprochement(diplome, retenu, resultat)
         nouveaux.append(
             DiplomeCandidat(
                 candidat_id=candidat.id,
                 intitule=diplome.intitule.strip()[:512],
                 niveau=int(niveau),
-                domaine=normaliser_domaine(diplome.domaine or diplome.intitule)[:255],
+                domaine=retenu,
                 etablissement=(diplome.etablissement or None),
                 annee=diplome.annee,
                 provenance=Provenance.EXTRAIT_IA,
