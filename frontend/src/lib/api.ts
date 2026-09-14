@@ -872,10 +872,60 @@ export interface AvisPublicItem {
   publie_le: string | null
 }
 
+/**
+ * Ce que le candidat déclare de son parcours, en plus de joindre son CV.
+ *
+ * Redondant avec le CV, volontairement : tant que le CV n'a pas été dépouillé
+ * et relu, ces données n'existent pas en base — la note porte alors sur trois
+ * points au lieu de trente, et les conditions d'âge ou de nationalité ne
+ * s'appliquent à personne.
+ */
+export interface DiplomeDeclare {
+  intitule: string
+  /** Le N de BAC+N, choisi dans une liste : 0 = baccalauréat, 8 = doctorat. */
+  niveau: number
+  domaine: string
+  etablissement?: string
+  annee?: number | null
+}
+
+export interface ExperienceDeclaree {
+  poste: string
+  employeur: string
+  /** AAAA-MM-JJ. Le formulaire saisit un mois, le jour vaut 1. */
+  debut: string
+  /** Absente = poste toujours occupé. */
+  fin?: string | null
+  domaines?: string[]
+  pays?: string
+}
+
+export interface ParcoursDeclare {
+  diplomes: DiplomeDeclare[]
+  experiences: ExperienceDeclaree[]
+  langues: string[]
+  certifications: string[]
+  formations_complementaires: string[]
+}
+
+/** L'échelle BAC+N du référentiel, telle que le candidat la choisit. */
+export const NIVEAUX_DIPLOME: Array<{ valeur: number; libelle: string }> = [
+  { valeur: 0, libelle: 'Baccalauréat' },
+  { valeur: 1, libelle: 'BAC+1' },
+  { valeur: 2, libelle: 'BAC+2 — BTS, DUT, DEUG' },
+  { valeur: 3, libelle: 'BAC+3 — Licence, Bachelor' },
+  { valeur: 4, libelle: 'BAC+4 — Maîtrise, Master 1' },
+  { valeur: 5, libelle: 'BAC+5 — Master, Ingénieur, DEA, DESS' },
+  { valeur: 8, libelle: 'Doctorat, PhD' },
+]
+
 export interface AvisPublic extends AvisPublicItem {
   description: string | null
   missions: string[]
   profil: string[]
+  /** Conditions éliminatoires, dites avant le dépôt. */
+  conditions: string[]
+  justification_conditions: string | null
   pieces_attendues: Array<{ code: string; libelle: string }>
   pieces_facultatives: Array<{ code: string; libelle: string }>
   /** « La CNI ou le passeport » : un choix à présenter comme tel, pas deux cases. */
@@ -902,6 +952,13 @@ export const avisPublicApi = {
       prenom: string
       email: string
       telephone?: string
+      adresse?: string
+      /** AAAA-MM-JJ. Décide de la condition d'âge, éliminatoire. */
+      date_naissance?: string
+      sexe?: string
+      /** Séparées par des virgules. Décide de la condition de nationalité. */
+      nationalites?: string
+      parcours?: ParcoursDeclare
       pieces: Array<{ code: string; fichier: File; intitule?: string }>
     },
   ) => {
@@ -910,6 +967,13 @@ export const avisPublicApi = {
     formData.append('prenom', payload.prenom)
     formData.append('email', payload.email)
     if (payload.telephone) formData.append('telephone', payload.telephone)
+    if (payload.adresse) formData.append('adresse', payload.adresse)
+    if (payload.date_naissance) formData.append('date_naissance', payload.date_naissance)
+    if (payload.sexe) formData.append('sexe', payload.sexe)
+    if (payload.nationalites) formData.append('nationalites', payload.nationalites)
+    // Le parcours voyage en JSON dans le multipart : des listes imbriquées ne
+    // se décrivent pas en champs plats sans inventer une convention de noms.
+    if (payload.parcours) formData.append('parcours', JSON.stringify(payload.parcours))
     // Les trois listes sont appariées par position côté serveur.
     payload.pieces.forEach(({ code, fichier, intitule }) => {
       formData.append('types_pieces', code)
@@ -934,6 +998,11 @@ export const avisPublicApi = {
     prenom: string
     email: string
     telephone?: string
+    adresse?: string
+    date_naissance?: string
+    sexe?: string
+    nationalites?: string
+    parcours?: ParcoursDeclare
     domaine?: string
     message?: string
     pieces: Array<{ code: string; fichier: File; intitule?: string }>
@@ -943,6 +1012,11 @@ export const avisPublicApi = {
     formData.append('prenom', payload.prenom)
     formData.append('email', payload.email)
     if (payload.telephone) formData.append('telephone', payload.telephone)
+    if (payload.adresse) formData.append('adresse', payload.adresse)
+    if (payload.date_naissance) formData.append('date_naissance', payload.date_naissance)
+    if (payload.sexe) formData.append('sexe', payload.sexe)
+    if (payload.nationalites) formData.append('nationalites', payload.nationalites)
+    if (payload.parcours) formData.append('parcours', JSON.stringify(payload.parcours))
     if (payload.domaine) formData.append('domaine', payload.domaine)
     if (payload.message) formData.append('message', payload.message)
     payload.pieces.forEach(({ code, fichier, intitule }) => {
@@ -1271,6 +1345,9 @@ export interface ModeleDocument {
 
 export const rapportsApi = {
   lister: (mandatId: string) => request<RapportItem[]>(`/mandats/${mandatId}/rapports`),
+  /** Jette un brouillon. Un rapport validé est refusé : il se retire du partage. */
+  supprimer: (rapportId: string) =>
+    request<void>(`/rapports/${rapportId}`, { method: 'DELETE' }),
   generer: (
     mandatId: string,
     payload: {

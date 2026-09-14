@@ -309,10 +309,21 @@ async def _faire_place(
     lignes = [*candidat.diplomes, *candidat.experiences]
     humaines = [x for x in lignes if x.provenance is not Provenance.EXTRAIT_IA]
     if humaines:
+        # Ce cas est devenu courant depuis que le formulaire public fait
+        # déclarer son parcours au candidat : le dossier arrive déjà rempli, et
+        # le dépouillement n'a plus de place où écrire. Le message dit donc quoi
+        # faire, et non seulement ce qui n'a pas eu lieu — sans quoi il se lit
+        # comme une panne alors que c'est la protection qui joue.
+        declarees = sum(1 for x in humaines if x.provenance is Provenance.DECLARE)
+        origine = (
+            "déclarées par le candidat"
+            if declarees == len(humaines)
+            else "déclarées par le candidat ou saisies par un relecteur"
+        )
         resultat.avertissements.append(
-            f"{len(humaines)} ligne(s) du dossier ont été déclarées par le candidat ou "
-            "saisies par un relecteur : le dépouillement les laisse intactes et n'a "
-            "rien proposé."
+            f"{len(humaines)} ligne(s) du parcours sont {origine} : le dépouillement "
+            "ne les remplace pas et n'a rien proposé. Comparez-les au CV joint, et "
+            "complétez à la main ce qu'il porterait en plus."
         )
         return False
 

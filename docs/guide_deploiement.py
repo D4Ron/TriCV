@@ -596,14 +596,146 @@ def contenu() -> list:
                 ],
                 [
                     "<b>LLM_PROVIDER</b>",
-                    "Le fournisseur du modèle.",
-                    "Une clé <b>payante</b> chez Gemini ou Anthropic. L'offre gratuite "
-                    "de Google autorise l'entraînement sur ce qui lui est soumis. "
-                    "L'option <font face='Courier'>ollama</font> fait tourner le modèle "
-                    "sur le serveur : rien ne sort.",
+                    "Le fournisseur qui lit les dossiers. "
+                    "<font face='Courier'>gemini</font>, "
+                    "<font face='Courier'>anthropic</font>, "
+                    "<font face='Courier'>ollama</font> (local) ou "
+                    "<font face='Courier'>openai</font> — ce dernier désignant une "
+                    "adresse, pas une marque : Mistral, Groq, OpenRouter, un serveur "
+                    "vLLM du cabinet.",
+                    "Voir la section 6 bis. Toute offre gratuite s'entraîne sur ce "
+                    "qu'on lui envoie, sauf à le refuser quand c'est possible.",
+                ],
+                [
+                    "<b>LLM_FALLBACK</b>",
+                    "Le fournisseur de secours, essayé quand le principal n'a plus "
+                    "d'allocation — et seulement dans ce cas.",
+                    "Utile si le cabinet dispose de deux clés. Lire la réserve de "
+                    "confidentialité en section 6 bis avant de l'activer.",
+                ],
+                [
+                    "<b>LLM_PROSE_PROVIDER</b>",
+                    "Le fournisseur qui <b>rédige</b> les rapports, quand ce n'est pas "
+                    "celui qui dépouille.",
+                    "Le plus sobre en invention. Un rapport part au client sous la "
+                    "signature du cabinet.",
+                ],
+                [
+                    "<b>LLM_MAX_CONCURRENCY</b>",
+                    "Le nombre d'appels simultanés au fournisseur.",
+                    "<b>1</b> sur une offre gratuite limitée à une requête par "
+                    "seconde — au-delà, les appels partent en rafale, se font "
+                    "refuser, et attendent la reprise.",
                 ],
             ],
-            [42 * mm, 68 * mm, 55 * mm],
+            # Première colonne élargie : « LLM_MAX_CONCURRENCY » se coupait en
+            # « LLM_MAX_CONCURREN / CY », et un nom de variable coupé au milieu
+            # se recopie faux.
+            [50 * mm, 62 * mm, 53 * mm],
+        )
+    )
+
+    # --- 6 bis. le choix du fournisseur ------------------------------------
+    h.append(para("6 bis. Choisir le fournisseur du modèle", "section"))
+    h.append(
+        para(
+            "Le chiffre qui décide n'est pas le nombre de requêtes par jour. Un "
+            "dépouillement envoie jusqu'à 24 000 caractères de CV, soit environ "
+            "7 000 jetons : une offre généreuse en requêtes mais plafonnée en "
+            "<b>jetons par jour</b> s'épuise bien avant d'avoir consommé ses requêtes. "
+            "La rédaction, elle, coûte quelques centaines de jetons par section."
+        )
+    )
+    h.append(
+        tableau(
+            ["Fournisseur", "Offre gratuite", "Dossiers par jour"],
+            [
+                [
+                    "<b>Mistral</b>",
+                    "1 requête/s. La famille <font face='Courier'>ministral</font> "
+                    "seule est allouée : <font face='Courier'>mistral-small</font> et "
+                    "<font face='Courier'>medium</font> sont à zéro et répondent 429.",
+                    "Plusieurs milliers",
+                ],
+                ["Gemini 2.5 Flash-Lite", "15 req/min, 1 000 req/jour", "~1 000"],
+                ["Gemini 2.5 Flash", "10 req/min, 250 req/jour", "~250"],
+                [
+                    "Groq <font face='Courier'>llama-3.3-70b</font>",
+                    "30 req/min mais <b>100 000 jetons/jour</b>",
+                    "~13",
+                ],
+                ["Ollama, sur place", "aucune limite", "illimité"],
+            ],
+            [38 * mm, 72 * mm, 55 * mm],
+        )
+    )
+    h.extend(
+        encadre(
+            "Mesurer avant de faire confiance",
+            "Un fournisseur qui coûte moins et lit moins bien n'est pas une économie : "
+            "l'exactitude du dépouillement est ce sur quoi repose toute la "
+            "présélection. Après chaque changement de fournisseur ou de modèle, "
+            "lancer les deux contrôles ci-dessous. Le premier vérifie qu'une section "
+            "de rapport revient en prose française et n'invente aucun nom ; le second "
+            "mesure la lecture de six dossiers et se compare au repère inscrit dans "
+            "le script (14/14 diplômes, 18/18 expériences).",
+        )
+    )
+    h.extend(
+        bloc_code(
+            [
+                "cd backend",
+                ".venv/Scripts/python.exe tools/verifier_prose.py",
+                ".venv/Scripts/python.exe -m tools.evaluer_extraction essai",
+            ]
+        )
+    )
+    h.append(
+        para(
+            "<b>La confidentialité n'est pas la même partout.</b> L'offre gratuite de "
+            "Google s'entraîne sur ce qui lui est envoyé, sans réglage pour le "
+            "refuser ; celle de Mistral aussi, mais le refus se pose dans la console "
+            "(Admin &gt; Privacy) sans changer d'offre. C'est à faire avant le premier "
+            "dossier réel. Un secours qui descend de l'un vers l'autre déplace donc de "
+            "vrais parcours d'un fournisseur qui les oublie vers un fournisseur qui "
+            "les conserve : c'est une décision à prendre une fois, en connaissance de "
+            "cause. Dans tous les cas, l'expurgation retire le nom, l'adresse, le "
+            "téléphone, le courriel et la date de naissance avant l'envoi."
+        )
+    )
+    h.append(
+        para(
+            "<b>Le modèle sur place.</b> "
+            "<font face='Courier'>LLM_PROVIDER=ollama</font> est la seule "
+            "configuration où le dossier d'un candidat ne sort pas du bâtiment : ni "
+            "clé, ni quota, ni conditions à relire. Le coût est en matériel et en "
+            "temps de réponse. Un modèle de 7 à 8 milliards de paramètres en 4 bits "
+            "occupe environ 5 Go et demande autant de mémoire vive graphique pour "
+            "répondre en quelques secondes ; sans carte graphique il tourne sur le "
+            "processeur, ce qui reste utilisable pour un traitement de nuit."
+        )
+    )
+    h.extend(
+        bloc_code(
+            [
+                "docker compose --profile local-llm up -d ollama",
+                "docker compose exec ollama ollama pull qwen3:8b",
+                "",
+                "# puis dans .env :",
+                "LLM_PROVIDER=ollama",
+                "OLLAMA_MODEL=qwen3:8b",
+                "OLLAMA_BASE_URL=http://ollama:11434",
+            ]
+        )
+    )
+    h.append(
+        para(
+            "Pour une carte NVIDIA, décommenter le bloc "
+            "<font face='Courier'>deploy</font> du service "
+            "<font face='Courier'>ollama</font> dans "
+            "<font face='Courier'>docker-compose.yml</font> — il exige le NVIDIA "
+            "Container Toolkit. Le laisser actif sans carte empêche le service de "
+            "démarrer, d'où sa mise en commentaire par défaut."
         )
     )
 

@@ -429,6 +429,46 @@ async def exporter(
     )
 
 
+@router.delete("/rapports/{rapport_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def supprimer(rapport_id: str, db: DbSession, user: CurrentUser) -> Response:
+    """Jette un brouillon. Un rapport validé ne se supprime pas.
+
+    La génération crée un rapport à chaque appel, volontairement : un brouillon
+    déjà corrigé ne doit pas disparaître parce que quelqu'un a recliqué. Mais
+    rien ne permettait ensuite de retirer celui qu'on venait de produire par
+    erreur, et l'onglet accumulait des doublons qu'il fallait supprimer en base.
+
+    La même règle que partout ailleurs sur les rapports : **validé, donc figé**.
+    Un document remis au client ne s'efface pas d'un clic — il se retire du
+    partage, ce qui est un geste différent et réversible. L'audit garde la trace
+    de la suppression, titre compris.
+    """
+    rapport = await _get_rapport(db, rapport_id)
+    if rapport.statut is StatutRapport.VALIDE:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Ce rapport est validé : il ne se supprime pas. Retirez-le du "
+            "partage si le client ne doit plus le voir.",
+        )
+
+    await audit.record(
+        db,
+        action="rapport.supprimer",
+        entity_type="mandat",
+        entity_id=rapport.mandat_id,
+        user_id=user.id,
+        details={
+            "rapport_id": rapport.id,
+            "titre": rapport.titre,
+            "type_rapport": rapport.type_rapport,
+            "statut": rapport.statut.value,
+        },
+    )
+    await db.delete(rapport)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/rapports/formats")
 async def formats_disponibles(_: CurrentUser) -> dict:
     return {"formats": sorted(export_rapport.FORMATS)}

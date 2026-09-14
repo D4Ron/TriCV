@@ -222,3 +222,66 @@ def test_la_grille_de_preselection_a_sa_propre_section():
     section = rapports.PAR_CODE["METHODE_PRESELECTION"]
     assert section.tableaux == "GRILLE_PRESELECTION"
     assert section.niveau == 2
+
+
+# --- jeter un brouillon ------------------------------------------------------
+
+
+API = "/api/v1"
+
+
+async def _mandat(client, auth) -> str:
+    client_id = (
+        await client.post(f"{API}/clients", json={"nom": "WAPP"}, headers=auth)
+    ).json()["id"]
+    return (
+        await client.post(
+            f"{API}/mandats",
+            json={"client_id": client_id, "intitule": "Cadres 2026"},
+            headers=auth,
+        )
+    ).json()["id"]
+
+
+@pytest.mark.anyio
+async def test_un_brouillon_se_supprime(client, auth):
+    """La génération crée un rapport à chaque appel, volontairement.
+
+    Rien ne permettait ensuite de retirer celui qu'on venait de produire par
+    erreur, et l'onglet accumulait des doublons qu'il fallait supprimer en base.
+    """
+    mandat_id = await _mandat(client, auth)
+    rapport = (
+        await client.post(
+            f"{API}/mandats/{mandat_id}/rapports",
+            json={"avec_assistance": False},
+            headers=auth,
+        )
+    ).json()
+
+    efface = await client.delete(f"{API}/rapports/{rapport['id']}", headers=auth)
+    assert efface.status_code == 204
+
+    restants = (await client.get(f"{API}/mandats/{mandat_id}/rapports", headers=auth)).json()
+    assert rapport["id"] not in [r["id"] for r in restants]
+
+
+@pytest.mark.anyio
+async def test_un_rapport_valide_ne_se_supprime_pas(client, auth):
+    """Un document remis au client ne s'efface pas d'un clic.
+
+    Il se retire du partage, ce qui est un geste différent et réversible.
+    """
+    mandat_id = await _mandat(client, auth)
+    rapport = (
+        await client.post(
+            f"{API}/mandats/{mandat_id}/rapports",
+            json={"avec_assistance": False},
+            headers=auth,
+        )
+    ).json()
+    await client.post(f"{API}/rapports/{rapport['id']}/valider", headers=auth)
+
+    refus = await client.delete(f"{API}/rapports/{rapport['id']}", headers=auth)
+    assert refus.status_code == 409
+    assert "partage" in refus.json()["detail"]

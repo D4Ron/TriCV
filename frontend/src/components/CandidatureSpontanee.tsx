@@ -1,6 +1,12 @@
 import { useState } from 'react'
 import { avisPublicApi } from '@/lib/api'
 import { Callout, Field, Spinner } from '@/components/ui'
+import SaisieParcoursDeclare, {
+  PARCOURS_VIDE,
+  parcoursRempli,
+  versParcours,
+  type SaisieParcours,
+} from '@/components/ParcoursDeclare'
 
 /**
  * « Déposer votre CV » — la candidature hors avis.
@@ -23,6 +29,12 @@ export default function CandidatureSpontanee() {
   const [telephone, setTelephone] = useState('')
   const [domaine, setDomaine] = useState('')
   const [message, setMessage] = useState('')
+  // Un profil du vivier ne vaut que par ce qu'on peut y chercher. Sans parcours
+  // déclaré, le dossier n'est qu'un fichier joint à un nom, et il faut le lire
+  // avant de savoir s'il correspond au mandat qui vient d'arriver.
+  const [dateNaissance, setDateNaissance] = useState('')
+  const [nationalites, setNationalites] = useState('')
+  const [parcours, setParcours] = useState<SaisieParcours>(PARCOURS_VIDE)
   const [cv, setCv] = useState<File | null>(null)
   const [erreurs, setErreurs] = useState<Record<string, string>>({})
   const [erreurEnvoi, setErreurEnvoi] = useState<string | null>(null)
@@ -51,6 +63,9 @@ export default function CandidatureSpontanee() {
         telephone: telephone.trim() || undefined,
         domaine: domaine.trim() || undefined,
         message: message.trim() || undefined,
+        date_naissance: dateNaissance || undefined,
+        nationalites: nationalites.trim() || undefined,
+        parcours: parcoursRempli(parcours) ? versParcours(parcours) : undefined,
         pieces: [{ code: 'CV', fichier: cv! }],
       })
       setTermine(true)
@@ -140,6 +155,29 @@ export default function CandidatureSpontanee() {
             onChange={(e) => setTelephone(e.target.value)}
           />
         </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Date de naissance (facultatif)" htmlFor="sp-naissance">
+            <input
+              id="sp-naissance"
+              type="date"
+              className="input"
+              value={dateNaissance}
+              max={new Date().toISOString().slice(0, 10)}
+              onChange={(e) => setDateNaissance(e.target.value)}
+              autoComplete="bday"
+            />
+          </Field>
+          <Field label="Nationalité(s) (facultatif)" htmlFor="sp-nationalites">
+            <input
+              id="sp-nationalites"
+              className="input"
+              value={nationalites}
+              placeholder="togolaise"
+              onChange={(e) => setNationalites(e.target.value)}
+            />
+          </Field>
+        </div>
+
         <Field
           label="Domaine visé (facultatif)"
           htmlFor="sp-domaine"
@@ -164,6 +202,8 @@ export default function CandidatureSpontanee() {
           onChange={(e) => setCv(e.target.files?.[0] ?? null)}
         />
       </Field>
+
+      <SaisieParcoursDeclare valeur={parcours} onChange={setParcours} erreurs={erreurs} />
 
       <Field label="Message (facultatif)" htmlFor="sp-message">
         <textarea

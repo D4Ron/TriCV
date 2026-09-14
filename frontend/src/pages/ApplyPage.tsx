@@ -5,6 +5,12 @@ import { avisPublicApi } from '@/lib/api'
 import { LogoKapi, Marque } from '@/components/Marque'
 import { Callout, Field, PageLoader, Spinner } from '@/components/ui'
 import { formatDate } from '@/lib/format'
+import SaisieParcoursDeclare, {
+  PARCOURS_VIDE,
+  parcoursRempli,
+  versParcours,
+  type SaisieParcours,
+} from '@/components/ParcoursDeclare'
 
 /**
  * La page candidat. Elle montre le poste et un formulaire — jamais une note,
@@ -23,6 +29,14 @@ export default function ApplyPage() {
   const [prenom, setPrenom] = useState('')
   const [email, setEmail] = useState('')
   const [telephone, setTelephone] = useState('')
+  const [adresse, setAdresse] = useState('')
+  // État civil déclaré. La date de naissance et la nationalité décident de
+  // deux conditions éliminatoires : sans elles, ces conditions ne
+  // s'appliquaient qu'aux dossiers déjà dépouillés — donc pas à tous.
+  const [dateNaissance, setDateNaissance] = useState('')
+  const [sexe, setSexe] = useState('')
+  const [nationalites, setNationalites] = useState('')
+  const [parcours, setParcours] = useState<SaisieParcours>(PARCOURS_VIDE)
   const [fichiers, setFichiers] = useState<Record<string, File>>({})
   // Ce que le candidat a choisi dans un groupe « l'une ou l'autre » : la CNI
   // ou le passeport. On mémorise son choix pour n'afficher qu'un champ.
@@ -145,6 +159,12 @@ export default function ApplyPage() {
         prenom: prenom.trim(),
         email: email.trim(),
         telephone: telephone.trim() || undefined,
+        adresse: adresse.trim() || undefined,
+        date_naissance: dateNaissance || undefined,
+        sexe: sexe || undefined,
+        nationalites: nationalites.trim() || undefined,
+        // Un parcours vide ne part pas : il n'y a rien à déclarer.
+        parcours: parcoursRempli(parcours) ? versParcours(parcours) : undefined,
         // Les exigées sont toutes présentes (validées ci-dessus) ; les
         // facultatives et celles des groupes ne partent que si le candidat en
         // a joint une.
@@ -207,6 +227,28 @@ export default function ApplyPage() {
         </ul>
       </section>
 
+      {/* Les conditions éliminatoires, dites avant le dépôt. Le formulaire
+          demande maintenant la date de naissance et la nationalité, et elles
+          sont opposables dès l'enregistrement : laisser quelqu'un composer un
+          dossier complet pour l'écarter ensuite sur un critère qu'il n'avait
+          jamais vu serait le traiter avec désinvolture. */}
+      {a.conditions.length > 0 && (
+        <section className="mt-6">
+          <h2 className="text-sm font-semibold text-ink-900">Conditions à remplir</h2>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-700">
+            {a.conditions.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-ink-500">
+            Ces conditions écartent un dossier qui ne les remplit pas.
+            {a.justification_conditions
+              ? ` Motif indiqué par le commanditaire : ${a.justification_conditions}`
+              : ''}
+          </p>
+        </section>
+      )}
+
       {!a.accepte_candidatures ? (
         <div className="mt-8">
           <Callout tone="warning">
@@ -249,15 +291,71 @@ export default function ApplyPage() {
             />
           </Field>
 
-          <Field label="Téléphone (facultatif)" htmlFor="tel">
-            <input
-              id="tel"
-              className="input"
-              value={telephone}
-              onChange={(e) => setTelephone(e.target.value)}
-              autoComplete="tel"
-            />
-          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Téléphone" htmlFor="tel">
+              <input
+                id="tel"
+                className="input"
+                value={telephone}
+                onChange={(e) => setTelephone(e.target.value)}
+                autoComplete="tel"
+              />
+            </Field>
+            <Field label="Adresse (facultatif)" htmlFor="adresse">
+              <input
+                id="adresse"
+                className="input"
+                value={adresse}
+                onChange={(e) => setAdresse(e.target.value)}
+                autoComplete="street-address"
+              />
+            </Field>
+          </div>
+
+          {/* L'état civil décide des conditions éliminatoires du poste. Il
+              figure dans les pièces jointes, mais y accéder suppose de les
+              avoir lues : tant que personne ne l'a fait, la condition ne
+              s'applique à personne. */}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field
+              label="Date de naissance"
+              htmlFor="naissance"
+              error={erreurs.date_naissance}
+            >
+              <input
+                id="naissance"
+                type="date"
+                className="input"
+                value={dateNaissance}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setDateNaissance(e.target.value)}
+                autoComplete="bday"
+              />
+            </Field>
+            <Field label="Nationalité(s)" htmlFor="nationalites">
+              <input
+                id="nationalites"
+                className="input"
+                value={nationalites}
+                placeholder="togolaise"
+                onChange={(e) => setNationalites(e.target.value)}
+              />
+            </Field>
+            <Field label="Sexe (facultatif)" htmlFor="sexe">
+              <select
+                id="sexe"
+                className="input"
+                value={sexe}
+                onChange={(e) => setSexe(e.target.value)}
+              >
+                <option value="">Ne pas préciser</option>
+                <option value="M">Masculin</option>
+                <option value="F">Féminin</option>
+              </select>
+            </Field>
+          </div>
+
+          <SaisieParcoursDeclare valeur={parcours} onChange={setParcours} erreurs={erreurs} />
 
           <div className="space-y-3 border-t border-ink-100 pt-4">
             <p className="text-sm font-medium text-ink-800">

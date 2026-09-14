@@ -308,6 +308,16 @@ export default function PanneauRapports({ mandatId }: { mandatId: string }) {
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Génération impossible'),
   })
 
+  const supprimer = useMutation({
+    mutationFn: (rapportId: string) => rapportsApi.supprimer(rapportId),
+    onSuccess: (_, rapportId) => {
+      setErreur(null)
+      if (ouvert === rapportId) setOuvert(null)
+      void queryClient.invalidateQueries({ queryKey: ['rapports', mandatId] })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Suppression impossible'),
+  })
+
   return (
     <div className="space-y-4">
       <section className="card p-5">
@@ -409,11 +419,18 @@ export default function PanneauRapports({ mandatId }: { mandatId: string }) {
       ) : (
         <div className="space-y-2">
           {rapports.data?.map((rapport) => (
-            <button
+            <div
               key={rapport.id}
-              type="button"
               className="card-interactive flex w-full flex-wrap items-center gap-2 p-3 text-left"
+              role="button"
+              tabIndex={0}
               onClick={() => setOuvert(rapport.id === ouvert ? null : rapport.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setOuvert(rapport.id === ouvert ? null : rapport.id)
+                }
+              }}
             >
               <span className="min-w-0 flex-1 truncate text-sm text-ink-900">{rapport.titre}</span>
               <span className="badge bg-ink-100 text-ink-600">
@@ -431,7 +448,25 @@ export default function PanneauRapports({ mandatId }: { mandatId: string }) {
                   {formatDate(rapport.created_at, 'fr')}
                 </span>
               )}
-            </button>
+              {/* Un brouillon produit par erreur restait dans la liste pour
+                  toujours. Un rapport validé, lui, ne se supprime pas : il se
+                  retire du partage, ce qui est un geste réversible. */}
+              {rapport.statut !== 'VALIDE' && (
+                <button
+                  type="button"
+                  className="btn-ghost px-2 py-1 text-xs text-ink-500"
+                  disabled={supprimer.isPending}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (confirm(`Supprimer « ${rapport.titre} » ?`)) {
+                      supprimer.mutate(rapport.id)
+                    }
+                  }}
+                >
+                  Supprimer
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}

@@ -36,7 +36,7 @@ from app.models import (
     StatutAvis,
 )
 from app.models.base import utcnow
-from app.services import doublons, parametres, uploads
+from app.services import declaration, doublons, parametres, uploads
 from app.services.preselection import charger_candidature, evaluer_candidature
 from app.services.ratelimit import public_limiter
 
@@ -62,6 +62,13 @@ class AvisPublicOut(AvisPublicItem):
     description: str | None = None
     missions: list[str] = Field(default_factory=list)
     profil: list[str] = Field(default_factory=list)
+    # Les conditions éliminatoires, dites avant le dépôt : un dossier complet
+    # composé pour rien serait un manque d'égards, et le candidat déclare
+    # maintenant lui-même ce sur quoi elles portent.
+    conditions: list[str] = Field(default_factory=list)
+    # La justification que le poste donne de ses conditions restrictives. Le
+    # cabinet l'exige en interne ; le candidat a le même droit de la lire.
+    justification_conditions: str | None = None
     pieces_attendues: list[PieceAttendue] = Field(default_factory=list)
     pieces_facultatives: list[PieceAttendue] = Field(default_factory=list)
     # Groupes de pièces liées : « la CNI ou le passeport ». Le formulaire doit
@@ -108,6 +115,33 @@ def _profil(poste: Poste) -> list[str]:
     if poste.langues_requises:
         lignes.append(f"Langues : {', '.join(poste.langues_requises)}")
     return lignes
+
+
+def _conditions(poste: Poste) -> list[str]:
+    """Les conditions éliminatoires, annoncées avant le dépôt.
+
+    Le formulaire demande maintenant la date de naissance et la nationalité, et
+    elles sont opposables dès l'enregistrement. Laisser quelqu'un composer un
+    dossier complet pour l'écarter ensuite sur un critère qu'il n'avait jamais
+    vu serait le traiter avec désinvolture — et l'avis publié porte de toute
+    façon ces conditions.
+    """
+    dites: list[str] = []
+    bas, haut = poste.restriction_age_min, poste.restriction_age_max
+    if bas is not None and haut is not None:
+        dites.append(f"Être âgé de {bas} à {haut} ans à la date de clôture")
+    elif haut is not None:
+        dites.append(f"Être âgé de {haut} ans au plus à la date de clôture")
+    elif bas is not None:
+        dites.append(f"Être âgé de {bas} ans au moins à la date de clôture")
+
+    if poste.restriction_nationalites:
+        dites.append(
+            "Nationalité : " + ", ".join(sorted(poste.restriction_nationalites))
+        )
+    if poste.restriction_sexe:
+        dites.append(f"Ce poste est réservé : {poste.restriction_sexe}")
+    return dites
 
 
 def _pieces(poste: Poste, codes: list | None) -> list[PieceAttendue]:
@@ -221,6 +255,8 @@ async def avis_public(cle_publique: str, db: AsyncSession = Depends(get_db)) -> 
         description=poste.description or avis.texte,
         missions=list(poste.missions or ()),
         profil=_profil(poste),
+        conditions=_conditions(poste),
+        justification_conditions=poste.restriction_justification or None,
         pieces_attendues=_pieces(poste, poste.pieces_requises),
         pieces_facultatives=_pieces(poste, poste.pieces_facultatives),
         groupes_pieces=[
@@ -252,6 +288,11 @@ async def deposer_spontanee(
     prenom: str = Form(..., min_length=1, max_length=255),
     email: EmailStr = Form(...),
     telephone: str | None = Form(default=None),
+    adresse: str | None = Form(default=None, max_length=512),
+    date_naissance: str | None = Form(default=None),
+    sexe: str | None = Form(default=None),
+    nationalites: str | None = Form(default=None),
+    parcours: str | None = Form(default=None),
     domaine: str | None = Form(default=None, max_length=255),
     message: str | None = Form(default=None, max_length=2000),
     fichiers: list[UploadFile] = File(...),
@@ -274,6 +315,12 @@ async def deposer_spontanee(
             status.HTTP_409_CONFLICT,
             "Les candidatures spontanées ne sont pas ouvertes actuellement.",
         )
+
+    try:
+        declare = declaration.lire_parcours(parcours)
+        naissance = declaration.lire_date_naissance(date_naissance)
+    except declaration.DeclarationInvalide as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
     types = list(types_pieces or ())
     if not types:
@@ -314,9 +361,20 @@ async def deposer_spontanee(
         prenom=prenom.strip(),
         email=email.lower(),
         telephone=(telephone or "").strip() or None,
+        adresse=(adresse or "").strip() or None,
+        date_naissance=naissance,
+        sexe=declaration.lire_sexe(sexe),
+        nationalites=declaration.lire_nationalites(nationalites) or None,
         provenance=Provenance.DECLARE,
     )
     db.add(candidat)
+    await db.flush()
+
+    # Un profil du vivier ne vaut que par ce qu'on peut y chercher. Un parcours
+    # déclaré le rend trouvable le jour où un mandat lui correspond ; sans lui,
+    # le dossier n'est qu'un fichier joint à un nom.
+    for ligne in declaration.appliquer(candidat, declare):
+        db.add(ligne)
     await db.flush()
 
     notes = ["Candidature spontanée déposée depuis le site."]
@@ -362,6 +420,16 @@ async def deposer(
     prenom: str = Form(..., min_length=1, max_length=255),
     email: EmailStr = Form(...),
     telephone: str | None = Form(default=None),
+    adresse: str | None = Form(default=None, max_length=512),
+    # État civil déclaré. La date de naissance et la nationalité décident de
+    # deux conditions éliminatoires ; sans elles, ces conditions ne
+    # s'appliquaient qu'aux dossiers déjà dépouillés — donc pas à tous.
+    date_naissance: str | None = Form(default=None),
+    sexe: str | None = Form(default=None),
+    nationalites: str | None = Form(default=None),
+    # Le parcours déclaré, en JSON : diplômes, expériences, langues,
+    # certifications. Voir `app.services.declaration`.
+    parcours: str | None = Form(default=None),
     fichiers: list[UploadFile] = File(...),
     types_pieces: list[str] = Form(...),
     intitules_pieces: list[str] | None = Form(default=None),
@@ -373,12 +441,24 @@ async def deposer(
     ce qui permet à un candidat de joindre une lettre de recommandation ou une
     attestation que l'avis n'avait pas prévue, sans la ranger sous un code qui
     fausserait le contrôle de complétude.
+
+    Le candidat déclare aussi son état civil et son parcours. C'est redondant
+    avec le CV, volontairement : le CV doit être lu pour livrer ses données, et
+    tant qu'il ne l'a pas été le dossier est noté sur presque rien.
     """
     avis = await _avis_par_cle(db, cle_publique)
     if not _accepte(avis):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Cet avis n'accepte plus de candidatures."
         )
+    # Lu avant de toucher aux fichiers : une déclaration incohérente se corrige
+    # à l'écran, et rien ne sert de stocker des pièces pour les reprendre.
+    try:
+        declare = declaration.lire_parcours(parcours)
+        naissance = declaration.lire_date_naissance(date_naissance)
+    except declaration.DeclarationInvalide as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
     if len(fichiers) != len(types_pieces):
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -490,11 +570,20 @@ async def deposer(
         prenom=prenom.strip(),
         email=email.lower(),
         telephone=(telephone or "").strip() or None,
+        adresse=(adresse or "").strip() or None,
+        date_naissance=naissance,
+        sexe=declaration.lire_sexe(sexe),
+        nationalites=declaration.lire_nationalites(nationalites) or None,
         # Saisi par l'intéressé lui-même : plus fiable qu'une extraction, donc
         # opposable sans relecture préalable.
         provenance=Provenance.DECLARE,
     )
     db.add(candidat)
+    await db.flush()
+
+    # Le parcours déclaré, avant l'évaluation : c'est lui qui la rend juste.
+    for ligne in declaration.appliquer(candidat, declare):
+        db.add(ligne)
     await db.flush()
 
     candidature = Candidature(

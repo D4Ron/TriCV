@@ -158,6 +158,35 @@ Dates of birth are read in figures (`03/09/1984`, `22-11-1979`) **and in words**
 detected, never converted, and left empty; since a missing value never eliminates anyone, **every
 age condition on every poste was silently inert**.
 
+### The candidate declares their own file
+
+The public form asks for date of birth, nationality, degrees and experience — deliberately
+redundant with the CV attached beside it. The CV has to be *read* before it yields anything, and
+until it has been, three things are true of a freshly submitted file:
+
+- **Eliminatory conditions do not apply.** Age is only judged when a date of birth is known, and
+  nationality when one is recorded. A poste open to candidates of 45 at most eliminated nobody on
+  arrival — the condition reached only the files someone had found time to process. Two candidates
+  the same age could meet different fates depending on the queue.
+- **The mark is wrong.** Formation, experience and specific experience are 27 of the 30 points. With
+  no degree and no experience on record, a new file scored 3 — not because the candidate was weak,
+  but because nobody had read them yet.
+- **Everything hangs on the model.** An exhausted quota or an unreadable scan left the file empty.
+
+What the candidate types is `DECLARE` — the same provenance as their name, and the one that counts
+without review. The CV still governs and is still attached; assisted extraction now *corroborates*
+rather than being the only road in. Declaring stays optional: a candidate in a hurry drops a CV and
+leaves.
+
+Because declared data is human data, running *Dépouiller le dossier* on such a file **does nothing
+and says so** — the model does not overwrite what the candidate wrote, so there is no risk of the
+same degree being counted twice. The message asks the reviewer to compare against the CV and add by
+hand anything it carries in addition.
+
+The eliminatory conditions are now **shown on the application page** before anyone submits. The form
+asks for exactly the data they are judged on, and letting someone assemble a full file only to be
+cut on a criterion they never saw would be careless.
+
 ### Age and seniority are computed at the closing date
 
 Not at today's date. A grid recalculated six months later gives the same numbers as the one sent to
