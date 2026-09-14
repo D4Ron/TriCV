@@ -176,8 +176,9 @@ export interface DeploymentSettings {
   max_upload_mb: number
   storage_backend: string
   spacy_models_loaded: string[]
-  seuil_preselection_defaut: number
   allow_self_registration: boolean
+  /** Les dossiers reçus hors de tout avis rejoignent-ils le vivier ? */
+  candidatures_spontanees: boolean
   /** Boîte de candidatures. Le mot de passe ne sort jamais du serveur. */
   courriel_actif: boolean
   imap_host: string
@@ -186,6 +187,18 @@ export interface DeploymentSettings {
   imap_folder: string
   imap_password_defini: boolean
   courriel_utilisable: boolean
+  /** Envoi. Serveur distinct de la réception : on relève sur la boîte de
+   *  candidatures et on peut écrire depuis l'adresse générale du cabinet. */
+  smtp_actif: boolean
+  smtp_host: string
+  smtp_port: number
+  smtp_user: string
+  smtp_tls: boolean
+  smtp_expediteur: string
+  smtp_password_defini: boolean
+  envoi_utilisable: boolean
+  /** Adresse publique de l'application, pour les liens envoyés par courriel. */
+  url_publique: string
 }
 
 export interface PublicSession {
@@ -267,6 +280,19 @@ export interface Restriction {
   justification: string
 }
 
+/**
+ * Une expérience spécifique attendue par l'avis.
+ *
+ * Un poste peut en exiger plusieurs — « 5 ans en passation de marchés et 3 ans
+ * en gestion de projet ». `poids` répartit entre elles les points du critère.
+ */
+export interface ExperienceSpecifique {
+  libelle: string
+  domaines: string[]
+  annees_min: number
+  poids: number
+}
+
 export interface Poste {
   id: string
   mandat_id: string
@@ -280,14 +306,30 @@ export interface Poste {
   annees_experience_min: number
   annees_experience_specifique_min: number
   domaines_experience: string[]
+  /** Vide = l'exigence unique portée par les deux champs ci-dessus. */
+  experiences_specifiques: ExperienceSpecifique[]
   pieces_requises: string[]
   pieces_facultatives: string[]
+  /** « La CNI ou le passeport », « le diplôme et son attestation ». */
+  groupes_pieces: GroupePieces[]
+  /** Formats imposés par code de pièce : { CV: ['pdf'] }. */
+  formats_pieces: Record<string, string[]>
+  /** Le candidat peut-il joindre un document de son choix ? */
+  pieces_libres_autorisees: boolean
+  formation_complementaire_souhaitee: string | null
   langues_requises: string[]
   nombre_a_retenir: number | null
   restriction: Restriction
   seuil_preselection: number
   seuil_nominal: number
   seuil_justification: string | null
+  /**
+   * Le barème du poste, sérialisé. Null = celui du cabinet (3/7/5/15).
+   *
+   * Volontairement typé large : c'est le serveur qui le valide, et l'écran
+   * n'en lit qu'une part — ce que la formation rapporte au-delà du diplôme.
+   */
+  bareme: { formation?: Record<string, number> } | null
   nombre_candidatures: number
   created_at: string
 }
@@ -337,9 +379,18 @@ export interface Elimination {
   leve_motif: string | null
 }
 
+export interface GroupePieces {
+  codes: string[]
+  /** TOUTES = chacune est exigée. AU_MOINS_UNE = l'une d'entre elles suffit. */
+  mode: 'TOUTES' | 'AU_MOINS_UNE'
+  libelle: string
+}
+
 export interface Piece {
   id: string
   type_piece: string
+  /** Le nom donné par le candidat à une pièce hors nomenclature. */
+  intitule_libre: string | null
   nom_fichier: string | null
   taille_octets: number | null
 }
@@ -385,11 +436,21 @@ export interface Candidat {
 
 export interface Candidature {
   id: string
-  poste_id: string
+  /** Null sur une candidature spontanée : elle ne vise aucun poste. */
+  poste_id: string | null
   statut: StatutCandidature
   source: 'EMAIL' | 'FORMULAIRE' | 'IMPORT_MANUEL'
   recue_le: string
   notes_rh: string | null
+  /** Reçue hors de tout avis : elle n'est rattachée à aucun poste. */
+  spontanee?: boolean
+  qualification: string | null
+  qualification_libelle: string | null
+  qualification_manuelle: string | null
+  qualification_motif: string | null
+  appreciation_consistance: number | null
+  appreciation_motif: string | null
+  appreciation_max: number
   candidat: Candidat
   notation: Notation | null
   eliminations: Elimination[]
@@ -431,10 +492,90 @@ export interface LigneGrille {
   adresse: string | null
   note: number | null
   total_max: number | null
+  /** Ce que la présélection apporte à la note finale sur 100. */
+  note_sur_cent: number | null
+  rang: number | null
+  /** Parmi les N que le client reçoit. Un préqualifié peut ne pas l'être. */
+  propose: boolean
+  /** Seconde étape. Null = pas encore reçu en entretien, et non « zéro ». */
+  note_entretien_sur_cent: number | null
+  note_finale_sur_cent: number | null
+  entretien_complet: boolean
   preselectionne: boolean
   elimine: boolean
+  /** Personne n'a encore apprécié la motivation ni l'expression écrite. */
+  appreciation_attendue: boolean
+  /** Ce que le client verra : fortement, partiellement, ou non qualifié. */
+  qualification: string | null
+  qualification_libelle: string | null
   motifs: string[]
   doublons: number
+}
+
+/** Une rubrique du barème d'entretien, telle qu'on la règle. */
+export interface LigneBaremeEntretien {
+  code: string
+  libelle: string
+  points_max: number
+  section?: string
+}
+
+/**
+ * Le barème d'entretien d'un poste.
+ *
+ * `personnalisee` distingue la grille du cabinet de celle négociée avec le
+ * client : les documents du cabinet parlent de « grille indicative », et
+ * plusieurs mandats la font valider — donc modifier — par le commanditaire.
+ */
+export interface GrilleEntretien {
+  criteres: Array<{ code: string; libelle: string; points_max: number; section: string }>
+  sections: Array<{ libelle: string; points_max: number }>
+  total_max: number
+  /** Vrai tant que le poste utilise la grille type du cabinet. */
+  par_defaut: boolean
+}
+
+export interface LigneEntretien {
+  code: string
+  libelle: string
+  points?: number | null
+  points_max: number
+  commentaire?: string | null
+  section: string
+}
+
+/** La fiche d'un juré. Un panel en compte autant que de membres. */
+export interface FicheJure {
+  jure: string
+  date_entretien: string | null
+  observations: string | null
+  lignes: LigneEntretien[]
+  total: number
+  complet: boolean
+}
+
+/**
+ * Les entretiens d'une candidature.
+ *
+ * Le cabinet fait siéger un jury — sept personnes sur certains mandats — et
+ * la note retenue est la moyenne de leurs fiches. `ecart_jures` dit combien
+ * les jurés divergent : un écart large sur un candidat mérite d'être regardé
+ * avant d'être moyenné.
+ */
+export interface Entretien {
+  candidature_id: string
+  existe: boolean
+  jury: string | null
+  grille: LigneEntretien[]
+  sections: Array<{ libelle: string; points_max: number }>
+  fiches: FicheJure[]
+  total: number
+  total_max: number
+  complet: boolean
+  ecart_jures: number | null
+  preselection_sur_cent: number
+  entretien_sur_cent: number
+  note_finale_sur_cent: number
 }
 
 export interface GroupeElimination {
@@ -453,7 +594,14 @@ export interface Grille {
   date_reference: string | null
   seuil: number
   total_max: number
+  /** Part de la présélection dans la note finale sur 100. */
+  poids_preselection: number
+  nombre_a_proposer: number | null
+  /** Combien de dossiers par tranche de note : le seuil se trace là-dessus. */
+  distribution: Array<{ de: number; a: number; candidats: number }>
   nombre_candidatures: number
+  nombre_proposes: number
+  nombre_entretiens: number
   nombre_preselectionnes: number
   nombre_elimines: number
   nombre_a_verifier: number

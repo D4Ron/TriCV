@@ -4,7 +4,13 @@ import base64
 
 from app.config import settings
 from app.llm import http
-from app.llm.base import Attachment, BaseLLMProvider, LLMConfigError, LLMError
+from app.llm.base import (
+    Attachment,
+    BaseLLMProvider,
+    LLMConfigError,
+    LLMError,
+    modele_configure,
+)
 
 DEFAULT_MODEL = "gemini-2.0-flash"
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
@@ -26,10 +32,15 @@ class GeminiProvider(BaseLLMProvider):
         if not settings.gemini_api_key:
             raise LLMConfigError("LLM_PROVIDER=gemini requires GEMINI_API_KEY to be set.")
         self.api_key = settings.gemini_api_key
-        self.model = settings.llm_model or DEFAULT_MODEL
+        self.model = modele_configure("gemini", DEFAULT_MODEL)
 
     async def complete(
-        self, system: str, user: str, attachment: Attachment | None = None
+        self,
+        system: str,
+        user: str,
+        attachment: Attachment | None = None,
+        *,
+        json_mode: bool = True,
     ) -> str:
         parts: list[dict] = [{"text": user}]
         if attachment is not None:
@@ -42,18 +53,26 @@ class GeminiProvider(BaseLLMProvider):
                 }
             )
 
+        generation: dict = {
+            "temperature": 0.2,
+            # Thinking models (2.5 and later) spend part of this budget on
+            # reasoning before they emit a token of JSON — measured at
+            # 1300-2000 tokens on a real fiche. At 4096 the JSON is
+            # truncated mid-object and arrives as unparseable text.
+            "maxOutputTokens": MAX_OUTPUT_TOKENS,
+        }
+        # Le mode JSON était armé sur *tous* les appels. Sur une demande de
+        # prose — une section de rapport — il contraint le modèle à rendre du
+        # JSON sans lui donner de schéma : il répond `{}`, ou emballe la phrase
+        # dans un objet, et c'est cela qui s'imprimait dans le rapport remis au
+        # client. Il ne s'arme plus que là où l'on attend vraiment du JSON.
+        if json_mode:
+            generation["responseMimeType"] = "application/json"
+
         body = {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {
-                "temperature": 0.2,
-                "responseMimeType": "application/json",
-                # Thinking models (2.5 and later) spend part of this budget on
-                # reasoning before they emit a token of JSON — measured at
-                # 1300-2000 tokens on a real fiche. At 4096 the JSON is
-                # truncated mid-object and arrives as unparseable text.
-                "maxOutputTokens": MAX_OUTPUT_TOKENS,
-            },
+            "generationConfig": generation,
         }
 
         data = await http.post_json(

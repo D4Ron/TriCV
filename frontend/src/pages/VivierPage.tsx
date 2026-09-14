@@ -11,6 +11,7 @@ import {
   Modal,
   PageLoader,
   Spinner,
+  delaiListe,
 } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 
@@ -191,7 +192,15 @@ function ProfilComplet({ id, onClose }: { id: string; onClose: () => void }) {
   )
 }
 
-function Carte({ item, onOuvrir }: { item: VivierItem; onOuvrir: () => void }) {
+function Carte({
+  item,
+  rang,
+  onOuvrir,
+}: {
+  item: VivierItem
+  rang: number
+  onOuvrir: () => void
+}) {
   const mention = mentionProvenance(item)
   const purge = item.pieces_conservees === 0 && item.pieces_purgees > 0
 
@@ -199,7 +208,8 @@ function Carte({ item, onOuvrir }: { item: VivierItem; onOuvrir: () => void }) {
     <button
       type="button"
       onClick={onOuvrir}
-      className="card w-full p-4 text-left transition hover:border-ink-300"
+      className="card-interactive stagger w-full animate-rise p-4 text-left"
+      style={delaiListe(rang)}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="font-semibold text-ink-900">
@@ -431,8 +441,13 @@ export default function VivierPage() {
             />
           ) : (
             <div className="grid gap-3">
-              {resultats.data.items.map((item) => (
-                <Carte key={item.id} item={item} onOuvrir={() => setOuvert(item.id)} />
+              {resultats.data.items.map((item, index) => (
+                <Carte
+                  key={item.id}
+                  item={item}
+                  rang={index}
+                  onOuvrir={() => setOuvert(item.id)}
+                />
               ))}
             </div>
           )}

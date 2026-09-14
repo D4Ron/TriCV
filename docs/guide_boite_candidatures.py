@@ -1,0 +1,632 @@
+"""Génère le guide de configuration de la boîte de candidatures.
+
+Le PDF est un livrable : il sera suivi par la personne qui fait le paramétrage
+final chez Kapi Consult, sans accès au code. Il est donc rédigé en français,
+comme le reste du produit.
+
+Le script est versionné avec le PDF pour que le guide se regénère quand la
+procédure change, plutôt que de dériver en silence.
+
+    python docs/guide_boite_candidatures.py
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import (
+    HRFlowable,
+    KeepTogether,
+    ListFlowable,
+    ListItem,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+
+SORTIE = Path(__file__).parent / "Guide-configuration-boite-candidatures.pdf"
+
+# Palette reprise de l'interface, pour que le document et l'écran se ressemblent.
+ENCRE = colors.HexColor("#1f2933")
+ENCRE_DOUCE = colors.HexColor("#4b5563")
+DISCRET = colors.HexColor("#6b7280")
+FILET = colors.HexColor("#d7dce2")
+FOND = colors.HexColor("#f6f7f9")
+ALERTE = colors.HexColor("#b45309")
+ALERTE_FOND = colors.HexColor("#fffbeb")
+DANGER = colors.HexColor("#b91c1c")
+
+
+def _styles() -> dict:
+    base = getSampleStyleSheet()
+    return {
+        "titre": ParagraphStyle(
+            "titre", parent=base["Title"], fontSize=21, leading=25,
+            textColor=ENCRE, spaceAfter=2,
+        ),
+        "sous_titre": ParagraphStyle(
+            "sous_titre", parent=base["Normal"], fontSize=10.5, leading=15,
+            textColor=DISCRET, spaceAfter=16,
+        ),
+        "section": ParagraphStyle(
+            "section", parent=base["Heading1"], fontSize=14, leading=18,
+            textColor=ENCRE, spaceBefore=18, spaceAfter=8,
+        ),
+        # keepWithNext sur l'étape seule : un intitulé ne doit pas finir une
+        # page en laissant ses instructions sur la suivante. Le mettre aussi
+        # sur les titres de partie faisait cascader tout le bloc suivant et
+        # laissait une demi-page blanche.
+        "etape": ParagraphStyle(
+            "etape", parent=base["Heading2"], fontSize=11.5, leading=15,
+            textColor=ENCRE, spaceBefore=13, spaceAfter=5, keepWithNext=True,
+        ),
+        "corps": ParagraphStyle(
+            "corps", parent=base["Normal"], fontSize=9.8, leading=14.5,
+            textColor=ENCRE_DOUCE, alignment=TA_JUSTIFY, spaceAfter=6,
+        ),
+        "puce": ParagraphStyle(
+            "puce", parent=base["Normal"], fontSize=9.8, leading=14,
+            textColor=ENCRE_DOUCE, spaceAfter=3,
+        ),
+        "alerte": ParagraphStyle(
+            "alerte", parent=base["Normal"], fontSize=9.5, leading=14,
+            textColor=ALERTE, alignment=TA_JUSTIFY,
+        ),
+        "cellule": ParagraphStyle(
+            "cellule", parent=base["Normal"], fontSize=8.8, leading=12,
+            textColor=ENCRE_DOUCE,
+        ),
+        "cellule_forte": ParagraphStyle(
+            "cellule_forte", parent=base["Normal"], fontSize=8.8, leading=12,
+            textColor=ENCRE, fontName="Helvetica-Bold",
+        ),
+        "pied": ParagraphStyle(
+            "pied", parent=base["Normal"], fontSize=8, leading=11, textColor=DISCRET,
+        ),
+    }
+
+
+S = _styles()
+
+
+def para(texte: str, style: str = "corps"):
+    return Paragraph(texte, S[style])
+
+
+def puces(elements: list[str]):
+    """Une liste à puces dont le point s'aligne sur la première ligne.
+
+    Les valeurs par défaut de ReportLab placent une puce minuscule au-dessus de
+    la ligne, ce qui se lit comme une poussière sur la page.
+    """
+    return ListFlowable(
+        [ListItem(para(e, "puce"), leftIndent=12) for e in elements],
+        bulletType="bullet",
+        bulletFontSize=9,
+        bulletOffsetY=-1.5,
+        leftIndent=14,
+        spaceBefore=2,
+        spaceAfter=4,
+    )
+
+
+def encadre(titre: str, texte: str, ton=ALERTE, fond=ALERTE_FOND):
+    """Un avertissement : ce qui coince en pratique, et pourquoi."""
+    contenu = Paragraph(
+        f'<font color="{ton.hexval()}"><b>{titre}</b></font><br/>{texte}', S["alerte"]
+    )
+    tableau = Table([[contenu]], colWidths=[165 * mm])
+    tableau.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), fond),
+                ("BOX", (0, 0), (-1, -1), 0.6, ton),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+    return [Spacer(1, 3), tableau, Spacer(1, 8)]
+
+
+def tableau(entetes: list[str], lignes: list[list[str]], largeurs: list[float]):
+    donnees = [[Paragraph(e, S["cellule_forte"]) for e in entetes]]
+    donnees += [[Paragraph(c, S["cellule"]) for c in ligne] for ligne in lignes]
+    t = Table(donnees, colWidths=largeurs, repeatRows=1)
+    t.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), FOND),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.8, FILET),
+                ("LINEBELOW", (0, 1), (-1, -2), 0.4, FILET),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 7),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    return t
+
+
+def _pied(canvas, doc):
+    canvas.saveState()
+    canvas.setFont("Helvetica", 7.5)
+    canvas.setFillColor(DISCRET)
+    canvas.drawString(20 * mm, 12 * mm, "TriCV — Configuration de la boîte de candidatures")
+    canvas.drawRightString(A4[0] - 20 * mm, 12 * mm, f"page {canvas.getPageNumber()}")
+    canvas.setStrokeColor(FILET)
+    canvas.setLineWidth(0.4)
+    canvas.line(20 * mm, 16 * mm, A4[0] - 20 * mm, 16 * mm)
+    canvas.restoreState()
+
+
+def contenu() -> list:
+    h = []
+
+    # --- couverture ---------------------------------------------------------
+    h.append(para("Configuration de la boîte de candidatures", "titre"))
+    h.append(
+        para(
+            "TriCV — relevé automatique des dossiers reçus par email<br/>"
+            f"Kapi Consult · document de paramétrage · {date.today():%d/%m/%Y}",
+            "sous_titre",
+        )
+    )
+    h.append(HRFlowable(width="100%", color=FILET, thickness=0.8, spaceAfter=14))
+
+    h.append(para("À quoi sert ce paramétrage", "section"))
+    h.append(
+        para(
+            "Les avis de recrutement demandent aux candidats d'envoyer leur dossier à une "
+            "adresse email. Sans ce paramétrage, quelqu'un ouvre cette boîte, télécharge les "
+            "pièces jointes et les redépose une par une dans TriCV. Une fois la boîte "
+            "configurée, l'application fait ce trajet elle-même : elle lit les messages non "
+            "lus, rattache chacun à son avis, en tire une candidature et marque le message "
+            "traité."
+        )
+    )
+    h.append(
+        para(
+            "<b>Ce paramétrage est facultatif.</b> Tant qu'il n'est pas fait, le dépôt à la "
+            "main reste disponible sur chaque poste, via « Déposer des dossiers ». Rien ne "
+            "cesse de fonctionner si vous décidez de ne pas l'activer."
+        )
+    )
+    h.append(
+        para(
+            "Comptez une vingtaine de minutes. Il faut deux choses : un accès administrateur "
+            "au compte Google de l'adresse de recrutement, et un compte <b>administrateur</b> "
+            "dans TriCV — un compte recruteur voit les paramètres sans pouvoir les modifier."
+        )
+    )
+
+    h.append(para("Ce dont vous avez besoin avant de commencer", "section"))
+    h.append(
+        puces(
+            [
+                "<b>Une adresse email dédiée au recrutement</b>, par exemple "
+                "recrutement@kapiconsult.tg. Pas la boîte personnelle d'un collaborateur : "
+                "l'application marque les messages comme lus et les traite, ce qui n'a pas sa "
+                "place dans une messagerie privée.",
+                "<b>Le mot de passe de ce compte Google</b>, pour y activer la validation en "
+                "deux étapes.",
+                "<b>Un compte administrateur TriCV.</b> Pour le vérifier : ouvrez "
+                "« Paramètres ». Si les champs sont grisés et que la page indique « Réservé "
+                "aux administrateurs », votre compte est un compte recruteur.",
+                "<b>L'accès à la machine qui héberge TriCV</b>, uniquement si vous devez "
+                "promouvoir un compte en administrateur (voir la dernière section).",
+            ]
+        )
+    )
+
+    # --- partie A -----------------------------------------------------------
+    h.append(para("Partie A — Préparer le compte Google", "section"))
+    h.append(
+        para(
+            "Gmail n'accepte plus le mot de passe habituel d'un compte pour ce type de "
+            "connexion. Il faut créer un « mot de passe d'application » : un mot de passe "
+            "distinct, réservé à TriCV, révocable seul et sans effet sur le reste du compte. "
+            "Les trois étapes qui suivent servent à l'obtenir."
+        )
+    )
+
+    h.append(para("Étape 1 — Activer la validation en deux étapes", "etape"))
+    h.append(
+        puces(
+            [
+                "Connectez-vous au compte Google de l'adresse de recrutement.",
+                "Ouvrez <b>myaccount.google.com</b> → onglet <b>Sécurité</b>.",
+                "Section « Comment vous connecter à Google » → <b>Validation en deux "
+                "étapes</b> → suivez la procédure (Google demandera un numéro de téléphone).",
+            ]
+        )
+    )
+    h.extend(
+        encadre(
+            "Cette étape n'est pas contournable",
+            "L'option « Mots de passe des applications » n'existe tout simplement pas tant "
+            "que la validation en deux étapes n'est pas active. Si vous ne la trouvez pas à "
+            "l'étape 2, c'est presque toujours que l'étape 1 n'est pas terminée.",
+        )
+    )
+
+    h.append(para("Étape 2 — Créer le mot de passe d'application", "etape"))
+    h.append(
+        puces(
+            [
+                "Toujours dans <b>Sécurité</b>, cherchez « Mots de passe des applications » "
+                "(la barre de recherche du compte Google y mène directement).",
+                "Créez-en un et nommez-le <b>TriCV</b> — le nom ne sert qu'à vous y "
+                "retrouver le jour où vous voudrez le révoquer.",
+                "Google affiche <b>seize lettres, présentées par groupes de quatre</b>. "
+                "Copiez-les.",
+            ]
+        )
+    )
+    h.extend(
+        encadre(
+            "Il ne sera plus jamais affiché",
+            "Google ne le remontre pas après la fermeture de la fenêtre. Si vous le perdez, "
+            "il faut en créer un autre — ce qui est sans conséquence, l'ancien se supprime. "
+            "Les espaces entre les groupes de quatre n'ont pas d'importance : TriCV les "
+            "retire automatiquement.",
+        )
+    )
+
+    h.append(para("Étape 3 — Activer IMAP dans Gmail", "etape"))
+    h.append(
+        puces(
+            [
+                "Ouvrez <b>Gmail</b> avec ce compte → roue dentée → <b>Afficher tous les "
+                "paramètres</b>.",
+                "Onglet <b>Transfert et POP/IMAP</b> → section « Accès IMAP » → <b>Activer "
+                "IMAP</b>.",
+                "<b>Enregistrer les modifications</b> en bas de la page.",
+            ]
+        )
+    )
+    h.extend(
+        encadre(
+            "Compte Google Workspace : vérifiez la politique de l'organisation",
+            "Si l'adresse appartient à un espace de travail Google d'entreprise, un "
+            "administrateur peut avoir désactivé IMAP ou interdit les mots de passe "
+            "d'application pour tout le domaine. Dans ce cas les réglages ci-dessus sont "
+            "absents ou sans effet, et il faut passer par l'administrateur du domaine. Une "
+            "adresse Gmail ordinaire n'est pas concernée.",
+        )
+    )
+
+    # --- partie B -----------------------------------------------------------
+    h.append(PageBreak())
+    h.append(para("Partie B — Renseigner TriCV", "section"))
+
+    h.append(para("Étape 4 — Ouvrir l'écran de configuration", "etape"))
+    h.append(
+        para(
+            "Connectez-vous à TriCV avec un compte administrateur, puis ouvrez "
+            "<b>Paramètres</b> et descendez jusqu'à <b>Boîte de candidatures</b>."
+        )
+    )
+
+    h.append(para("Étape 5 — Remplir les champs", "etape"))
+    h.append(
+        tableau(
+            ["Champ", "Valeur", "Remarque"],
+            [
+                [
+                    "Relever la boîte depuis l'application",
+                    "coché",
+                    "Décoché, les boutons de relevé n'apparaissent pas sur les postes.",
+                ],
+                [
+                    "Adresse de la boîte",
+                    "l'adresse de recrutement complète",
+                    "Celle qui figure dans les avis publiés.",
+                ],
+                [
+                    "Mot de passe",
+                    "les 16 lettres de l'étape 2",
+                    "Le mot de passe d'application, jamais celui du compte.",
+                ],
+                ["Serveur IMAP", "imap.gmail.com", "Pour Gmail et Google Workspace."],
+                ["Port", "993", "Valeur par défaut, à ne changer que sur consigne."],
+                [
+                    "Dossier à relever",
+                    "INBOX",
+                    "La boîte de réception. Un libellé Gmail s'écrit tel quel, à la lettre.",
+                ],
+            ],
+            [46 * mm, 52 * mm, 67 * mm],
+        )
+    )
+    h.append(Spacer(1, 8))
+    h.append(para("Cliquez sur <b>Enregistrer</b>.", "corps"))
+    h.extend(
+        encadre(
+            "Le mot de passe ne se réaffiche jamais",
+            "Une fois enregistré, il ne ressort plus du serveur : le champ indiquera « déjà "
+            "défini » et restera vide. C'est voulu. Pour modifier un autre réglage — le "
+            "dossier, par exemple — laissez ce champ vide et le mot de passe existant est "
+            "conservé. Ne le remplissez que pour le remplacer.",
+        )
+    )
+
+    h.append(para("Étape 6 — Tester la connexion", "etape"))
+    h.append(
+        para(
+            "Cliquez sur <b>Tester la connexion</b>. Le bouton porte sur les réglages "
+            "<b>enregistrés</b> : enregistrez d'abord. En cas de succès, TriCV affiche "
+            "l'adresse, le dossier, le nombre de messages et le nombre de non lus. Si un "
+            "message d'erreur apparaît, reportez-vous au tableau de la page suivante."
+        )
+    )
+
+    # --- partie C -----------------------------------------------------------
+    h.append(para("Partie C — Préparer les avis", "section"))
+    h.append(
+        para(
+            "La connexion ne suffit pas. TriCV doit savoir <b>à quel poste rattacher chaque "
+            "message</b>, et il s'appuie pour cela sur une référence entre crochets dans "
+            "l'objet, par exemple <b>[AVIS-2026-014]</b>."
+        )
+    )
+
+    h.append(para("Étape 7 — Donner une référence à chaque avis", "etape"))
+    h.append(
+        puces(
+            [
+                "Sur chaque poste, ouvrez l'avis et vérifiez qu'il porte bien une "
+                "<b>référence</b>. Sans elle, aucun message ne pourra lui être rattaché.",
+                "TriCV rappelle sous l'avis la phrase exacte à faire figurer, du type : "
+                "« Les candidatures reçues par email sont rattachées à cet avis si l'objet "
+                "contient [DL-2026-007]. »",
+                "<b>Reprenez cette consigne dans le texte de l'avis publié</b>, en demandant "
+                "explicitement aux candidats de mettre la référence dans l'objet de leur "
+                "message.",
+            ]
+        )
+    )
+    h.extend(
+        encadre(
+            "Sans référence, rien n'est perdu — mais rien n'est créé",
+            "Un message dont l'objet ne contient aucune référence connue est signalé comme "
+            "« non rattaché » : TriCV ne crée aucune candidature et <b>laisse le message non "
+            "lu</b>, pour qu'une personne s'en occupe. Prévoyez donc de relire régulièrement "
+            "cette liste, surtout au début : c'est là qu'atterrissent les candidatures des "
+            "personnes qui n'ont pas suivi la consigne.",
+        )
+    )
+
+    h.append(para("Étape 8 — Faire un essai avant le premier vrai relevé", "etape"))
+    h.append(
+        puces(
+            [
+                "Envoyez-vous <b>un message de test</b> à l'adresse de recrutement, avec la "
+                "référence d'un avis dans l'objet et un CV en pièce jointe (PDF ou Word).",
+                "Sur le poste correspondant, cliquez sur <b>Aperçu</b>. Cet écran montre "
+                "exactement ce qu'un relevé ferait — <b>sans rien créer ni marquer</b>.",
+                "Vérifiez que votre message y apparaît comme « créerait une candidature ».",
+                "Cliquez alors sur <b>Relever</b>. La candidature est créée.",
+            ]
+        )
+    )
+
+    # --- partie D -----------------------------------------------------------
+    h.append(PageBreak())
+    h.append(para("Ce qu'il faut savoir en usage courant", "section"))
+    h.append(
+        para(
+            "Ces quatre points ne sont pas des erreurs de configuration, mais des "
+            "comportements qui surprennent la première fois."
+        )
+    )
+
+    h.append(
+        tableau(
+            ["Comportement", "Ce que cela implique au quotidien"],
+            [
+                [
+                    "<b>Seuls les messages non lus</b> sont relevés.",
+                    "Si quelqu'un ouvre la boîte dans Gmail et lit les messages avant le "
+                    "relevé, TriCV les ignorera. Convenez d'une règle : soit on consulte "
+                    "cette boîte sans l'ouvrir, soit on remet les messages en « non lu » "
+                    "avant de relever.",
+                ],
+                [
+                    "Le relevé <b>marque les messages comme lus</b>.",
+                    "C'est ce qui évite de retraiter deux fois le même dossier. "
+                    "Conséquence : une seule personne devrait déclencher les relevés, sinon "
+                    "chacun voit une boîte déjà vidée par l'autre.",
+                ],
+                [
+                    "Un message <b>sans pièce jointe exploitable</b> est ignoré.",
+                    "Seuls les PDF et les fichiers Word sont retenus, et le format est "
+                    "vérifié sur le contenu du fichier, pas sur son extension. Les accusés "
+                    "de réception, les questions et les images de signature ne créent donc "
+                    "aucune candidature.",
+                ],
+                [
+                    "L'identité est <b>devinée</b>, jamais tenue pour acquise.",
+                    "Le nom est déduit de l'en-tête du message. Les dossiers arrivent donc "
+                    "en « À vérifier » : ils ne peuvent être ni éliminés ni présélectionnés "
+                    "tant qu'une personne n'a pas relu et confirmé.",
+                ],
+            ],
+            [58 * mm, 107 * mm],
+        )
+    )
+
+    h.append(para("Si quelque chose ne marche pas", "section"))
+    h.append(
+        para(
+            "Les messages d'erreur de TriCV sont volontairement explicites. Voici ce que "
+            "chacun signifie."
+        )
+    )
+    h.append(
+        tableau(
+            ["Message affiché", "Cause et correction"],
+            [
+                [
+                    "« Gmail a refusé la connexion… »",
+                    "Le mot de passe saisi est celui du compte, et non un mot de passe "
+                    "d'application. Reprenez les étapes 1 et 2. C'est de loin la cause la "
+                    "plus fréquente.",
+                ],
+                [
+                    "« Identifiants refusés par… »",
+                    "Adresse ou mot de passe incorrect, ou mot de passe d'application "
+                    "révoqué. À noter : changer le mot de passe du compte Google, ou "
+                    "désactiver la validation en deux étapes, <b>révoque tous les mots de "
+                    "passe d'application</b>. Il faut alors en créer un nouveau.",
+                ],
+                [
+                    "« Le dossier « … » n'existe pas »",
+                    "Le nom du dossier est mal orthographié. Pour la boîte de réception, "
+                    "écrivez exactement INBOX. Un libellé Gmail s'écrit tel qu'il apparaît "
+                    "dans Gmail, accents et majuscules compris.",
+                ],
+                [
+                    "« Impossible de joindre imap.gmail.com:993 »",
+                    "Le serveur n'est pas joignable : coupure réseau, ou pare-feu de "
+                    "l'entreprise qui bloque le port 993 en sortie. À voir avec la personne "
+                    "qui gère le réseau.",
+                ],
+                [
+                    "« Le relevé de la boîte est désactivé »",
+                    "La case « Relever la boîte depuis l'application » n'est pas cochée, ou "
+                    "l'enregistrement n'a pas été fait.",
+                ],
+                [
+                    "« Boîte incomplète : il manque… »",
+                    "Un champ obligatoire est vide. Le message nomme lequel.",
+                ],
+                [
+                    "La connexion réussit mais aucun message n'est trouvé",
+                    "IMAP n'est probablement pas activé côté Gmail (étape 3), ou tous les "
+                    "messages ont déjà été lus (voir le tableau ci-dessus).",
+                ],
+                [
+                    "Les champs des paramètres sont grisés",
+                    "Votre compte TriCV est un compte recruteur. Seul un administrateur "
+                    "modifie ces réglages — voir ci-dessous.",
+                ],
+            ],
+            [52 * mm, 113 * mm],
+        )
+    )
+
+    # --- annexe -------------------------------------------------------------
+    h.append(PageBreak())
+    h.append(para("Annexe — Devenir administrateur dans TriCV", "section"))
+    h.append(
+        para(
+            "Un compte créé depuis la page d'inscription est <b>toujours un compte "
+            "recruteur</b>, jamais administrateur. Ce n'est pas un oubli : la page "
+            "d'inscription est accessible sur le réseau, et quiconque la trouve ne doit pas "
+            "pouvoir s'attribuer le contrôle des réglages du cabinet."
+        )
+    )
+    h.append(
+        para(
+            "La promotion se fait donc depuis la machine qui héberge TriCV — c'est "
+            "précisément cette contrainte qui fait la garantie. Dans un terminal, à la "
+            "racine du dossier de l'application :"
+        )
+    )
+    h.append(
+        tableau(
+            ["Commande", "Effet"],
+            [
+                ["cd backend", "Se placer dans le dossier de l'application."],
+                [
+                    ".\\.venv\\Scripts\\python.exe comptes.py",
+                    "Lister les comptes, leur rôle et leur état.",
+                ],
+                [
+                    ".\\.venv\\Scripts\\python.exe comptes.py promouvoir adresse@exemple.tg",
+                    "Passer un compte en administrateur.",
+                ],
+                [
+                    ".\\.venv\\Scripts\\python.exe comptes.py desactiver adresse@exemple.tg",
+                    "Retirer l'accès sans effacer le compte : ses actions passées gardent "
+                    "un nom dans le journal.",
+                ],
+            ],
+            [82 * mm, 83 * mm],
+        )
+    )
+    h.append(Spacer(1, 8))
+    h.append(
+        para(
+            "<b>Après une promotion, déconnectez-vous et reconnectez-vous</b> : l'écran lit "
+            "le rôle depuis la session en cours."
+        )
+    )
+    h.extend(
+        encadre(
+            "Refermez l'inscription libre une fois l'équipe créée",
+            "Tant qu'elle est ouverte, toute personne atteignant la page peut se créer un "
+            "compte et consulter les dossiers de tous les candidats. Une fois les comptes de "
+            "l'équipe créés, décochez « Autoriser la création de compte » dans Paramètres.",
+            ton=DANGER,
+            fond=colors.HexColor("#fef2f2"),
+        )
+    )
+
+    h.append(para("Récapitulatif", "section"))
+    h.append(
+        KeepTogether(
+            puces(
+                [
+                    "Validation en deux étapes activée sur le compte Google.",
+                    "Mot de passe d'application créé et copié.",
+                    "IMAP activé dans les paramètres Gmail.",
+                    "Champs renseignés dans TriCV, case « Relever la boîte » cochée, "
+                    "réglages enregistrés.",
+                    "« Tester la connexion » renvoie le nombre de messages.",
+                    "Chaque avis porte une référence, et le texte publié demande aux "
+                    "candidats de la mettre en objet.",
+                    "Un message de test a été vu dans « Aperçu » puis relevé avec succès.",
+                    "Une seule personne est désignée pour déclencher les relevés.",
+                    "Inscription libre refermée une fois l'équipe créée.",
+                ]
+            )
+        )
+    )
+
+    return h
+
+
+def main() -> None:
+    SORTIE.parent.mkdir(parents=True, exist_ok=True)
+    document = SimpleDocTemplate(
+        str(SORTIE),
+        pagesize=A4,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=18 * mm,
+        bottomMargin=22 * mm,
+        title="TriCV — Configuration de la boîte de candidatures",
+        author="TriCV",
+        subject="Guide de paramétrage du relevé automatique des candidatures",
+    )
+    document.build(contenu(), onFirstPage=_pied, onLaterPages=_pied)
+    print(f"écrit : {SORTIE}")
+
+
+if __name__ == "__main__":
+    main()

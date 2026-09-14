@@ -54,6 +54,10 @@ class ResultatDepouillement:
     certifications: int = 0
     demographiques: dict[str, str] = field(default_factory=dict)
     pieces_lues: int = 0
+    # Lignes proposées lors d'un passage précédent et écrasées par celui-ci.
+    remplacees: int = 0
+    # L'adresse relevée dans le dossier, quand elle change ce qu'on avait.
+    email_trouve: str | None = None
     avertissements: list[str] = field(default_factory=list)
 
     @property
@@ -109,14 +113,66 @@ async def texte_du_dossier(candidature: Candidature) -> tuple[str, list[str]]:
     return "\n\n".join(morceaux), avertissements
 
 
+# Le mois écrit en toutes lettres, réduit à ce qui le distingue. « juin » et
+# « juillet » ne se séparent qu'à la quatrième lettre, d'où les clés longues
+# testées avant les courtes.
+_MOIS_ECRITS: tuple[tuple[str, int], ...] = (
+    ("juil", 7), ("juin", 6),
+    ("jan", 1), ("fev", 2), ("feb", 2), ("mar", 3), ("avr", 4), ("apr", 4),
+    ("mai", 5), ("may", 5), ("jul", 7), ("jun", 6), ("aou", 8), ("aug", 8),
+    ("sep", 9), ("oct", 10), ("nov", 11), ("dec", 12),
+)
+
+
+def _mois_ecrit(mot: str) -> int | None:
+    """« février », « Févr. », « February » → 2."""
+    reduit = normaliser_domaine(mot)
+    for prefixe, numero in _MOIS_ECRITS:
+        if reduit.startswith(prefixe):
+            return numero
+    return None
+
+
+def _date_en_lettres(valeur: str) -> date | None:
+    """« 8 février 1975 », « 2 août 1988 » → une date.
+
+    C'est la forme la plus courante des CV d'ici, et elle ne passait par aucun
+    des deux lecteurs de dates : le motif d'expurgation la reconnaissait bien,
+    mais la conversion rendait None. La date de naissance restait donc vide, et
+    **toute condition d'âge posée sur un poste était sans effet** — sans que
+    rien ne le signale, puisqu'une donnée absente n'élimine jamais.
+    """
+    morceaux = [m for m in re.split(r"[\s.,]+", valeur.strip()) if m]
+    for i, mot in enumerate(morceaux):
+        mois = _mois_ecrit(mot) if not mot.isdigit() else None
+        if mois is None:
+            continue
+        chiffres = [m for m in morceaux if m.isdigit()]
+        jours = [int(m) for m in chiffres if len(m) <= 2]
+        annees = [int(m) for m in chiffres if len(m) == 4]
+        if not annees:
+            return None
+        jour = jours[0] if jours else 1
+        if not (1 <= jour <= 31 and 1900 <= annees[0] <= 2100):
+            return None
+        try:
+            return date(annees[0], mois, jour)
+        except ValueError:
+            return None
+    return None
+
+
 def _date_francaise(valeur: str | None) -> date | None:
-    """« 03/09/1984 », « 3-9-1984 », « 1984-09-03 » → une date.
+    """« 03/09/1984 », « 3-9-1984 », « 1984-09-03 », « 8 février 1975 ».
 
     Les CV d'ici écrivent le jour en premier ; `_mois_vers_date` ne lit que
     l'ordre ISO et rendrait None sur la forme la plus courante.
     """
     if not valeur:
         return None
+    en_lettres = _date_en_lettres(str(valeur))
+    if en_lettres is not None:
+        return en_lettres
     morceaux = [m for m in re.split(r"[/.\-\s]+", str(valeur).strip()) if m.isdigit()]
     if len(morceaux) < 3:
         return _mois_vers_date(valeur)
@@ -181,23 +237,106 @@ def _appliquer_demographiques(candidat: Candidat, demographiques: dict[str, str]
             candidat.nationalites = [nationalite]
 
 
+def _appliquer_contacts(
+    candidat: Candidat, contacts: dict[str, str], resultat: ResultatDepouillement
+) -> None:
+    """Reporte l'adresse et le téléphone lus dans le dossier.
+
+    L'expurgation les repérait déjà — c'est elle qui les retire du texte avant
+    qu'il ne parte — mais personne ne les recueillait : ils étaient détectés,
+    masqués, puis oubliés. Un dossier déposé en lot restait donc sans adresse,
+    et sans adresse on ne peut ni accuser réception, ni réclamer une pièce, ni
+    convoquer. C'est aussi une colonne du tableau des préqualifiés remis au
+    client.
+
+    La détection est **locale** : `RE_EMAIL` sur le texte extrait, avant tout
+    envoi. Le modèle ne voit rien de tout cela et n'a rien à en dire.
+
+    Deux règles, et la nuance entre les deux compte :
+
+    - **Un champ vide se remplit toujours**, même sur un dossier relu. Un
+      relecteur qui confirme un parcours se prononce sur ce parcours, pas sur
+      l'absence d'une adresse ; refuser de la renseigner laissait le dossier
+      injoignable sans que personne ne l'ait voulu.
+    - **Un champ rempli ne se remplace** que sur un dossier qui ne vient que de
+      l'extraction. Ce qu'un candidat a déclaré ou qu'un relecteur a saisi
+      n'est jamais contredit.
+    """
+    remplacable = candidat.provenance is Provenance.EXTRAIT_IA
+
+    email = (contacts.get("email") or "").strip()
+    if email and (not candidat.email or remplacable):
+        if email.casefold() != (candidat.email or "").casefold():
+            resultat.email_trouve = email
+        candidat.email = email[:255]
+
+    telephone = (contacts.get("phone") or "").strip()
+    if telephone and (not candidat.telephone or remplacable):
+        candidat.telephone = telephone[:64]
+
+
+def _niveau_du_diplome(diplome) -> NiveauDiplome | None:
+    """Le niveau annoncé par le modèle, ou celui que dit l'intitulé.
+
+    Le modèle laisse `niveau` à null sur les diplômes qui ne figurent pas dans
+    l'échelle qu'on lui a donnée — un DUT, un baccalauréat. Le diplôme était
+    alors purement et simplement écarté, et un candidat dont c'est le seul
+    titre se retrouvait « aucun diplôme déclaré ». Le référentiel sait lire ces
+    intitulés : on le consulte avant de renoncer.
+    """
+    if diplome.niveau is not None:
+        return NiveauDiplome(diplome.niveau)
+    return NiveauDiplome.depuis_texte(f"{diplome.intitule} {diplome.domaine}")
+
+
+async def _faire_place(
+    db: AsyncSession, candidat: Candidat, resultat: ResultatDepouillement
+) -> bool:
+    """Efface les propositions précédentes, et **seulement** celles-là.
+
+    C'est la condition pour qu'un dépouillement soit relançable. Sans elle, un
+    dossier mal lu la première fois le restait : le second passage voyait des
+    lignes existantes et s'arrêtait là, quand bien même l'extraction aurait
+    été corrigée entre-temps.
+
+    Ce qui est effaçable se lit à la provenance, et une seule valeur l'est :
+    `EXTRAIT_IA`, c'est-à-dire ce que le modèle avait proposé et que personne
+    n'a encore relu. Tout le reste est du travail humain — `DECLARE` est ce
+    que le candidat a lui-même écrit dans le formulaire, `SAISI_RH` et
+    `VERIFIE_RH` ce qu'un relecteur a porté ou confirmé — et aucun modèle n'a
+    qualité pour le remplacer.
+    """
+    lignes = [*candidat.diplomes, *candidat.experiences]
+    humaines = [x for x in lignes if x.provenance is not Provenance.EXTRAIT_IA]
+    if humaines:
+        resultat.avertissements.append(
+            f"{len(humaines)} ligne(s) du dossier ont été déclarées par le candidat ou "
+            "saisies par un relecteur : le dépouillement les laisse intactes et n'a "
+            "rien proposé."
+        )
+        return False
+
+    for ligne in lignes:
+        await db.delete(ligne)
+    await db.flush()
+    await db.refresh(candidat, ["diplomes", "experiences"])
+    if lignes:
+        resultat.remplacees = len(lignes)
+        resultat.avertissements.append(
+            f"{len(lignes)} proposition(s) du dépouillement précédent ont été remplacées."
+        )
+    return True
+
+
 def _appliquer_parcours(
     candidat: Candidat, dossier: DossierExtrait, resultat: ResultatDepouillement
 ) -> list[object]:
-    """Construit les diplômes et expériences proposés.
-
-    Ne touche pas à ce qui existe déjà : un dépouillement ne doit jamais
-    effacer une saisie humaine, même s'il est relancé.
-    """
+    """Construit les diplômes et expériences proposés."""
     nouveaux: list[object] = []
-    if candidat.diplomes or candidat.experiences:
-        resultat.avertissements.append(
-            "Le dossier contenait déjà des données saisies : elles ont été conservées."
-        )
-        return nouveaux
 
     for diplome in dossier.diplomes:
-        if diplome.niveau is None or not diplome.intitule.strip():
+        niveau = _niveau_du_diplome(diplome)
+        if niveau is None or not diplome.intitule.strip():
             # Sans niveau, le diplôme ne peut pas être comparé à l'exigence :
             # mieux vaut ne rien proposer que proposer un niveau inventé.
             resultat.avertissements.append(
@@ -208,7 +347,7 @@ def _appliquer_parcours(
             DiplomeCandidat(
                 candidat_id=candidat.id,
                 intitule=diplome.intitule.strip()[:512],
-                niveau=int(NiveauDiplome(diplome.niveau)),
+                niveau=int(niveau),
                 domaine=normaliser_domaine(diplome.domaine or diplome.intitule)[:255],
                 etablissement=(diplome.etablissement or None),
                 annee=diplome.annee,
@@ -271,22 +410,48 @@ async def depouiller(db: AsyncSession, candidature: Candidature) -> ResultatDepo
     )
     resultat.demographiques = dict(expurge.demographics)
     _appliquer_demographiques(candidat, expurge.demographics)
+    _appliquer_contacts(candidat, expurge.contacts, resultat)
 
-    # 2. Le modèle ne reçoit que le texte expurgé.
+    # 2. Le modèle ne reçoit que le texte expurgé — et, s'il y a un poste, les
+    #    intitulés de domaine qu'il emploie. Le barème compare ces intitulés au
+    #    mot près : laissé libre, le modèle écrit « ressources humaines » là où
+    #    le poste dit « gestion des ressources humaines », et quinze points
+    #    tombent à zéro sur un parcours qui les méritait.
+    poste = candidature.poste
+    vocabulaire: list[str] = []
+    if poste is not None:
+        vocabulaire = [
+            *(poste.domaines_experience or []),
+            *(poste.domaines_acceptes or []),
+        ]
+        # Les domaines de chaque expérience spécifique attendue comptent
+        # autant : ce sont eux que la grille compare, et un poste qui en
+        # déclare plusieurs n'a plus rien dans `domaines_experience`.
+        for exigence in poste.experiences_specifiques or ():
+            vocabulaire.extend(exigence.get("domaines") or ())
+
     try:
-        dossier = await get_provider().extraire_dossier(expurge.text)
+        dossier = await get_provider().extraire_dossier(expurge.text, vocabulaire)
     except (LLMError, OSError) as exc:
         logger.warning("dépouillement impossible pour %s : %s", candidature.id, exc)
         resultat.avertissements.append(f"Extraction indisponible : {exc}")
         return resultat
 
-    for objet in _appliquer_parcours(candidat, dossier, resultat):
-        db.add(objet)
+    # La place ne se fait qu'une fois la réponse obtenue : effacer avant
+    # l'appel viderait le dossier quand le fournisseur est injoignable.
+    if await _faire_place(db, candidat, resultat):
+        for objet in _appliquer_parcours(candidat, dossier, resultat):
+            db.add(objet)
 
-    if dossier.langues and not candidat.langues:
+    # Langues et certifications ne portent pas de provenance ligne par ligne :
+    # c'est celle du candidat qui tranche. Sur un dossier issu de l'extraction,
+    # un nouveau passage les remplace comme il remplace le reste ; sur un
+    # dossier déclaré ou relu, il ne remplit que ce qui est encore vide.
+    remplacable = candidat.provenance is Provenance.EXTRAIT_IA
+    if dossier.langues and (remplacable or not candidat.langues):
         candidat.langues = [x.strip() for x in dossier.langues if x.strip()]
         resultat.langues = len(candidat.langues)
-    if dossier.certifications and not candidat.certifications:
+    if dossier.certifications and (remplacable or not candidat.certifications):
         candidat.certifications = [x.strip() for x in dossier.certifications if x.strip()]
         resultat.certifications = len(candidat.certifications)
 

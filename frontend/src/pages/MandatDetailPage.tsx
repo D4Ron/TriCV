@@ -2,8 +2,19 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi } from '@/lib/api'
-import { Callout, EmptyState, ErrorState, Field, Modal, PageLoader, Spinner } from '@/components/ui'
+import {
+  Callout,
+  EmptyState,
+  ErrorState,
+  Field,
+  Modal,
+  PageLoader,
+  Spinner,
+  delaiListe,
+} from '@/components/ui'
 import ActionsMandat from '@/components/ActionsMandat'
+import PanneauEspaceClient from '@/components/PanneauEspaceClient'
+import PanneauRapports from '@/components/PanneauRapports'
 
 const NIVEAUX = [
   [0, 'BAC'],
@@ -19,9 +30,34 @@ const PIECES = [
   ['CV', 'CV détaillé'],
   ['COPIE_DIPLOMES', 'Copie des diplômes'],
   ['ATTESTATIONS_TRAVAIL', 'Attestations de travail'],
-  ['PIECE_IDENTITE', "Pièce d'identité"],
+  ['PIECE_IDENTITE', "Carte nationale d'identité"],
+  ['PASSEPORT', 'Passeport'],
   ['CERTIFICAT_NATIONALITE', 'Certificat de nationalité'],
+  ['LETTRE_RECOMMANDATION', 'Lettre de recommandation'],
 ] as const
+
+/**
+ * Les groupes de pièces liées.
+ *
+ * Deux besoins que « exigée / facultative » ne sait pas exprimer :
+ * « la carte d'identité **ou** le passeport » — exiger les deux obligerait un
+ * candidat qui n'a qu'un passeport valide à en refaire une — et « le diplôme
+ * **et** son attestation », qui ne valent rien l'un sans l'autre.
+ */
+const GROUPES_TYPES = [
+  {
+    libelle: "Pièce d'identité",
+    mode: 'AU_MOINS_UNE' as const,
+    codes: ['PIECE_IDENTITE', 'PASSEPORT'],
+    aide: "La carte nationale d'identité ou le passeport, au choix du candidat.",
+  },
+  {
+    libelle: 'Diplôme et attestation',
+    mode: 'TOUTES' as const,
+    codes: ['COPIE_DIPLOMES', 'ATTESTATIONS_TRAVAIL'],
+    aide: "Les deux sont exigés : l'un sans l'autre ne prouve rien.",
+  },
+]
 
 /** Découpe une saisie « a, b ; c » en liste propre. */
 function enListe(valeur: string): string[] {
@@ -38,8 +74,18 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
   const [domaines, setDomaines] = useState('')
   const [experience, setExperience] = useState(5)
   const [experienceSpec, setExperienceSpec] = useState(3)
+  // Les domaines qui font compter une expérience comme « spécifique ». Ils
+  // reprenaient en silence ceux du diplôme, ce qui est souvent juste et
+  // parfois faux — un poste peut demander un diplôme en droit et une
+  // expérience en passation de marchés. Le champ est désormais visible, et
+  // vide il retombe sur l'ancien comportement.
+  const [domainesExp, setDomainesExp] = useState('')
   const [pieces, setPieces] = useState<string[]>(['LETTRE_MOTIVATION', 'CV'])
   const [facultatives, setFacultatives] = useState<string[]>([])
+  const [groupes, setGroupes] = useState<number[]>([])
+  // Formats imposés, par code de pièce. Vide = tout format accepté.
+  const [pdfSeul, setPdfSeul] = useState<string[]>([])
+  const [libresAutorisees, setLibresAutorisees] = useState(true)
   const [erreur, setErreur] = useState<string | null>(null)
 
   const creer = useMutation({
@@ -50,9 +96,18 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
         domaines_acceptes: enListe(domaines),
         annees_experience_min: experience,
         annees_experience_specifique_min: experienceSpec,
-        domaines_experience: enListe(domaines),
+        domaines_experience: enListe(domainesExp).length
+          ? enListe(domainesExp)
+          : enListe(domaines),
         pieces_requises: pieces,
         pieces_facultatives: facultatives,
+        groupes_pieces: groupes.map((i) => ({
+          codes: GROUPES_TYPES[i].codes,
+          mode: GROUPES_TYPES[i].mode,
+          libelle: GROUPES_TYPES[i].libelle,
+        })),
+        formats_pieces: Object.fromEntries(pdfSeul.map((code) => [code, ['pdf']])),
+        pieces_libres_autorisees: libresAutorisees,
         langues_requises: ['français'],
       }),
     onSuccess: () => {
@@ -130,8 +185,22 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
         </div>
 
         <Field
+          label="Domaines de l'expérience spécifique"
+          htmlFor="poste-domaines-exp"
+          hint="Vide, ce sont les domaines de formation ci-dessus qui servent. Ce critère pèse 15 des 30 points : plusieurs exigences distinctes se règlent ensuite depuis « Modifier la fiche »."
+        >
+          <input
+            id="poste-domaines-exp"
+            className="input"
+            value={domainesExp}
+            onChange={(e) => setDomainesExp(e.target.value)}
+            placeholder="passation des marchés, gestion de projet"
+          />
+        </Field>
+
+        <Field
           label="Pièces du dossier"
-          hint="Exigée : son absence élimine le dossier. Facultative : acceptée, jamais éliminatoire."
+          hint="Exigée : son absence élimine le dossier. Facultative : acceptée, jamais éliminatoire. Cochez « PDF » pour imposer ce format."
         >
           <div className="space-y-1.5">
             {PIECES.map(([code, libelle]) => {
@@ -143,6 +212,19 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
               return (
                 <div key={code} className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-sm text-ink-700">{libelle}</span>
+                  <label className="flex items-center gap-1 text-xs text-ink-500">
+                    <input
+                      type="checkbox"
+                      checked={pdfSeul.includes(code)}
+                      aria-label={`PDF exigé — ${libelle}`}
+                      onChange={(e) =>
+                        setPdfSeul((a) =>
+                          e.target.checked ? [...a, code] : a.filter((c) => c !== code),
+                        )
+                      }
+                    />
+                    PDF
+                  </label>
                   <select
                     className="input w-auto py-1 text-xs"
                     value={etat}
@@ -164,6 +246,48 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
             })}
           </div>
         </Field>
+
+        <Field
+          label="Pièces liées"
+          hint="Ce que « exigée / facultative » ne sait pas dire : un choix entre deux documents, ou deux documents indissociables."
+        >
+          <div className="space-y-1.5">
+            {GROUPES_TYPES.map((groupe, index) => (
+              <label key={groupe.libelle} className="flex items-start gap-2 text-sm text-ink-700">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={groupes.includes(index)}
+                  onChange={(e) =>
+                    setGroupes((a) =>
+                      e.target.checked ? [...a, index] : a.filter((i) => i !== index),
+                    )
+                  }
+                />
+                <span>
+                  {groupe.libelle}
+                  <span className="block text-xs text-ink-500">{groupe.aide}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </Field>
+
+        <label className="flex items-start gap-2 text-sm text-ink-700">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={libresAutorisees}
+            onChange={(e) => setLibresAutorisees(e.target.checked)}
+          />
+          <span>
+            Autoriser les documents libres
+            <span className="block text-xs text-ink-500">
+              Le candidat peut joindre ce qu'il juge utile — lettre de recommandation,
+              attestation — en le nommant lui-même.
+            </span>
+          </span>
+        </label>
 
         {erreur && (
           <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -190,10 +314,19 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
   )
 }
 
+const ONGLETS = [
+  { cle: 'postes', libelle: 'Postes' },
+  { cle: 'client', libelle: 'Espace du promoteur' },
+  { cle: 'rapports', libelle: 'Rapports' },
+] as const
+
+type Onglet = (typeof ONGLETS)[number]['cle']
+
 export default function MandatDetailPage() {
   const { mandatId = '' } = useParams()
   const navigate = useNavigate()
   const [ouvert, setOuvert] = useState(false)
+  const [onglet, setOnglet] = useState<Onglet>('postes')
 
   const mandat = useQuery({
     queryKey: ['mandat', mandatId],
@@ -232,6 +365,28 @@ export default function MandatDetailPage() {
         </div>
       </div>
 
+      <div className="mb-6 flex gap-2 border-b border-ink-200">
+        {ONGLETS.map((o) => (
+          <button
+            key={o.cle}
+            type="button"
+            className={`-mb-px border-b-2 px-3 py-2 text-sm ${
+              onglet === o.cle
+                ? 'border-brand-700 font-medium text-brand-800'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
+            }`}
+            onClick={() => setOnglet(o.cle)}
+          >
+            {o.libelle}
+          </button>
+        ))}
+      </div>
+
+      {onglet === 'client' && <PanneauEspaceClient mandatId={mandatId} />}
+      {onglet === 'rapports' && <PanneauRapports mandatId={mandatId} />}
+
+      {onglet === 'postes' && (
+      <>
       <h2 className="mb-1 text-sm font-semibold text-ink-900">Postes à pourvoir</h2>
       <p className="mb-3 text-xs text-ink-500">
         Un poste porte sa <strong>fiche de poste</strong> — le document interne qui fixe le
@@ -246,11 +401,12 @@ export default function MandatDetailPage() {
         />
       ) : (
         <div className="grid gap-3">
-          {postes.data?.map((poste) => (
+          {postes.data?.map((poste, index) => (
             <Link
               key={poste.id}
               to={`/postes/${poste.id}`}
-              className="card flex flex-wrap items-center gap-3 p-4 transition-colors hover:border-ink-300"
+              className="card-interactive stagger flex animate-rise flex-wrap items-center gap-3 p-4"
+              style={delaiListe(index)}
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-ink-900">{poste.intitule}</p>
@@ -281,10 +437,13 @@ export default function MandatDetailPage() {
       {postes.data && postes.data.length > 0 && (
         <div className="mt-6">
           <Callout tone="info">
-            Le seuil de présélection est de 20/30 par défaut. Il se règle poste par poste, et
-            l'abaisser demande une justification écrite.
+            Aucun seuil de présélection n'est posé au départ : c'est le classement qui
+            sélectionne. La barre se trace sur la grille du poste, une fois les notes connues —
+            et l'abaisser ensuite demande une justification écrite.
           </Callout>
         </div>
+      )}
+      </>
       )}
 
       {ouvert && <NouveauPoste mandatId={mandatId} onClose={() => setOuvert(false)} />}

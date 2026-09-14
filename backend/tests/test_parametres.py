@@ -39,31 +39,25 @@ async def test_les_reglages_par_defaut_viennent_du_fichier(client, auth):
     reponse = await client.get(f"{API}/settings", headers=auth)
     assert reponse.status_code == 200
     corps = reponse.json()
-    assert corps["seuil_preselection_defaut"] == 20.0
     assert corps["redact_demographics"] is True
     # Les champs de déploiement restent exposés, en lecture.
     assert corps["llm_provider"]
     assert "storage_backend" in corps
 
 
-async def test_modifier_un_reglage_le_rend_effectif(client, auth):
-    reponse = await client.patch(
-        f"{API}/settings",
-        json={"seuil_preselection_defaut": 18.5},
-        headers=auth,
-    )
-    assert reponse.status_code == 200, reponse.text
-    assert reponse.json()["seuil_preselection_defaut"] == 18.5
+async def test_le_seuil_n_est_plus_un_reglage_du_cabinet(client, auth):
+    """Il variait trop d'un mandat à l'autre pour valoir pour tout le cabinet.
 
-    # Persisté : une relecture le retrouve.
-    relu = (await client.get(f"{API}/settings", headers=auth)).json()
-    assert relu["seuil_preselection_defaut"] == 18.5
+    Le fixer avant d'avoir vu la distribution des notes revenait à décider à
+    l'aveugle ; il se pose maintenant sur la grille du poste, une fois les
+    dossiers notés. L'écran ne doit donc plus le proposer, et une valeur
+    envoyée par un ancien client ne doit rien changer.
+    """
+    corps = (await client.get(f"{API}/settings", headers=auth)).json()
+    assert "seuil_preselection_defaut" not in corps
 
-
-async def test_le_seuil_par_defaut_s_applique_aux_nouveaux_postes(client, auth):
-    """Le réglage n'est pas décoratif : il change ce que produit l'application."""
     await client.patch(
-        f"{API}/settings", json={"seuil_preselection_defaut": 15.0}, headers=auth
+        f"{API}/settings", json={"seuil_preselection_defaut": 18.5}, headers=auth
     )
 
     client_id = (
@@ -80,8 +74,20 @@ async def test_le_seuil_par_defaut_s_applique_aux_nouveaux_postes(client, auth):
         )
     ).json()
 
-    assert poste["seuil_preselection"] == 15.0
-    assert poste["seuil_nominal"] == 15.0
+    # Zéro : aucun plancher. C'est le classement qui sélectionne.
+    assert poste["seuil_preselection"] == 0.0
+
+
+async def test_modifier_un_reglage_le_rend_effectif(client, auth):
+    reponse = await client.patch(
+        f"{API}/settings", json={"candidatures_spontanees": False}, headers=auth
+    )
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["candidatures_spontanees"] is False
+
+    # Persisté : une relecture le retrouve.
+    relu = (await client.get(f"{API}/settings", headers=auth)).json()
+    assert relu["candidatures_spontanees"] is False
 
 
 async def test_aucun_plafond_de_taille_n_est_reglable(client, auth):
@@ -131,32 +137,28 @@ async def test_un_recruteur_ne_peut_pas_modifier_les_reglages(client, auth):
     assert lecture.status_code == 200
 
     ecriture = await client.patch(
-        f"{API}/settings", json={"seuil_preselection_defaut": 5}, headers=entetes
+        f"{API}/settings", json={"redact_demographics": False}, headers=entetes
     )
     assert ecriture.status_code == 403
 
 
 async def test_un_reglage_hors_bornes_est_refuse(client, auth):
     assert (
-        await client.patch(
-            f"{API}/settings", json={"seuil_preselection_defaut": 500}, headers=auth
-        )
+        await client.patch(f"{API}/settings", json={"imap_port": 70000}, headers=auth)
     ).status_code == 422
     assert (
-        await client.patch(
-            f"{API}/settings", json={"seuil_preselection_defaut": -3}, headers=auth
-        )
+        await client.patch(f"{API}/settings", json={"smtp_port": 0}, headers=auth)
     ).status_code == 422
 
 
 async def test_une_valeur_illisible_en_base_retombe_sur_le_defaut(client, auth):
     """Une base abîmée ne doit pas empêcher l'application de fonctionner."""
     async with SessionLocal() as db:
-        db.add(parametres.Parametre(cle=parametres.SEUIL_DEFAUT, valeur="pas un nombre"))
+        db.add(parametres.Parametre(cle=parametres.IMAP_PORT, valeur="pas un nombre"))
         await db.commit()
 
         reglages = await parametres.lire(db)
-        assert reglages.seuil_preselection_defaut == 20.0
+        assert reglages.imap_port == 993
 
 
 async def test_la_modification_est_journalisee(client, auth):
@@ -165,7 +167,7 @@ async def test_la_modification_est_journalisee(client, auth):
     from app.models import AuditLog
 
     await client.patch(
-        f"{API}/settings", json={"seuil_preselection_defaut": 22}, headers=auth
+        f"{API}/settings", json={"redact_demographics": False}, headers=auth
     )
 
     async with SessionLocal() as db:

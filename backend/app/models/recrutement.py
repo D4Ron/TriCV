@@ -116,14 +116,35 @@ class Poste(Base, TimestampMixin):
         sa.Integer, default=0, nullable=False
     )
     domaines_experience: Mapped[list | None] = mapped_column(JsonB)
+    # Plusieurs expériences spécifiques attendues, chacune avec ses domaines,
+    # son seuil d'années et son poids :
+    #   [{"libelle": "passation des marchés", "domaines": [...],
+    #     "annees_min": 5, "poids": 2}]
+    # Vide ou absent = l'exigence unique portée par les deux champs ci-dessus,
+    # qui reste la forme courante et la seule qu'écrivaient les avis jusqu'ici.
+    experiences_specifiques: Mapped[list | None] = mapped_column(JsonB)
     pieces_requises: Mapped[list | None] = mapped_column(JsonB)
     # Acceptées sans être exigées : leur absence n'a jamais éliminé personne.
     pieces_facultatives: Mapped[list | None] = mapped_column(JsonB)
+    # Groupes de pièces liées : « la CNI ou le passeport », « le diplôme et
+    # l'attestation ». Une pièce exigée seule reste dans `pieces_requises`.
+    groupes_pieces: Mapped[list | None] = mapped_column(JsonB)
+    # Formats imposés, par code de pièce : {"CV": ["pdf"]}. Absent = tout
+    # format accepté par le contrôle général (PDF, DOC, DOCX).
+    formats_pieces: Mapped[dict | None] = mapped_column(JsonB)
+    # Le candidat peut-il joindre des documents de son choix — une lettre de
+    # recommandation, une attestation qu'il juge utile ?
+    pieces_libres_autorisees: Mapped[bool] = mapped_column(
+        sa.Boolean, default=True, nullable=False
+    )
     # Vestige : il n'y a plus de limite de taille réglable. La colonne reste
     # pour ne pas imposer de migration aux bases existantes, mais rien ne la
     # lit — le stockage se maîtrise par la purge des mandats archivés.
     taille_max_mo: Mapped[int | None] = mapped_column(sa.Integer)
     langues_requises: Mapped[list | None] = mapped_column(JsonB)
+    # Formation complémentaire souhaitée : information portée par l'avis et
+    # comparée à la main. Aucune grille du cabinet ne la note.
+    formation_complementaire_souhaitee: Mapped[str | None] = mapped_column(sa.String(512))
 
     # --- conditions restrictives -------------------------------------------
     # Données sensibles : elles ne quittent jamais l'installation locale, et
@@ -138,6 +159,10 @@ class Poste(Base, TimestampMixin):
     # --- barème ------------------------------------------------------------
     # Sérialisé : la répartition des points se règle par poste sans migration.
     bareme: Mapped[dict | None] = mapped_column(JsonB)
+    # Grille des entretiens structurés, négociée avec le client mandat par
+    # mandat : l'offre technique la présente comme « indicative », à valider.
+    # NULL = la grille type du cabinet.
+    bareme_entretien: Mapped[list | None] = mapped_column(JsonB)
     seuil_preselection: Mapped[float] = mapped_column(
         sa.Numeric(5, 2), default=20.0, nullable=False
     )
@@ -211,6 +236,11 @@ class Candidat(Base, TimestampMixin):
 
     langues: Mapped[list | None] = mapped_column(JsonB)
     certifications: Mapped[list | None] = mapped_column(JsonB)
+    # Formations complémentaires : séminaires, certificats, cycles courts.
+    # Enregistrées et affichées, sans points — aucune grille du cabinet ne leur
+    # en attribue, et en inventer serait la faute déjà commise sur les
+    # entretiens.
+    formations_complementaires: Mapped[list | None] = mapped_column(JsonB)
 
     provenance: Mapped[Provenance] = mapped_column(
         sa.Enum(Provenance, name="provenance"), default=Provenance.DECLARE, nullable=False
@@ -278,11 +308,15 @@ class Candidature(Base, TimestampMixin):
     __table_args__ = (
         sa.UniqueConstraint("poste_id", "candidat_id", name="uq_candidature_poste_candidat"),
         sa.Index("ix_candidature_poste_statut", "poste_id", "statut"),
+        sa.Index("ix_candidature_spontanee", "spontanee"),
     )
 
     id: Mapped[str] = uuid_pk()
-    poste_id: Mapped[str] = mapped_column(
-        sa.String(36), sa.ForeignKey("poste.id", ondelete="CASCADE"), index=True, nullable=False
+    # Nullable depuis les candidatures spontanées : quelqu'un peut adresser
+    # son dossier sans qu'aucun avis ne soit ouvert. Le profil rejoint alors le
+    # vivier, où il sera retrouvé le jour où un mandat lui correspond.
+    poste_id: Mapped[str | None] = mapped_column(
+        sa.String(36), sa.ForeignKey("poste.id", ondelete="CASCADE"), index=True
     )
     candidat_id: Mapped[str] = mapped_column(
         sa.String(36), sa.ForeignKey("candidat.id", ondelete="CASCADE"), index=True, nullable=False
@@ -299,9 +333,26 @@ class Candidature(Base, TimestampMixin):
         index=True,
     )
     recue_le: Mapped[datetime] = mapped_column(sa.DateTime, default=utcnow, nullable=False)
+    # Reçue hors de tout avis. Distinguée de `poste_id is None` seul, pour que
+    # l'origine reste lisible même si le dossier est rattaché plus tard.
+    spontanee: Mapped[bool] = mapped_column(sa.Boolean, default=False, nullable=False)
     # Trace de l'arrivée par email, pour retrouver le message d'origine.
     message_id: Mapped[str | None] = mapped_column(sa.String(512), index=True)
     notes_rh: Mapped[str | None] = mapped_column(sa.Text)
+
+    # Part humaine de la « consistance du dossier » : motivation et expression
+    # écrite, qui ne se calculent pas. Porté par la candidature et non par la
+    # notation, parce que la notation est effacée et recréée à chaque recalcul,
+    # tandis qu'une lecture faite une fois n'a pas à être refaite.
+    appreciation_consistance: Mapped[float | None] = mapped_column(sa.Numeric(4, 2))
+    appreciation_motif: Mapped[str | None] = mapped_column(sa.Text)
+
+    # Catégorie remise au client — fortement / partiellement / non qualifié.
+    # Calculée à l'évaluation, mais réinscriptible : c'est un avis, et le
+    # cabinet doit pouvoir le corriger sans toucher au barème.
+    qualification: Mapped[str | None] = mapped_column(sa.String(32), index=True)
+    qualification_manuelle: Mapped[str | None] = mapped_column(sa.String(32))
+    qualification_motif: Mapped[str | None] = mapped_column(sa.Text)
 
     poste: Mapped[Poste] = relationship(back_populates="candidatures")
     candidat: Mapped[Candidat] = relationship(back_populates="candidatures")
@@ -310,6 +361,9 @@ class Candidature(Base, TimestampMixin):
     )
     notation: Mapped["Notation | None"] = relationship(
         back_populates="candidature", cascade="all, delete-orphan", uselist=False
+    )
+    entretiens: Mapped[list["Entretien"]] = relationship(
+        back_populates="candidature", cascade="all, delete-orphan", lazy="selectin"
     )
     eliminations: Mapped[list["Elimination"]] = relationship(
         back_populates="candidature", cascade="all, delete-orphan", lazy="selectin"
@@ -328,6 +382,9 @@ class PieceCandidature(Base, TimestampMixin):
     )
     # Code de `PieceDossier`, ou libellé libre pour une pièce hors nomenclature.
     type_piece: Mapped[str] = mapped_column(sa.String(64), nullable=False, index=True)
+    # Nom donné par le candidat quand il joint un document de son choix. Sans
+    # lui, « AUTRE » ne dirait rien au recruteur qui ouvre le dossier.
+    intitule_libre: Mapped[str | None] = mapped_column(sa.String(255))
     # Nullables : une pièce peut être constatée reçue avant d'être classée —
     # dossier arrivé par courrier, ou pièces jointes d'un email pas encore
     # rangées. La complétude porte sur ce qui est reçu, pas sur ce qui est
@@ -400,6 +457,82 @@ class LigneNotation(Base):
     detail: Mapped[str | None] = mapped_column(sa.Text)
 
     notation: Mapped[Notation] = relationship(back_populates="lignes")
+
+
+class Entretien(Base, TimestampMixin):
+    """L'entretien structuré, et les points que le jury a attribués.
+
+    Seconde étape du processus : la présélection vaut 30 points, l'entretien 70,
+    et la note finale sur 100 est la somme des deux. Rien ici n'est calculé —
+    ces points sont un jugement humain, porté par un jury en séance. L'aide
+    automatique n'y a aucune place, et n'y accède pas.
+
+    `bareme_utilise` fige la grille au moment de la saisie, pour la même raison
+    que `Notation.bareme_utilise` : retoucher la répartition des 70 points ne
+    doit pas réécrire une évaluation déjà rendue.
+
+    Une candidature n'a qu'un entretien : reconvoquer quelqu'un, c'est corriger
+    la même fiche, pas en ouvrir une seconde qui ferait douter de la bonne.
+    """
+
+    __tablename__ = "entretien"
+    __table_args__ = (
+        # Un juré, une fiche. Deux fiches du même juré pour le même candidat
+        # fausseraient la moyenne sans que personne ne s'en aperçoive.
+        sa.UniqueConstraint("candidature_id", "jure", name="uq_entretien_jure"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    candidature_id: Mapped[str] = mapped_column(
+        sa.String(36),
+        sa.ForeignKey("candidature.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    # Le membre du jury qui a rempli cette fiche. Le processus réel fait siéger
+    # plusieurs personnes — sept sur un mandat récent — et la note publiée est
+    # leur moyenne. Une seule fiche par candidature aurait écrasé six avis.
+    jure: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="Jury")
+    date_entretien: Mapped[date | None] = mapped_column(sa.Date)
+    # Composition du panel, en clair : la grille remise au client doit dire qui
+    # a jugé, pas seulement combien de points ont été mis.
+    jury: Mapped[str | None] = mapped_column(sa.Text)
+    observations: Mapped[str | None] = mapped_column(sa.Text)
+    bareme_utilise: Mapped[list | None] = mapped_column(JsonB)
+
+    conduit_par_id: Mapped[str | None] = mapped_column(
+        sa.String(36), sa.ForeignKey("user.id", ondelete="SET NULL")
+    )
+
+    candidature: Mapped["Candidature"] = relationship(back_populates="entretiens")
+    lignes: Mapped[list["LigneEntretien"]] = relationship(
+        back_populates="entretien", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class LigneEntretien(Base, TimestampMixin):
+    """Les points d'un critère d'entretien, avec ce qui les motive.
+
+    Le commentaire n'est pas décoratif : une note attribuée en séance se
+    défend des mois plus tard par ce qui a été observé, pas par le chiffre.
+    """
+
+    __tablename__ = "ligne_entretien"
+    __table_args__ = (
+        sa.UniqueConstraint("entretien_id", "code", name="uq_ligne_entretien_code"),
+    )
+
+    id: Mapped[str] = uuid_pk()
+    entretien_id: Mapped[str] = mapped_column(
+        sa.String(36), sa.ForeignKey("entretien.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    code: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    libelle: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    points: Mapped[float] = mapped_column(sa.Numeric(5, 2), nullable=False)
+    points_max: Mapped[float] = mapped_column(sa.Numeric(5, 2), nullable=False)
+    commentaire: Mapped[str | None] = mapped_column(sa.Text)
+
+    entretien: Mapped[Entretien] = relationship(back_populates="lignes")
 
 
 class Elimination(Base, TimestampMixin):

@@ -127,6 +127,36 @@ def test_years_are_not_mistaken_for_phone_numbers():
     assert "2016" in result.text
 
 
+def test_a_seniority_claim_is_not_an_age():
+    """« 12 ans d'expérience » est l'argument du CV, pas une date de naissance.
+
+    Le motif d'âge le prenait pour une donnée démographique et le remplaçait :
+    la phrase qui résume la carrière arrivait au modèle en « [AGE] d'expérience »,
+    et l'ancienneté disparaissait du dossier.
+    """
+    texte = (
+        "Professionnel des ressources humaines fort de 12 ans d'expérience.\n"
+        "A dirigé le service pendant 15 ans.\n"
+    )
+    result = redact_sync(texte, KnownValues())
+    assert "12 ans d'expérience" in result.text
+    assert "pendant 15 ans" in result.text
+    assert "AGE" not in result.counts
+
+
+def test_a_declared_age_is_still_redacted():
+    result = redact_sync("Age : 38 ans\nNationalité togolaise", KnownValues())
+    assert "38" not in result.text
+    assert result.demographics["age"] == "38"
+
+
+def test_the_parenthesised_birth_form_is_caught():
+    """« Né(e) le … » est la forme la plus fréquente ici."""
+    result = redact_sync("Né(e) le 22-11-1979 à Kara", KnownValues())
+    assert "22-11-1979" not in result.text
+    assert result.demographics["date_of_birth"] == "22-11-1979"
+
+
 def _spacy_available() -> bool:
     from app.services import redaction
 
@@ -157,3 +187,59 @@ def test_ner_redacts_bare_places_but_never_schools_or_employers():
         assert kept in result.text, f"{kept!r} was redacted but is needed for scoring"
 
     assert "AGBEKO" not in result.text
+
+
+CV_PARCOURS = """KOSSI Amevi
+Cadre en gestion des ressources humaines
+Téléphone : +228 90 12 34 56
+
+EXPERIENCE PROFESSIONNELLE
+Depuis mars 2018 — Chef du service du personnel, Orabank Togo, Lomé
+Janvier 2014 à février 2018 — Responsable administratif RH, SOTOCO, Atakpamé
+Septembre 2010 à décembre 2013 — Assistant RH, Cabinet Alpha Conseil, Lomé
+Nov. 2008 à août 2010 — Conducteur de travaux, EBOMAF Togo, Kara
+
+LANGUES
+Français (langue maternelle), Anglais (courant), Ewé
+"""
+
+
+@pytest.mark.skipif(
+    not _spacy_available(), reason="requires the fr_core_news_md model (present in the Docker image)"
+)
+@pytest.mark.parametrize(
+    "conserve",
+    [
+        # Intitulés de fonction : pris pour des noms de personne, ils étaient
+        # masqués dans tout le document et chaque expérience perdait son poste.
+        "Cadre",
+        "Chef du service du personnel",
+        "Responsable administratif RH",
+        "Conducteur de travaux",
+        # Employeurs : pris pour des lieux ou des personnes hors du bloc
+        # d'identité.
+        "Orabank Togo",
+        "SOTOCO",
+        "Cabinet Alpha Conseil",
+        "EBOMAF Togo",
+        # Langues : le modèle français les étiquette comme des lieux, et la
+        # rubrique entière disparaissait.
+        "Français",
+        "Anglais",
+        "Ewé",
+    ],
+)
+def test_the_career_vocabulary_survives_the_ner(conserve: str):
+    result = redact_sync(CV_PARCOURS, KnownValues(full_name="KOSSI Amevi"))
+    assert conserve in result.text, f"{conserve!r} a été expurgé alors qu'il porte la notation"
+
+
+@pytest.mark.skipif(
+    not _spacy_available(), reason="requires the fr_core_news_md model (present in the Docker image)"
+)
+def test_the_candidate_identity_still_goes():
+    result = redact_sync(CV_PARCOURS, KnownValues(full_name="KOSSI Amevi"))
+    lowered = result.text.lower()
+    assert "kossi" not in lowered
+    assert "amevi" not in lowered
+    assert "90 12 34 56" not in result.text

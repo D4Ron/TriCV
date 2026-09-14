@@ -101,3 +101,47 @@ class StatutAvis(StrEnum):
     BROUILLON = "BROUILLON"
     PUBLIE = "PUBLIE"
     CLOTURE = "CLOTURE"
+
+
+# --- collaboration : courriels, espace client, rapports ---------------------
+
+
+class StatutEnvoi(StrEnum):
+    ENVOYE = "ENVOYE"
+    ECHEC = "ECHEC"
+
+
+class AuteurEchange(StrEnum):
+    CABINET = "CABINET"
+    CLIENT = "CLIENT"
+
+
+class TypeEchange(StrEnum):
+    MESSAGE = "MESSAGE"
+    # Une demande de modification se suit jusqu'à son traitement : elle n'est
+    # pas close par une réponse polie, mais par un changement effectif.
+    DEMANDE_MODIFICATION = "DEMANDE_MODIFICATION"
+    # Le cabinet soumet quelque chose à validation — une trame d'avis, une
+    # liste de candidats proposés.
+    VALIDATION = "VALIDATION"
+
+
+class EtatEtape(StrEnum):
+    A_VENIR = "A_VENIR"
+    EN_COURS = "EN_COURS"
+    TERMINEE = "TERMINEE"
+
+
+class UsageModele(StrEnum):
+    """Ce qu'un gabarit imposé sert à produire."""
+
+    AVIS = "AVIS"
+    RAPPORT = "RAPPORT"
+    CV = "CV"
+    COURRIEL = "COURRIEL"
+
+
+class StatutRapport(StrEnum):
+    BROUILLON = "BROUILLON"
+    EN_RELECTURE = "EN_RELECTURE"
+    VALIDE = "VALIDE"

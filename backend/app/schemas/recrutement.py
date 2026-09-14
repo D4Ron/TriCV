@@ -24,7 +24,13 @@ Lecture = ConfigDict(from_attributes=True)
 
 # Les colonnes JSON sont nullables en base — une liste vide et « pas de valeur »
 # n'ont pas à être distinguées ici, donc NULL se lit comme [].
+#
+# La coercition doit se faire ici et non par `default_factory` : celui-ci ne
+# joue que si la clé est absente, alors qu'une ligne écrite avant l'ajout de la
+# colonne présente bel et bien la clé, à None. Une fiche ancienne rendait donc
+# l'écran des postes inaccessible.
 ListeTexte = Annotated[list[str], BeforeValidator(lambda v: v or [])]
+DictionnaireListes = Annotated[dict[str, list[str]], BeforeValidator(lambda v: v or {})]
 
 
 # --- client -----------------------------------------------------------------
@@ -131,6 +137,50 @@ class RestrictionIn(BaseModel):
         return self
 
 
+class GroupePiecesIn(BaseModel):
+    """Un ensemble de pièces et la règle qui les lie.
+
+    « Au moins une » sert aux équivalents — carte d'identité ou passeport ;
+    « toutes » sert aux pièces indissociables — diplôme et attestation.
+    """
+
+    codes: list[str] = Field(min_length=1)
+    mode: str = Field(default="TOUTES", pattern="^(TOUTES|AU_MOINS_UNE)$")
+    libelle: str = Field(default="", max_length=255)
+
+    @model_validator(mode="after")
+    def _un_groupe_a_du_sens(self) -> GroupePiecesIn:
+        if self.mode == "AU_MOINS_UNE" and len(set(self.codes)) < 2:
+            raise ValueError(
+                "Un groupe « au moins une » a besoin d'au moins deux pièces : "
+                "avec une seule, exigez-la simplement."
+            )
+        return self
+
+
+class ExperienceSpecifiqueIn(BaseModel):
+    """Une expérience spécifique attendue.
+
+    `poids` répartit les points du critère entre les exigences. Deux exigences
+    de poids 1 et 2 se partagent les quinze points en cinq et dix.
+    """
+
+    libelle: str = Field(default="", max_length=255)
+    domaines: ListeTexte = Field(default_factory=list)
+    annees_min: int = Field(default=0, ge=0, le=60)
+    poids: float = Field(default=1.0, gt=0, le=10)
+
+    @model_validator(mode="after")
+    def _nommable(self) -> ExperienceSpecifiqueIn:
+        if not self.libelle.strip() and not self.domaines:
+            raise ValueError(
+                "Une expérience spécifique doit porter un libellé ou des domaines : "
+                "sans l'un des deux, ni la grille ni le candidat ne savent de quoi "
+                "il s'agit."
+            )
+        return self
+
+
 class PosteBase(BaseModel):
     intitule: str = Field(min_length=1, max_length=512)
     departement: str | None = Field(default=None, max_length=255)
@@ -143,9 +193,19 @@ class PosteBase(BaseModel):
     annees_experience_min: int = Field(default=0, ge=0, le=60)
     annees_experience_specifique_min: int = Field(default=0, ge=0, le=60)
     domaines_experience: ListeTexte = Field(default_factory=list)
+    experiences_specifiques: Annotated[
+        list[ExperienceSpecifiqueIn], BeforeValidator(lambda v: v or [])
+    ] = Field(default_factory=list)
     pieces_requises: ListeTexte = Field(default_factory=list)
     pieces_facultatives: ListeTexte = Field(default_factory=list)
+    groupes_pieces: Annotated[
+        list[GroupePiecesIn], BeforeValidator(lambda v: v or [])
+    ] = Field(default_factory=list)
+    # Formats imposés par code de pièce : {"CV": ["pdf"]}.
+    formats_pieces: DictionnaireListes = Field(default_factory=dict)
+    pieces_libres_autorisees: Annotated[bool, BeforeValidator(lambda v: True if v is None else v)] = True
     langues_requises: ListeTexte = Field(default_factory=list)
+    formation_complementaire_souhaitee: str | None = Field(default=None, max_length=512)
     nombre_a_retenir: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
@@ -160,7 +220,10 @@ class PosteBase(BaseModel):
 
     @model_validator(mode="after")
     def _coherence_experience(self) -> PosteBase:
-        if self.annees_experience_specifique_min > self.annees_experience_min:
+        seuils = [self.annees_experience_specifique_min] + [
+            e.annees_min for e in self.experiences_specifiques
+        ]
+        if max(seuils) > self.annees_experience_min:
             raise ValueError(
                 "L'expérience spécifique demandée ne peut pas dépasser l'expérience "
                 "générale : une expérience spécifique est aussi une expérience."
@@ -183,9 +246,14 @@ class PosteUpdate(BaseModel):
     annees_experience_min: int | None = Field(default=None, ge=0, le=60)
     annees_experience_specifique_min: int | None = Field(default=None, ge=0, le=60)
     domaines_experience: list[str] | None = None
+    experiences_specifiques: list[ExperienceSpecifiqueIn] | None = None
     pieces_requises: list[str] | None = None
     pieces_facultatives: list[str] | None = None
+    groupes_pieces: list[GroupePiecesIn] | None = None
+    formats_pieces: dict[str, list[str]] | None = None
+    pieces_libres_autorisees: bool | None = None
     langues_requises: list[str] | None = None
+    formation_complementaire_souhaitee: str | None = None
     nombre_a_retenir: int | None = Field(default=None, ge=1)
     restriction: RestrictionIn | None = None
 
@@ -295,7 +363,16 @@ class ExperienceOut(ExperienceIn):
 class CandidatIn(BaseModel):
     nom: str = Field(min_length=1, max_length=255)
     prenom: str = Field(min_length=1, max_length=255)
-    email: EmailStr | None = None
+    # Exigée : c'est par là qu'on accuse réception, qu'on réclame une pièce et
+    # qu'on convoque, et elle figure en colonne dans le tableau des
+    # préqualifiés remis au client. Un dossier saisi sans adresse est un
+    # dossier qu'on ne pourra pas traiter jusqu'au bout.
+    #
+    # Cette contrainte porte sur la **saisie** : un dossier déposé en lot
+    # arrive sans rien, et c'est le dépouillement qui lit l'adresse dans le CV
+    # (voir `depouillement._appliquer_contacts`). Rendre la colonne obligatoire
+    # en base refuserait ces dépôts-là, qui sont le cas le plus courant.
+    email: EmailStr
     telephone: str | None = Field(default=None, max_length=64)
     adresse: str | None = Field(default=None, max_length=512)
     date_naissance: date | None = None
@@ -303,6 +380,10 @@ class CandidatIn(BaseModel):
     nationalites: ListeTexte = Field(default_factory=list)
     langues: ListeTexte = Field(default_factory=list)
     certifications: ListeTexte = Field(default_factory=list)
+    # Séminaires, certificats, cycles courts. Enregistrés et montrés aux
+    # RH ; aucune grille du cabinet ne leur attribue de points, donc
+    # l'application ne leur en invente pas.
+    formations_complementaires: ListeTexte = Field(default_factory=list)
     diplomes: list[DiplomeIn] = Field(default_factory=list)
     experiences: list[ExperienceIn] = Field(default_factory=list)
 
@@ -321,6 +402,7 @@ class CandidatOut(BaseModel):
     nationalites: ListeTexte = Field(default_factory=list)
     langues: ListeTexte = Field(default_factory=list)
     certifications: ListeTexte = Field(default_factory=list)
+    formations_complementaires: ListeTexte = Field(default_factory=list)
     provenance: Provenance
     verifie_le: datetime | None = None
     diplomes: list[DiplomeOut] = Field(default_factory=list)
@@ -390,6 +472,10 @@ class PieceOut(BaseModel):
 
     id: str
     type_piece: str
+    # Le nom donné par le candidat à une pièce hors nomenclature — une lettre de
+    # recommandation, une attestation. Vide sur une pièce codifiée, où le
+    # libellé du référentiel fait foi.
+    intitule_libre: str | None = None
     # Absent tant que la pièce est constatée reçue sans être encore classée.
     nom_fichier: str | None = None
     taille_octets: int | None = None
@@ -421,6 +507,17 @@ class CandidatureOut(BaseModel):
     source: SourceCandidature
     recue_le: datetime
     notes_rh: str | None = None
+    # Part humaine de la consistance du dossier. Nulle tant que personne n'a lu.
+    appreciation_consistance: float | None = None
+    appreciation_motif: str | None = None
+    # Catégorie remise au client, calculée puis réinscriptible.
+    qualification: str | None = None
+    qualification_libelle: str | None = None
+    qualification_manuelle: str | None = None
+    qualification_motif: str | None = None
+    # Plafond de l'appréciation pour ce poste. Annoncé plutôt que déduit :
+    # l'écran ne doit pas recalculer la décomposition du barème.
+    appreciation_max: float = 1.0
     candidat: CandidatOut
     notation: NotationOut | None = None
     eliminations: list[EliminationOut] = Field(default_factory=list)
@@ -443,6 +540,128 @@ class NoteManuelleIn(BaseModel):
     def _motif_obligatoire(self) -> NoteManuelleIn:
         if self.note is not None and not self.motif.strip():
             raise ValueError("Une note saisie manuellement doit être motivée.")
+        return self
+
+
+class AppreciationIn(BaseModel):
+    """La part humaine de la consistance du dossier.
+
+    Motivation et expression écrite ne se calculent pas : elles se lisent. La
+    note est bornée par le barème du poste, et l'appréciation écrite est
+    obligatoire — un point attribué sans justification ne serait pas opposable
+    à un candidat qui conteste.
+    """
+
+    note: float | None = Field(default=None, ge=0, le=10)
+    motif: str = ""
+
+    @model_validator(mode="after")
+    def _motif_obligatoire(self) -> AppreciationIn:
+        if self.note is not None and not self.motif.strip():
+            raise ValueError("Une appréciation du dossier doit être motivée.")
+        return self
+
+
+# --- entretien structuré ------------------------------------------------------
+
+
+class LigneEntretienIn(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    points: float | None = Field(default=None, ge=0, le=100)
+    commentaire: str = ""
+
+
+class EntretienIn(BaseModel):
+    """Ce qu'un juré remet après un entretien structuré.
+
+    Une saisie partielle est acceptée — on note au fil de la séance — mais la
+    note sur 100 le signale tant qu'un critère manque.
+    """
+
+    lignes: list[LigneEntretienIn] = Field(default_factory=list)
+    # Le membre du panel qui remplit la fiche. Le processus réel en fait siéger
+    # plusieurs et publie leur moyenne.
+    jure: str = Field(default="Jury", max_length=255)
+    date_entretien: date | None = None
+    jury: str = ""
+    observations: str = ""
+
+
+class CritereEntretienIn(BaseModel):
+    """Un critère de la grille négociée avec le client."""
+
+    code: str = Field(min_length=1, max_length=64)
+    libelle: str = Field(min_length=1, max_length=255)
+    points_max: float = Field(gt=0, le=100)
+    section: str = Field(default="", max_length=255)
+
+
+class GrilleEntretienIn(BaseModel):
+    """La grille d'un poste. `criteres` vide remet celle du cabinet."""
+
+    criteres: list[CritereEntretienIn] | None = None
+
+
+class LigneEntretienOut(BaseModel):
+    code: str
+    libelle: str
+    points: float | None = None
+    points_max: float
+    commentaire: str | None = None
+    section: str = ""
+
+
+class FicheJureOut(BaseModel):
+    """La fiche d'un juré : ses notes, et rien de celles des autres."""
+
+    jure: str
+    date_entretien: date | None = None
+    observations: str | None = None
+    lignes: list[LigneEntretienOut] = Field(default_factory=list)
+    total: float = 0.0
+    complet: bool = False
+
+
+class EntretienOut(BaseModel):
+    """L'état des entretiens d'une candidature, panel compris.
+
+    `grille` porte toujours tous les critères, notés ou non : l'écran présente
+    la grille entière, sans quoi un juré ne saurait pas ce qu'il lui reste à
+    faire. `fiches` porte ce que chacun a mis.
+    """
+
+    candidature_id: str
+    existe: bool = False
+    jury: str | None = None
+    grille: list[LigneEntretienOut] = Field(default_factory=list)
+    sections: list[dict] = Field(default_factory=list)
+    fiches: list[FicheJureOut] = Field(default_factory=list)
+
+    # Moyenne du panel, et sa dispersion.
+    total: float = 0.0
+    total_max: float = 70.0
+    complet: bool = False
+    ecart_jures: float = 0.0
+
+    # Les deux étapes, et leur somme.
+    preselection_sur_cent: float = 0.0
+    entretien_sur_cent: float = 0.0
+    note_finale_sur_cent: float = 0.0
+
+
+class QualificationIn(BaseModel):
+    """Réinscrire la catégorie d'un dossier, avec sa raison.
+
+    Le calcul propose ; un recruteur peut corriger — mais pas en silence.
+    """
+
+    qualification: str | None = Field(default=None, max_length=32)
+    motif: str = ""
+
+    @model_validator(mode="after")
+    def _motif_obligatoire(self) -> QualificationIn:
+        if self.qualification is not None and not self.motif.strip():
+            raise ValueError("Changer la catégorie d'un dossier doit être motivé.")
         return self
 
 
@@ -479,8 +698,28 @@ class LigneGrille(BaseModel):
     adresse: str | None = None
     note: float | None = None
     total_max: float | None = None
+    # Ce que la présélection apporte à la note finale sur 100, les entretiens
+    # portant le reste. Sert à rédiger le rapport sans refaire le calcul.
+    note_sur_cent: float | None = None
+    # Rang au classement, et proposition effective au client. Le processus
+    # distingue les deux : un dossier peut être préqualifié sans figurer parmi
+    # les N que le client reçoit.
+    rang: int | None = None
+    propose: bool = False
+    # Seconde étape : ce que le jury a attribué, et la note finale sur 100.
+    # `entretien_complet` distingue un acquis partiel d'un résultat.
+    note_entretien_sur_cent: float | None = None
+    note_finale_sur_cent: float | None = None
+    entretien_complet: bool = False
+    # Fortement / partiellement / non qualifié — le classement que le client
+    # reçoit, distinct du statut interne de traitement.
+    qualification: str | None = None
+    qualification_libelle: str | None = None
     preselectionne: bool = False
     elimine: bool = False
+    # Vrai tant que personne n'a apprécié la motivation et l'expression
+    # écrite : des points de consistance restent alors à prendre.
+    appreciation_attendue: bool = False
     motifs: ListeTexte = Field(default_factory=list)
     doublons: int = 0
 
@@ -507,7 +746,16 @@ class GrilleOut(BaseModel):
     date_reference: date | None = None
     seuil: float
     total_max: float
+    # Part de la présélection dans la note finale sur 100.
+    poids_preselection: float = 30.0
+    # Nombre de dossiers que le client attend, quand il est fixé.
+    nombre_a_proposer: int | None = None
+    # Répartition des notes obtenues, pour que le seuil se décide sur ce qu'on
+    # voit plutôt que sur un chiffre choisi d'avance.
+    distribution: list[dict] = Field(default_factory=list)
     nombre_candidatures: int
+    nombre_proposes: int = 0
+    nombre_entretiens: int = 0
     nombre_preselectionnes: int
     nombre_elimines: int
     nombre_a_verifier: int

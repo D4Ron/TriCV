@@ -125,8 +125,8 @@ async def deployment_settings(db: DbSession, _: CurrentUser) -> SettingsOut:
         max_upload_mb=uploads.PLAFOND_ABSOLU_MO,
         storage_backend=settings.storage_backend,
         spacy_models_loaded=loaded_ner_models(),
-        seuil_preselection_defaut=reglages.seuil_preselection_defaut,
         allow_self_registration=reglages.allow_self_registration,
+        candidatures_spontanees=reglages.candidatures_spontanees,
         courriel_actif=reglages.courriel_actif,
         imap_host=reglages.imap_host,
         imap_port=reglages.imap_port,
@@ -135,6 +135,15 @@ async def deployment_settings(db: DbSession, _: CurrentUser) -> SettingsOut:
         # Le secret lui-même ne sort jamais de la machine.
         imap_password_defini=bool(reglages.imap_password),
         courriel_utilisable=reglages.courriel_utilisable,
+        smtp_actif=reglages.smtp_actif,
+        smtp_host=reglages.smtp_host,
+        smtp_port=reglages.smtp_port,
+        smtp_user=reglages.smtp_user,
+        smtp_tls=reglages.smtp_tls,
+        smtp_expediteur=reglages.smtp_expediteur,
+        smtp_password_defini=bool(reglages.smtp_password),
+        envoi_utilisable=reglages.envoi_utilisable,
+        url_publique=reglages.url_publique,
     )
 
 

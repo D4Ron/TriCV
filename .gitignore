@@ -40,6 +40,15 @@ data/
 *.doc
 *.pdf
 !**/templates/**
+# Exception : la documentation de paramétrage. Elle ne contient ni nom de
+# candidat ni donnée client — c'est une procédure, et elle a sa place dans le
+# dépôt avec le script qui la produit.
+!docs/*.pdf
+
+# Dossiers fictifs produits par demo/creer_dossiers.py. Le script est suivi,
+# pas ses fichiers : ils se régénèrent, et l'archive comme le mode d'emploi
+# échapperaient aux motifs ci-dessus.
+demo/dossiers/
 
 # --- environnements et caches -----------------------------------------------
 *.pyc
@@ -76,4 +85,14 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
-/backend/alembic/env.py
+# `backend/alembic/env.py` était ignoré ici — vraisemblablement pris pour un
+# fichier d'environnement. C'est le point d'entrée d'Alembic : sans lui,
+# `alembic upgrade head` échoue, et le conteneur s'arrête sur sa première
+# commande. Le fichier ne contient aucun secret ; il lit l'URL de la base dans
+# `settings`.
+
+# Sorties de mesure du dépouillement : des essais, pas des livrables.
+backend/tools/resultats/
+
+# Dossiers de démonstration : régénérés par les scripts de demo/, jamais suivis.
+demo/dossiers-comptables/

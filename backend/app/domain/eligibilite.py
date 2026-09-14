@@ -58,18 +58,51 @@ def _libelle_piece(code: str) -> str:
         return code
 
 
+def _decrire_groupe(groupe) -> str:
+    """Ce qu'un groupe demande, dit comme on le dirait à un candidat."""
+    if groupe.libelle:
+        return groupe.libelle
+    libelles = sorted(_libelle_piece(c) for c in groupe.codes)
+    if groupe.mode == "AU_MOINS_UNE":
+        return " ou ".join(libelles)
+    return ", ".join(libelles)
+
+
 def verifier_completude(
     profil: ProfilCandidat, exigences: ExigencesPoste
 ) -> tuple[Elimination, ...]:
-    manquantes = exigences.pieces_requises - profil.pieces_fournies
-    if not manquantes:
+    """Le dossier est-il complet — pièces isolées et groupes compris.
+
+    Un groupe « au moins une » est satisfait par n'importe laquelle de ses
+    options : réclamer à la fois la carte d'identité et le passeport
+    éliminerait des candidats parfaitement en règle.
+    """
+    fournies = profil.pieces_fournies
+    manquantes = set(exigences.pieces_requises - fournies)
+    attendus = [_libelle_piece(c) for c in exigences.pieces_requises]
+    non_satisfaits: list[str] = []
+
+    for groupe in exigences.groupes_pieces:
+        attendus.append(_decrire_groupe(groupe))
+        if not groupe.satisfait(fournies):
+            non_satisfaits.append(_decrire_groupe(groupe))
+            manquantes.update(groupe.manquantes(fournies))
+
+    if not manquantes and not non_satisfaits:
         return ()
-    libelles = sorted(_libelle_piece(code) for code in manquantes)
+
+    constate = sorted({_libelle_piece(c) for c in manquantes})
+    if non_satisfaits:
+        # Nommer le groupe entier, pas ses membres : « carte d'identité ou
+        # passeport » se comprend, « carte d'identité, passeport » se lit
+        # comme deux pièces exigées.
+        constate = sorted(set(constate) | set(non_satisfaits))
+
     return (
         Elimination(
             motif=MotifElimination.DOSSIER_INCOMPLET,
-            attendu=", ".join(sorted(_libelle_piece(c) for c in exigences.pieces_requises)),
-            constate=f"pièce(s) manquante(s) : {', '.join(libelles)}",
+            attendu=", ".join(sorted(set(attendus))),
+            constate=f"pièce(s) manquante(s) : {', '.join(constate)}",
         ),
     )
 
@@ -140,17 +173,35 @@ def verifier_experience(
                 )
             )
 
-    if exigences.annees_experience_specifique_min:
-        mois = profil.mois_experience_specifique(reference, exigences.domaines_experience)
-        if mois < exigences.mois_experience_specifique_min:
-            domaines = ", ".join(sorted(exigences.domaines_experience)) or "le domaine du poste"
-            motifs.append(
-                Elimination(
-                    motif=MotifElimination.EXPERIENCE_SPECIFIQUE_INSUFFISANTE,
-                    attendu=f"{exigences.annees_experience_specifique_min} an(s) en {domaines}",
-                    constate=_mois_en_annees(mois),
-                )
+    # Chaque exigence spécifique est vérifiée séparément — c'est tout l'objet
+    # de la liste : cumuler les domaines laissait passer un candidat qui avait
+    # tout fait dans l'un et rien dans l'autre. Les manquements sont ensuite
+    # réunis en **un seul** motif, la table n'acceptant qu'une ligne par code
+    # (uq_elimination_motif) ; l'énumération dit lesquels, ce qui suffit à
+    # répondre à un candidat qui conteste.
+    manquements: list[tuple[object, int]] = []
+    for exigence in exigences.specifiques:
+        if not exigence.annees_min:
+            continue
+        mois = profil.mois_experience_specifique(reference, exigence.domaines)
+        if mois < exigence.annees_min * 12:
+            manquements.append((exigence, mois))
+
+    if manquements:
+        if len(manquements) == 1:
+            exigence, mois = manquements[0]
+            attendu = f"{exigence.annees_min} an(s) en {exigence.nom}"
+            constate = _mois_en_annees(mois)
+        else:
+            attendu = " ; ".join(f"{e.annees_min} an(s) en {e.nom}" for e, _ in manquements)
+            constate = " ; ".join(f"{e.nom} : {_mois_en_annees(m)}" for e, m in manquements)
+        motifs.append(
+            Elimination(
+                motif=MotifElimination.EXPERIENCE_SPECIFIQUE_INSUFFISANTE,
+                attendu=attendu,
+                constate=constate,
             )
+        )
 
     return tuple(motifs)
 

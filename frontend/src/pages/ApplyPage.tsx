@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { avisPublicApi } from '@/lib/api'
-import { Logo } from '@/components/Layout'
+import { LogoKapi, Marque } from '@/components/Marque'
 import { Callout, Field, PageLoader, Spinner } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 
@@ -24,6 +24,12 @@ export default function ApplyPage() {
   const [email, setEmail] = useState('')
   const [telephone, setTelephone] = useState('')
   const [fichiers, setFichiers] = useState<Record<string, File>>({})
+  // Ce que le candidat a choisi dans un groupe « l'une ou l'autre » : la CNI
+  // ou le passeport. On mémorise son choix pour n'afficher qu'un champ.
+  const [choixGroupe, setChoixGroupe] = useState<Record<number, string>>({})
+  // Les documents que le candidat juge utiles et que l'avis n'a pas prévus :
+  // une lettre de recommandation, une attestation. Il les nomme lui-même.
+  const [libres, setLibres] = useState<Array<{ intitule: string; fichier: File | null }>>([])
   const [erreurs, setErreurs] = useState<Record<string, string>>({})
   const [erreurEnvoi, setErreurEnvoi] = useState<string | null>(null)
   const [envoi, setEnvoi] = useState(false)
@@ -31,12 +37,25 @@ export default function ApplyPage() {
 
   const enveloppe = (contenu: React.ReactNode) => (
     <div className="min-h-screen bg-ink-50">
+      <div className="h-1 bg-gradient-to-r from-or-500 via-or-400 to-or-500" />
       <header className="border-b border-ink-200 bg-white">
-        <div className="mx-auto flex h-14 max-w-3xl items-center px-4">
-          <Logo />
+        <div className="mx-auto flex h-16 max-w-3xl items-center px-4">
+          <Marque sousTitre="Recrutement" />
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-10">{contenu}</main>
+      {/* Le candidat dépose des pièces personnelles : il doit voir sans
+          chercher à qui il les confie. */}
+      <footer className="mx-auto max-w-3xl px-4 pb-10">
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-ink-200 pt-5 text-xs text-ink-400">
+          <LogoKapi taille={18} />
+          <span className="font-medium text-ink-500">Kapi Consult</span>
+          <span aria-hidden="true">·</span>
+          <span>Immeuble D&amp;D, Agoè BKS, Lomé, Togo</span>
+          <span aria-hidden="true">·</span>
+          <span>info@kapiconsult.tg</span>
+        </p>
+      </footer>
     </div>
   )
 
@@ -78,12 +97,43 @@ export default function ApplyPage() {
     for (const piece of a.pieces_attendues) {
       if (!fichiers[piece.code]) trouvees[piece.code] = 'Pièce obligatoire'
     }
+    // Les groupes : « la CNI ou le passeport » se satisfait d'une seule pièce,
+    // « le diplôme et son attestation » les exige toutes.
+    a.groupes_pieces.forEach((groupe, index) => {
+      if (groupe.mode === 'AU_MOINS_UNE') {
+        const choisi = choixGroupe[index]
+        if (!choisi || !fichiers[choisi]) {
+          trouvees[`groupe-${index}`] = 'Fournissez l’un de ces documents'
+        }
+      } else {
+        for (const piece of groupe.pieces) {
+          if (!fichiers[piece.code]) trouvees[piece.code] = 'Pièce obligatoire'
+        }
+      }
+    })
     // Refuser ici évite un aller-retour et un message d'erreur générique.
     for (const [code, fichier] of Object.entries(fichiers)) {
       if (fichier.size > a.taille_max_mo * 1024 * 1024) {
         trouvees[code] = `Fichier trop volumineux (maximum ${a.taille_max_mo} Mo)`
       }
+      const imposes = a.formats_pieces[code]
+      if (imposes?.length) {
+        const extension = fichier.name.split('.').pop()?.toLowerCase() ?? ''
+        if (!imposes.map((f) => f.toLowerCase()).includes(extension)) {
+          trouvees[code] = `Ce document doit être fourni au format ${imposes
+            .join(' ou ')
+            .toUpperCase()}`
+        }
+      }
     }
+    libres.forEach((libre, index) => {
+      if (libre.fichier && !libre.intitule.trim()) {
+        trouvees[`libre-${index}`] = 'Nommez ce document'
+      }
+      if (libre.fichier && libre.fichier.size > a.taille_max_mo * 1024 * 1024) {
+        trouvees[`libre-${index}`] = `Fichier trop volumineux (maximum ${a.taille_max_mo} Mo)`
+      }
+    })
     setErreurs(trouvees)
     if (Object.keys(trouvees).length > 0) return
 
@@ -96,10 +146,22 @@ export default function ApplyPage() {
         email: email.trim(),
         telephone: telephone.trim() || undefined,
         // Les exigées sont toutes présentes (validées ci-dessus) ; les
-        // facultatives ne partent que si le candidat en a joint une.
-        pieces: [...a.pieces_attendues, ...a.pieces_facultatives]
-          .filter((p) => fichiers[p.code])
-          .map((p) => ({ code: p.code, fichier: fichiers[p.code] })),
+        // facultatives et celles des groupes ne partent que si le candidat en
+        // a joint une.
+        pieces: [
+          ...[
+            ...a.pieces_attendues,
+            ...a.pieces_facultatives,
+            ...a.groupes_pieces.flatMap((g) => g.pieces),
+          ]
+            .filter((p) => fichiers[p.code])
+            // Un même code peut figurer dans deux listes ; ne l'envoyer qu'une fois.
+            .filter((p, i, tous) => tous.findIndex((x) => x.code === p.code) === i)
+            .map((p) => ({ code: p.code, fichier: fichiers[p.code] })),
+          ...libres
+            .filter((l) => l.fichier)
+            .map((l) => ({ code: 'AUTRE', fichier: l.fichier!, intitule: l.intitule.trim() })),
+        ],
       })
       setTermine(true)
     } catch (caught) {
@@ -203,7 +265,17 @@ export default function ApplyPage() {
               par fichier)
             </p>
             {a.pieces_attendues.map((piece) => (
-              <Field key={piece.code} label={piece.libelle} error={erreurs[piece.code]}>
+              <Field
+                key={piece.code}
+                label={
+                  a.formats_pieces[piece.code]?.length
+                    ? `${piece.libelle} (${a.formats_pieces[piece.code]
+                        .join(' ou ')
+                        .toUpperCase()} exigé)`
+                    : piece.libelle
+                }
+                error={erreurs[piece.code]}
+              >
                 <input
                   type="file"
                   accept=".pdf,.docx,.doc"
@@ -221,8 +293,90 @@ export default function ApplyPage() {
                 />
               </Field>
             ))}
-            {a.pieces_attendues.length === 0 && (
+            {a.pieces_attendues.length === 0 && a.groupes_pieces.length === 0 && (
               <p className="text-sm text-ink-500">Aucune pièce n'est exigée pour cet avis.</p>
+            )}
+
+            {/* Un groupe « l'une ou l'autre » se présente comme un choix, pas
+                comme deux exigences : demander les deux obligerait un candidat
+                qui n'a qu'un passeport valide à refaire une carte d'identité. */}
+            {a.groupes_pieces.map((groupe, index) =>
+              groupe.mode === 'AU_MOINS_UNE' ? (
+                <Field
+                  key={`groupe-${index}`}
+                  label={groupe.libelle || 'Au choix'}
+                  error={erreurs[`groupe-${index}`]}
+                >
+                  <select
+                    className="input"
+                    value={choixGroupe[index] ?? ''}
+                    aria-label={`Type de document — ${groupe.libelle || 'au choix'}`}
+                    onChange={(e) => {
+                      const code = e.target.value
+                      setChoixGroupe((c) => ({ ...c, [index]: code }))
+                      // Changer d'option retire le fichier déposé pour l'autre.
+                      setFichiers((actuels) =>
+                        Object.fromEntries(
+                          Object.entries(actuels).filter(
+                            ([c]) => !groupe.pieces.some((pc) => pc.code === c && pc.code !== code),
+                          ),
+                        ),
+                      )
+                    }}
+                  >
+                    <option value="">Choisissez un document…</option>
+                    {groupe.pieces.map((piece) => (
+                      <option key={piece.code} value={piece.code}>
+                        {piece.libelle}
+                      </option>
+                    ))}
+                  </select>
+                  {choixGroupe[index] && (
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.doc"
+                      className="input mt-2"
+                      aria-label={groupe.libelle || 'Document au choix'}
+                      onChange={(e) => {
+                        const fichier = e.target.files?.[0]
+                        const code = choixGroupe[index]
+                        setFichiers((actuels) =>
+                          fichier
+                            ? { ...actuels, [code]: fichier }
+                            : Object.fromEntries(
+                                Object.entries(actuels).filter(([c]) => c !== code),
+                              ),
+                        )
+                      }}
+                    />
+                  )}
+                </Field>
+              ) : (
+                <div key={`groupe-${index}`} className="space-y-3">
+                  {groupe.libelle && (
+                    <p className="text-sm font-medium text-ink-800">{groupe.libelle}</p>
+                  )}
+                  {groupe.pieces.map((piece) => (
+                    <Field key={piece.code} label={piece.libelle} error={erreurs[piece.code]}>
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.doc"
+                        className="input"
+                        onChange={(e) => {
+                          const fichier = e.target.files?.[0]
+                          setFichiers((actuels) =>
+                            fichier
+                              ? { ...actuels, [piece.code]: fichier }
+                              : Object.fromEntries(
+                                  Object.entries(actuels).filter(([c]) => c !== piece.code),
+                                ),
+                          )
+                        }}
+                      />
+                    </Field>
+                  ))}
+                </div>
+              ),
             )}
 
             {a.pieces_facultatives.length > 0 && (
@@ -252,6 +406,60 @@ export default function ApplyPage() {
                     />
                   </Field>
                 ))}
+              </div>
+            )}
+
+            {/* Le candidat peut joindre ce qu'il juge utile — une lettre de
+                recommandation, une attestation — sans que l'avis ait eu à le
+                prévoir. Il nomme le document lui-même. */}
+            {a.pieces_libres_autorisees && (
+              <div className="space-y-3 border-t border-ink-100 pt-3">
+                <p className="text-sm font-medium text-ink-800">
+                  Autres documents
+                  <span className="ml-1 font-normal text-ink-500">
+                    — tout ce que vous jugez utile : lettre de recommandation, attestation…
+                  </span>
+                </p>
+                {libres.map((libre, index) => (
+                  <div key={index} className="grid gap-2 sm:grid-cols-2">
+                    <Field label="Intitulé" error={erreurs[`libre-${index}`]}>
+                      <input
+                        className="input"
+                        value={libre.intitule}
+                        placeholder="Lettre de recommandation…"
+                        onChange={(e) =>
+                          setLibres((tous) =>
+                            tous.map((l, i) =>
+                              i === index ? { ...l, intitule: e.target.value } : l,
+                            ),
+                          )
+                        }
+                      />
+                    </Field>
+                    <Field label="Fichier">
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.doc"
+                        className="input"
+                        aria-label={`Fichier — document ${index + 1}`}
+                        onChange={(e) =>
+                          setLibres((tous) =>
+                            tous.map((l, i) =>
+                              i === index ? { ...l, fichier: e.target.files?.[0] ?? null } : l,
+                            ),
+                          )
+                        }
+                      />
+                    </Field>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn-ghost px-3 py-1.5 text-xs"
+                  onClick={() => setLibres((tous) => [...tous, { intitule: '', fichier: null }])}
+                >
+                  + Ajouter un document
+                </button>
               </div>
             )}
           </div>

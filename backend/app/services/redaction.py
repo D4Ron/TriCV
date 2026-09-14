@@ -63,6 +63,43 @@ PRIORITY = {
 
 HEADER_CHARS = 900  # the identity block of a CV lives at the top
 
+# Fenêtre dans laquelle une entité peut encore *être* l'état civil du candidat.
+#
+# Un CV met son nom et son adresse dans ses premières lignes ; passé cela, ce
+# que le modèle NER appelle « personne » est presque toujours un employeur ou
+# un intitulé de fonction — « Responsable », « Conducteur », « EBOMAF Togo »,
+# « Cabinet Maître AGBO ». Ces faux positifs ne coûtaient pas qu'une ligne :
+# le nom retenu était ensuite masqué dans tout le document, si bien qu'un CV
+# entier perdait ses intitulés de poste. Restreindre la reconnaissance au bloc
+# d'identité supprime la quasi-totalité de ces cas sans rien laisser passer de
+# l'état civil, qui n'a jamais été écrit ailleurs.
+BLOC_IDENTITE = 400
+
+# Le bloc d'identité s'arrête aussi à la première rubrique, quelle que soit sa
+# position : un CV court met sa première expérience avant le 400e caractère, et
+# la borne fixe seule y laissait « Orabank Togo » se faire prendre pour l'état
+# civil du candidat.
+_TITRES_RUBRIQUE = re.compile(
+    r"^[ \t]*(?:[IVX]+[.)]\s*)?(?:profil|objectif|r[ée]sum[ée]|synth[èe]se|parcours"
+    r"|formations?|dipl[ôo]mes?|[ée]tudes|exp[ée]riences?|comp[ée]tences|langues"
+    r"|certifications?|r[ée]f[ée]rences|loisirs|centres?\s+d|divers|autres|contact"
+    r"|coordonn[ée]es|logiciels|informatique|education|skills|languages|employment"
+    r"|work|professional|references)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Un « CURRICULUM VITAE » ou un « PROFIL » en tête de page n'ouvre pas la
+# première rubrique : il titre la feuille. En deçà de cette marge, un titre ne
+# ferme donc pas le bloc d'identité — sinon il n'en resterait rien.
+_MARGE_TITRE = 60
+
+
+def _fin_du_bloc_identite(text: str) -> int:
+    for titre in _TITRES_RUBRIQUE.finditer(text[:HEADER_CHARS]):
+        if titre.start() >= _MARGE_TITRE:
+            return min(titre.start(), BLOC_IDENTITE)
+    return BLOC_IDENTITE
+
 
 # --- results ----------------------------------------------------------------
 
@@ -168,7 +205,10 @@ RE_PHONE_LABELLED = re.compile(
 )
 
 RE_DOB = re.compile(
-    r"(?:date\s+de\s+naissance|n[ée]{1,2}\s+le|born(?:\s+on)?|date\s+of\s+birth|d\.?o\.?b\.?)"
+    # « Né(e) le » est la forme la plus courante des CV d'ici : la parenthèse
+    # faisait échouer la reconnaissance et la date de naissance partait en clair.
+    r"(?:date\s+de\s+naissance|n[ée]{1,2}\s*\(?e\)?\s+le|n[ée]{1,2}\s+le"
+    r"|born(?:\s+on)?|date\s+of\s+birth|d\.?o\.?b\.?)"
     r"\s*[:\-]?\s*"
     r"(?P<v>\d{1,2}[\s/.\-]\d{1,2}[\s/.\-]\d{2,4}"
     r"|\d{1,2}\s+[A-Za-zÀ-ÿ]{3,10}\.?\s+\d{4}"
@@ -209,8 +249,22 @@ RE_GENDER = re.compile(
     re.IGNORECASE,
 )
 
+# « 12 ans » tout court est un âge ; « 12 ans d'expérience » est l'argument
+# central du CV. La forme nue exige donc que rien de professionnel ne suive :
+# sans cette réserve, la phrase qui résume la carrière devenait
+# « [AGE] d'expérience », et le modèle n'avait plus l'ancienneté sous les yeux.
+# Une durée introduite par « pendant », « depuis » ou « plus de » n'est pas
+# davantage un âge.
+_APRES_DUREE = (
+    r"(?!\s*(?:d[’']|de\s+)"
+    r"(?:exp[ée]rience|exp[ée]riences|anciennet[ée]|pratique|m[ée]tier|carri[èe]re"
+    r"|service|activit[ée]|exercice))"
+)
+_AVANT_DUREE = r"(?<!pendant )(?<!depuis )(?<!durant )(?<!plus de )(?<!environ )(?<!soit )"
+
 RE_AGE = re.compile(
-    r"\b(?P<v>\d{2})\s*ans\b|(?:[âa]ge|age)\s*[:\-]?\s*(?P<v2>\d{2})\b"
+    rf"{_AVANT_DUREE}\b(?P<v>\d{{2}})\s*ans\b{_APRES_DUREE}"
+    r"|(?:[âa]ge|age)\s*[:\-]?\s*(?P<v2>\d{2})\b"
     r"|\b(?P<v3>\d{2})\s+years?\s+old\b",
     re.IGNORECASE,
 )
@@ -289,8 +343,12 @@ def _name_variants(full_name: str) -> list[str]:
         variants.append(_loose_pattern(" ".join(reversed(parts))))
         variants.append(_loose_pattern(" ".join([parts[-1], *parts[:-1]])))
     # Individual parts of 3+ characters: over-redacting a common word is a far
-    # cheaper mistake than leaking the candidate's surname.
-    variants.extend(_loose_pattern(p) for p in parts if len(p) >= 3)
+    # cheaper mistake than leaking the candidate's surname — sauf quand ce mot
+    # est du vocabulaire de CV. « Cabinet », « Responsable » ou « Français »
+    # pris pour un morceau de nom effaçaient une rubrique entière.
+    variants.extend(
+        _loose_pattern(p) for p in parts if len(p) >= 3 and not _mot_reserve(p)
+    )
     return list(dict.fromkeys(variants))
 
 
@@ -382,77 +440,148 @@ _LEFT_CONTEXT = 40
 # Étiquettes et valeurs de champs que le modèle prend régulièrement pour des
 # lieux ou des personnes : « Nationalité », « Sexe », « Masculin »… Les
 # redacter détruit le champ voisin et fait disparaître la donnée réelle.
+_CHAMPS_ET_VALEURS = """nationalite nationality citizenship sexe genre gender age
+    adresse address telephone email courriel situation famille etat civil
+    masculin feminin male female homme femme celibataire marie mariee divorce
+    divorcee veuf veuve permis"""
+
+# Titres de rubrique et vocabulaire de CV. Le modèle en fait régulièrement des
+# lieux : « FORMATION », « LINGUISTIQUES », « Parcours ».
+_RUBRIQUES = """curriculum vitae profil objectif resume synthese parcours
+    formation formations diplome diplomes etudes experience experiences
+    professionnelle professionnelles professionnel academique competences
+    aptitudes langues langue certifications certification references loisirs
+    interets divers autres contact contacts coordonnees informations
+    personnelles logiciels outils stage stages education skills languages"""
+
+# Intitulés de fonction. Ce sont les faux positifs les plus coûteux : pris pour
+# un nom de personne, l'intitulé était masqué dans tout le document et chaque
+# expérience perdait son poste.
+_FONCTIONS = """responsable directeur directrice chef cheffe adjoint adjointe
+    assistant assistante charge chargee consultant consultante ingenieur
+    ingenieure technicien technicienne cadre gestionnaire comptable juriste
+    specialiste expert experte analyste conseiller conseillere coordonnateur
+    coordinateur coordinatrice superviseur controleur auditeur secretaire agent
+    operateur conducteur animateur formateur enseignant professeur medecin
+    infirmier infirmiere pharmacien commercial vendeur caissier magasinier
+    logisticien informaticien developpeur administrateur maitre manager officer
+    director head lead senior junior stagiaire apprenti reporting supervision
+    pilotage suivi appui gestion direction"""
+
+# Noms de langue. Le modèle français étiquette « Français », « Anglais »,
+# « Mina » comme des lieux : la rubrique « Langues » disparaissait entièrement,
+# et le barème comptait zéro langue là où le CV en déclarait trois.
+_LANGUES = """francais anglais allemand espagnol portugais italien arabe chinois
+    russe neerlandais japonais ewe mina kabye kabiye tem moba haoussa peul
+    bambara wolof lingala swahili yoruba fon twi french english german spanish
+    portuguese italian arabic"""
+
 _NON_ENTITES = frozenset(
-    """nationalite nationality citizenship sexe genre gender age adresse address
-    telephone email courriel situation famille etat civil masculin feminin male
-    female homme femme celibataire marie mariee divorce divorcee veuf veuve
-    formation experience competences langues certifications profil objectif
-    diplome diplomes stage stages""".split()
+    strip_accents(mot)
+    for mot in (
+        f"{_CHAMPS_ET_VALEURS} {_RUBRIQUES} {_FONCTIONS} {_LANGUES}".lower().split()
+    )
 )
 
 
-def _entite_suspecte(ent) -> bool:
+def _premiere_ligne(ent) -> tuple[int, int, str] | None:
+    """Ramène une entité à sa première ligne, bornes comprises.
+
+    Le modèle agrège volontiers par-dessus les sauts de ligne — « AGBEKO
+    Yawo\\nDate », « Kara\\n\\nEXPERIENCE ». Rejeter l'entité entière, comme on
+    le faisait, jetait le nom du candidat avec le titre de section qui le
+    suivait : le CV partait alors au modèle avec l'état civil intact. La
+    tronquer conserve la partie utile et n'expurge que ce qui a été reconnu.
+    """
+    texte = ent.text.split("\n", 1)[0]
+    fin = ent.start_char + len(texte)
+    rogne = texte.rstrip()
+    fin -= len(texte) - len(rogne)
+    texte = rogne.lstrip()
+    debut = fin - len(texte)
+    return (debut, fin, texte) if texte else None
+
+
+def _mot_reserve(texte: str) -> bool:
+    """Un seul mot de vocabulaire de CV suffit à disqualifier l'entité.
+
+    Le contrôle porte sur chaque mot et non sur l'entité entière : « Cabinet
+    Maître AGBO » et « Responsable administratif » ne se reconnaissent pas
+    autrement, et tous deux se propageaient ensuite dans tout le document.
+    """
+    for mot in texte.split():
+        nettoye = strip_accents(mot.lower()).strip(".,;:()[]«»\"'")
+        if nettoye and (nettoye in _NON_ENTITES or nettoye in _CALENDAIRE):
+            return True
+    return False
+
+
+_CALENDAIRE = frozenset(strip_accents(w) for w in _CALENDAR_WORDS)
+
+
+def _entite_suspecte(doc_text: str, debut: int, texte: str) -> bool:
     """Filtres communs à PERSON et aux lieux.
 
     Chacun penche du côté de *conserver* le texte : sur-expurger un parcours
     détruit l'analyse, alors qu'une ville laissée en clair ne coûte presque
     rien.
     """
-    text = ent.text.strip()
-    if not text:
+    if not texte:
         return True
 
-    # Une entité à cheval sur un saut de ligne est un artefact de découpage :
-    # « Kara\n\nEXPERIENCE » avalait le titre de section suivant.
-    if "\n" in ent.text:
+    # Un mois, un titre de rubrique, un intitulé de fonction, un nom de langue :
+    # rien de tout cela n'est un lieu ni une personne.
+    if _mot_reserve(texte):
         return True
 
-    normalise = strip_accents(text.lower())
-
-    # Un mois ou un jour est une date, quoi qu'en dise le modèle.
-    if normalise in {strip_accents(w) for w in _CALENDAR_WORDS}:
-        return True
-
-    # Une étiquette de champ ou une valeur de champ n'est ni un lieu ni un nom.
-    if normalise in _NON_ENTITES:
+    # Un établissement nommé dans l'entité elle-même — « Université de Lomé »,
+    # « Cabinet Maître AGBO » — doit rester intact : c'est ce que la grille note.
+    if INSTITUTION_MARKERS.search(texte):
         return True
 
     # L'établissement est souvent juste à gauche : le modèle étiquette « Lomé »
     # dans « Université de Lomé », jamais le groupe entier. Expurger la queue
     # mutile le nom de l'école, qui doit rester intact.
-    debut_ligne = ent.doc.text.rfind("\n", 0, ent.start_char) + 1
-    gauche = ent.doc.text[max(debut_ligne, ent.start_char - _LEFT_CONTEXT) : ent.start_char]
+    debut_ligne = doc_text.rfind("\n", 0, debut) + 1
+    gauche = doc_text[max(debut_ligne, debut - _LEFT_CONTEXT) : debut]
     return bool(INSTITUTION_MARKERS.search(gauche))
 
 
-def _is_bare_place(ent) -> bool:
+def _is_bare_place(ent, debut: int, fin: int, texte: str) -> bool:
     """True only for a plain place reference such as `Lomé` or `Togo`."""
-    if _entite_suspecte(ent):
+    if _entite_suspecte(ent.doc.text, debut, texte):
         return False
-
-    text = ent.text.strip()
 
     # spaCy itself called an overlapping span an organisation.
     if any(
-        other.label_ == "ORG" and other.start_char < ent.end_char and ent.start_char < other.end_char
+        other.label_ == "ORG" and other.start_char < fin and debut < other.end_char
         for other in ent.doc.ents
     ):
         return False
 
-    # The entity names an institution.
-    if INSTITUTION_MARKERS.search(text):
-        return False
-
     # A bare city or country is short. "Orabank Togo" is not a place.
-    return len(text.split()) <= 2
+    return len(texte.split()) <= 2
+
+
+def _ressemble_a_un_nom(texte: str) -> bool:
+    """Deux mots au minimum, sinon ce n'est pas un état civil.
+
+    Un CV écrit son nom en entier ; ce que le modèle isole en un seul mot est,
+    dans les faits, un intitulé de poste ou une ville. Le nom saisi au
+    formulaire, lui, passe par `KnownValues` et reste traqué sous toutes ses
+    formes, y compris le patronyme seul en pied de page.
+    """
+    mots = [m for m in re.split(r"[\s,]+", texte.strip()) if len(m) >= 2]
+    return len(mots) >= 2
 
 
 def _ner_spans(text: str) -> tuple[list[_Span], list[str]]:
-    """PERSON and GPE entities in the header region.
+    """PERSON and GPE entities in the identity block.
 
-    A PERSON found in the header is treated as the candidate and then redacted
+    A PERSON found there is treated as the candidate and then redacted
     throughout the document — a name that appears once at the top usually
-    reappears in a footer or an email address further down.
+    reappears in a footer or an email address further down. Beyond that block,
+    a « personne » est un employeur ou une fonction : voir `BLOC_IDENTITE`.
     """
     nlp = _load_nlp(detect_language(text))
     if nlp is None:
@@ -460,23 +589,25 @@ def _ner_spans(text: str) -> tuple[list[_Span], list[str]]:
 
     header = text[:HEADER_CHARS]
     doc = nlp(header)
+    bloc = _fin_du_bloc_identite(text)
     spans: list[_Span] = []
     person_names: list[str] = []
 
     for ent in doc.ents:
+        if ent.label_ not in ("PER", "PERSON", "GPE", "LOC"):
+            continue
+        borne = _premiere_ligne(ent)
+        if borne is None or borne[0] >= bloc:
+            continue
+        debut, fin, texte = borne
+
         if ent.label_ in ("PER", "PERSON"):
-            # Les mêmes garde-fous que pour les lieux : sans eux, « Masculin »
-            # devenait un nom de personne, et « Université de Lomé » perdait sa
-            # ville — le nom propagé ensuite dans tout le document.
-            if _entite_suspecte(ent):
+            if _entite_suspecte(doc.text, debut, texte) or not _ressemble_a_un_nom(texte):
                 continue
-            spans.append(_Span(ent.start_char, ent.end_char, NAME, ent.text, from_ner=True))
-            if len(ent.text.strip()) >= 3:
-                person_names.append(ent.text.strip())
-        elif ent.label_ in ("GPE", "LOC") and _is_bare_place(ent):
-            spans.append(
-                _Span(ent.start_char, ent.end_char, ADDRESS, ent.text, from_ner=True)
-            )
+            spans.append(_Span(debut, fin, NAME, texte, from_ner=True))
+            person_names.append(texte)
+        elif _is_bare_place(ent, debut, fin, texte):
+            spans.append(_Span(debut, fin, ADDRESS, texte, from_ner=True))
 
     return spans, person_names
 

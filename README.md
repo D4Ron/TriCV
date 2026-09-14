@@ -83,6 +83,33 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 Then create the accounts the team needs, and turn `ALLOW_SELF_REGISTRATION` back off.
 
+### Accounts and roles
+
+Two roles. **RECRUITER** does all the recruitment work. **ADMIN** does that plus changing the
+firm's settings — default threshold, demographic redaction, self-registration, the application
+mailbox.
+
+**An account created through self-registration is always RECRUITER, never ADMIN.** The signup page
+is reachable over the network; anyone who finds it must not be able to grant themselves control of
+the firm's settings. The consequence is that signing up and then finding Paramètres read-only is
+the system working as intended, not a bug.
+
+Promotion therefore happens from the machine the app runs on, which is the guarantee itself:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe comptes.py                            # list accounts and roles
+.\.venv\Scripts\python.exe comptes.py promouvoir alice@kapi.tg   # make an ADMIN
+.\.venv\Scripts\python.exe comptes.py retrograder bob@kapi.tg
+.\.venv\Scripts\python.exe comptes.py desactiver bob@kapi.tg     # revoke access, keep the record
+```
+
+The tool refuses to remove the last active administrator: nobody could then change the settings,
+and there is no way back from inside the app. Log out and back in after a promotion — the screen
+reads the role from the session.
+
+The seeded `SEED_ADMIN_EMAIL` account is an ADMIN, so there is always one to start from.
+
 ---
 
 ## What it does
@@ -110,7 +137,26 @@ Every piece of candidate data carries where it came from:
 **Any unconfirmed `EXTRAIT_IA` value forces the file to `À VÉRIFIER`, in both directions.** An
 invented degree cannot push someone onto the shortlist, and a missed one cannot eliminate them.
 Confirming data, lifting an elimination and entering a manual score all require a written reason and
-are recorded in the audit log.
+are recorded in the audit log. A manual score also decides whether the file clears the threshold —
+a mark entered by hand that does not change the file's fate is not a mark, it is decoration.
+
+*Dépouiller le dossier* can be **run again**. A second pass replaces what the first one proposed,
+and only that: anything the candidate declared on the form, or that a reviewer typed or confirmed,
+stops the run and says so. Without this, a file read badly once stayed that way — the only way out
+was to delete it and upload it again.
+
+**The email address is read out of the CV**, along with the phone number, by the same local regex
+pass that removes them before anything is sent. They were being detected, masked, then discarded:
+a file dropped in bulk stayed unreachable, and the *E-mail* column of the table delivered to the
+client stayed empty. A blank field is filled even on a reviewed file — confirming a career says
+nothing about the absence of an address — but a value a candidate declared or a reviewer typed is
+never replaced. The address is **required** wherever a person types a candidate in; a bulk drop
+still arrives with nothing and gets it from the CV.
+
+Dates of birth are read in figures (`03/09/1984`, `22-11-1979`) **and in words** (`8 février 1975`,
+`15 July 1988`) — the latter being how most CVs here write them. Until that was fixed the date was
+detected, never converted, and left empty; since a missing value never eliminates anyone, **every
+age condition on every poste was silently inert**.
 
 ### Age and seniority are computed at the closing date
 
@@ -134,7 +180,38 @@ dropped rather than tagged, with a note in the report. Replaying a mailbox fetch
 ## The screens
 
 **Mandats** — clients, mandates, fiches de poste, avis. The grid and the elimination table are
-produced by a single call, so the totals in two exported files cannot drift apart. Excel export.
+produced by a single call, so the totals in two exported files cannot drift apart.
+
+*Exporter* asks **which document** first, because they do not go to the same people:
+
+| | |
+|---|---|
+| Grille de présélection | the scored ranking — what the client receives |
+| Tableau d'élimination | the rejected files, grouped by reason, with expected/found — what you produce to a candidate who contests |
+| Détail des entretiens | the jury's marks and observations — the material for the report |
+| Synthèse | headcounts and the spread of reasons, on one page |
+| Dossier complet | all four in one workbook, for internal work |
+
+A single button used to produce the four-sheet workbook, which made sending the ranking to a client
+also send them the elimination table and the jury's observations. Each sheet is built by the same
+code either way, so a table exported on its own is word for word the one in the full workbook.
+
+*Modifier la fiche* edits the requirements after creation — degree level, accepted fields, general
+experience, the specific-experience requirements, the age condition and what training is worth
+beyond the diploma. **Saving re-scores every application on the poste**: leaving the grid on the old
+requirements would show reasons that no longer match the fiche, and it is the grid the client reads.
+
+*Écrire aux candidats* picks a scope first — everyone who applied, the preselected, the recevables
+below the threshold, the rejected, the ones still to verify. The list comes from the server, not
+from what the grid happens to have loaded, so an acknowledgement does not skip applications that
+arrived since the last refresh. Applications with no email address are counted and reported rather
+than failing one by one.
+
+**To write to one person**, open their file and use *Écrire* in the drawer header. Same window,
+same preview, same send path — the common gesture is individual (chase a missing document, invite
+to interview, answer a follow-up) and it previously existed only as a bulk send from the grid,
+which meant going through a list to reach someone already on screen. The button says who it will
+write to, and is disabled with an explanation when the file has no address.
 
 **Vivier** — everyone the firm has ever seen, searchable by trade rather than only by name:
 "contrôle de gestion", "Sarakawa", "hôpital" all match diplomas, job titles and employers. Filters
@@ -160,6 +237,81 @@ authenticated uploads.
 
 **Paramètres** — default preselection threshold, demographic redaction, self-registration, and the
 application mailbox.
+
+### Reports
+
+**The generated report has the structure of the report the firm actually delivers.** Not one
+inspired by it — its own, taken from `Rapport des entretiens - WAPP 2025`: titles, order, heading
+levels, table columns and closing note. `backend/tests/test_conformite_document.py` holds that
+structure as literal expected values, so a drift fails a test instead of being noticed by a client.
+
+```
+Introduction
+Démarche
+Objectifs de la mission
+Méthodologie
+    Présélection                            → grille de présélection
+    Critères éliminatoires et Condition de Présélection
+Résultats de la présélection                → effectifs par poste
+    Liste des candidats présélectionnés     → candidatures préqualifiées
+Entretiens structurés
+    Adoption du guide d'interview et la grille de notation   → grille de notation
+    Validation du jury de sélection et conduite des interviews
+    Résultats des entretiens structurés     → classement + NB d'annexe
+```
+
+Three things follow from that, and each was a deliberate correction:
+
+- **A table has no heading of its own.** It follows the sentence that announces it, inside the
+  section that announces it. Giving each one its own intertitle invented headings — *Effectifs par
+  poste* — that appear nowhere in the firm's document.
+- **There is no conclusion.** The document ends on the results table and *NB : Le détail des notes
+  obtenues par chaque candidat est annexé au présent rapport*. A conclusion added by default had to
+  be deleted by hand before every send.
+- **The grids are reproduced as tables**, which is a deliberate departure: the firm's document
+  describes the preselection rubrics in prose. They sit in the exact section that discusses them.
+
+Columns, word for word as delivered:
+
+| | |
+|---|---|
+| effectifs | Postes, Nombre de dossiers analysés, Effectif Préqualifié, Nombre de candidats éliminés, + TOTAL |
+| grille de notation | numbered `I` / `1.1` / `1.2` when the grid has rubriques, each with its subtotal |
+| candidatures préqualifiées | Nom & Prénoms, Age, Diplôme, Pays, **Présélection Note/100**, Rang, Téléphone, E-mail |
+| résultats des entretiens | Nom & Prénoms, PAYS, Moyenne/100, Rang |
+
+These are **real tables** in the DOCX, PDF and ODT — not columns aligned with spaces. Space
+alignment holds only in a fixed-width font, and those exports render in Calibri and Helvetica,
+where every column drifted a little further than the last. Plain text keeps the aligned form,
+which is the one place it is the right tool.
+
+Two details that are easy to get wrong. *Présélection Note/100* is the preselection mark expressed
+as a percentage — a file at 27/30 reads **90** — not its weighted contribution to the total, which
+is 27.
+And the rank is counted **among the preselected**, so the table runs 1er, 2e, 3e without gaps;
+ranking over all files received produced a preselected table numbered 1er, 2e, 4e, where the missing
+ranks were candidates the table does not show.
+
+The firm does not deliver one report but three, at three different moments, and they do not carry
+the same sections. **The type is chosen first**, and it decides what is produced:
+
+| | |
+|---|---|
+| *Rapport de présélection* | after the sift, before the interviews — stops at the ranking of files |
+| *Rapport des entretiens* | after the panel — carries the final ranking |
+| *Rapport final de recrutement* | the whole mission, from the published avis to the final ranking |
+
+A client who imposes their own outline uploads it as a *modèle*, and that outline replaces the
+sections entirely — which is what a template is for, so it takes precedence over the type.
+
+Figures are frozen when the report is generated, so the document is re-exportable identically in six
+months whatever happens to the files afterwards. Prose is *proposed*, then read: a report cannot be
+validated until every section has been through human hands.
+
+**Aperçu du document**, beside *Rédiger*, shows the report as it will be exported — same header,
+same order, same rule that an empty section is not rendered — including corrections not yet saved.
+Judging the whole document previously meant exporting a Word file, opening it, coming back to
+correct, and exporting again.
 
 ---
 
@@ -234,6 +386,9 @@ overlapping NER guess. Both behaviours are covered by tests.
 Google's free Gemini tier may train on what you send. For real CVs, use a **paid** key, or
 `LLM_PROVIDER=ollama`, where nothing leaves the building. The pre-flight check says so too.
 
+Whatever the provider, it never sees a name, an e-mail, a phone number or a date of birth: those
+are found and removed locally before the text is sent. What travels is a career history.
+
 ### Other controls
 
 - Passwords are bcrypt-hashed; JWT secret comes from the environment; CORS is an explicit list;
@@ -293,7 +448,9 @@ is read regardless of the working directory.
 | `JWT_SECRET` | dev value | **Must be changed.** Signs every session token |
 | `PII_REDACTION` | `true` | `false` sends original files to the provider |
 | `REDACT_DEMOGRAPHICS` | `true` | `false` includes age/sex/nationality in the scoring payload |
-| `LLM_PROVIDER` | `gemini` | `gemini` · `anthropic` · `ollama` |
+| `LLM_PROVIDER` | `gemini` | `gemini` · `anthropic` · `ollama` · `openai` (see below) |
+| `LLM_BASE_URL` | — | With `openai`: the provider's endpoint — Groq, Mistral, OpenRouter, vLLM |
+| `LLM_API_KEY` | — | With `openai`: that provider's key |
 | `STORAGE_BACKEND` | `local` | `s3` for any S3-compatible endpoint |
 | `CORS_ORIGINS` | localhost | Every origin the app is reached from |
 | `ALLOW_SELF_REGISTRATION` | `false` | Account creation from the login page |
@@ -301,16 +458,288 @@ is read regardless of the working directory.
 There is no upload size limit to configure. Authenticated uploads are unlimited; the public form has
 a fixed anti-abuse ceiling in code. Storage is controlled by purging archived mandates.
 
+### Choosing a provider
+
+The figure that decides this is **not** requests per day. TriCV sends up to 24,000 characters of
+CV per *dépouillement* — roughly 7,000 tokens — so a free tier with a generous request count and a
+small daily **token** ceiling runs out long before its request count does. Report sections are the
+opposite: a few hundred tokens each, six to ten per report.
+
+| Provider | Free tier | *Dépouillements* per day, realistically | Notes |
+|---|---|---|---|
+| **Mistral** (`openai`) | 1 req/s, 500K tokens/min, ~1B tokens/month | Thousands | A French model house — the best French of the free options. Needs phone verification |
+| Gemini 2.5 Flash-Lite | 15 RPM, 1,000 RPD | ~1,000 | No daily token ceiling. Weakest of the three at reasoning |
+| Gemini 2.5 Flash *(current)* | 10 RPM, 250 RPD | ~250 | No daily token ceiling |
+| Groq `llama-3.3-70b` | 30 RPM, 1,000 RPD, **100K tokens/day** | **~13** | Fastest by far, and useless here: 14 CVs exhausts the day |
+| Ollama, local | none | Unlimited | Nothing leaves the building. Needs a machine that can hold the model |
+
+Groq tops every "best free LLM API" list and is the worst fit for this application, for that one
+reason. It is a fine choice for the *report* half of the work, which is token-light.
+
+**Every free tier trains on what you send, unless you stop it.** Google's does and cannot be
+turned off — only a paid key stops it. Mistral's free *Experiment* plan does too **by default**,
+but it can be refused in the console (Admin › Privacy) without paying. That difference is most of
+why Mistral is the recommendation: it is the only free tier where a real dossier can be sent
+without the firm's data feeding someone's training set. Redaction still removes every identity
+field first, so what would travel is a career history — but a career history is still a client's
+material.
+
+#### Switching to Mistral
+
+1. Create an account at <https://console.mistral.ai>, verify a phone number, and generate an API
+   key. (Yours to do — TriCV never handles credentials.)
+2. **In the console, Admin › Privacy: refuse the use of API data for training.** Do this before
+   the first real dossier, not after.
+3. In `.env`:
+
+       LLM_PROVIDER=openai
+       LLM_BASE_URL=https://api.mistral.ai/v1
+       LLM_MODEL=ministral-14b-latest
+       LLM_API_KEY=<the key>
+       LLM_MAX_CONCURRENCY=1
+
+   **Not `mistral-small-latest`.** On the free Experiment plan the `small`,
+   `medium` and `magistral` models are allocated **zero** requests a minute and
+   return an immediate 429 — the key is fine, the model is not available. Only
+   the `ministral` family is allocated: `3b` (750/min), `8b` (188/min), `14b`
+   (30/min). `ministral-14b-latest` measured equal to `gemini-2.5-flash` on the
+   extraction corpus.
+
+   `LLM_MAX_CONCURRENCY=1` is not a detail: the free plan allows one request a second, and three
+   in flight means two refusals and a wait. One at a time is faster.
+4. Restart, then run the pre-flight — it now checks both of the points above:
+
+       python backend/preflight.py
+
+5. Confirm the prose path returns prose — and invents nothing (one call):
+
+       cd backend && .venv/Scripts/python.exe tools/verifier_prose.py
+
+   It checks the form (not JSON, not Markdown, not empty) **and the substance**: any proper noun
+   in the answer that is absent from the data is reported as a probable invention. That second
+   check matters more than it sounds. A small model asked to write the publication section filled
+   the gap with *"diffusion via JobTogo, LinkedIn, Indeed"* from data naming no channel at all —
+   a sentence the firm would have signed, and a candidate could have contested.
+
+6. **Measure the extraction before trusting it** (six calls):
+
+       cd backend && .venv/Scripts/python.exe -m tools.evaluer_extraction mistral
+
+   Compare against the recorded `gemini-2.5-flash` baseline — 14/14 diplomas, 18/18 experiences
+   on the same corpus. A provider that costs less and reads worse is not a saving: extraction
+   accuracy is what the whole preselection rests on. If it scores lower, stay on Gemini.
+
+The same three variables point at Groq, OpenRouter, Together, or a vLLM server on the firm's own
+machine; only `LLM_BASE_URL` and `LLM_MODEL` change. See [`.env.example`](.env.example).
+
+#### Splitting the two jobs
+
+`LLM_PROSE_PROVIDER=gemini` sends **report and avis text** to one provider while **dossier
+extraction** stays with another. The two jobs are not alike:
+
+| | extraction | prose |
+|---|---|---|
+| volume | one call per dossier — 150 on a big mandate | ~7 per report |
+| what exhausts a quota | this | never this |
+| where an error shows | on screen, at *Confirmer les données* | in a document already sent to the client |
+| a wrong answer | a wrong score, visible when re-reading the parcours | a sentence the firm has signed |
+
+So the generous-quota provider takes the volume, and the one that invents least writes the prose.
+Measured on the seven written sections of one report: `ministral-14b-latest` invented in **1 of 7**
+(it filled in grid rubrics that were missing from the data); `gemini-2.5-flash` in 0 of 7, though
+it returned an entirely **empty** section once, which is its own failure mode. Neither is reliable
+unread — which is why every section still arrives marked *proposée* and blocks validation until a
+human has been through it.
+
+The writer keeps the extraction chain behind it as fallback: losing the writer must not lose the
+report.
+
+#### Falling back to a second provider
+
+`LLM_FALLBACK=gemini` makes the app try Gemini when the primary runs out of allowance. With two
+free keys, that is the difference between a mandate stopping mid-way and finishing.
+
+It switches **only on an exhausted quota** — and only after the usual four retries, so a
+per-minute limit is waited out rather than escalated. A response that could not be read, or a
+rejected key, is a fault to see and fix; contorting around it at another provider would hide a
+misconfiguration for weeks.
+
+A provider whose key is missing is dropped from the chain rather than being fatal. That is what
+lets a switch be configured before its key exists: the chain falls through to whatever works, and
+pasting the key promotes the new provider with no other change.
+
+Two things to weigh before turning it on:
+
+- **Two models do not read a CV the same way.** A mandate read half by one and half by the other
+  produces a grid whose lines come from different readers — and a candidate contesting their
+  elimination is entitled to know which read theirs. Every switch is logged at `WARNING`, naming
+  both providers, so the question is at least answerable.
+- **Free tiers do not share a privacy policy.** Mistral's can be set to refuse training; Google's
+  free tier cannot. Falling back from the first to the second moves real career histories from a
+  provider that forgets them to one that keeps them. The pre-flight says so explicitly. It is a
+  decision to take once, knowingly — not a surprise on a Tuesday evening.
+
+Each provider then needs its own model (`GEMINI_MODEL`, `OPENAI_MODEL`, …): `LLM_MODEL` names the
+primary's, and `mistral-small-latest` means nothing to Google.
+
+#### Running the model locally (Ollama)
+
+This is the only configuration where a real candidate's CV never leaves the building. No key, no
+quota, no third party, no training policy to read — the text goes to a process on the firm's own
+machine. For a recruitment consultancy holding other people's dossiers, that is a different
+category of answer from "a free tier that promises not to look".
+
+The cost is hardware and speed.
+
+**What it needs.** A 7–8B model quantised to 4 bits is about 5 GB on disk and wants roughly that
+much VRAM to run at a useful pace. It runs without a graphics card — on CPU, on many cores — but
+a dossier then takes minutes instead of seconds, which is fine for an overnight batch and
+unpleasant while someone waits at the screen.
+
+**Setup, in Docker:**
+
+```bash
+docker compose --profile local-llm up -d ollama
+docker compose exec ollama ollama pull qwen3:8b
+```
+
+Then in `.env`:
+
+```bash
+LLM_PROVIDER=ollama
+OLLAMA_MODEL=qwen3:8b
+OLLAMA_BASE_URL=http://ollama:11434   # http://localhost:11434 outside Compose
+```
+
+To use an NVIDIA card, uncomment the `deploy:` block on the `ollama` service in
+[`docker-compose.yml`](docker-compose.yml) — it needs the NVIDIA Container Toolkit (Docker Desktop
+with WSL2 provides it on Windows). Leaving it enabled without a card stops the service from
+starting, which is why it ships commented.
+
+For local development outside Compose, installing Ollama natively is simpler and picks up the GPU
+with no configuration: <https://ollama.com/download>, then `ollama pull qwen3:8b`.
+
+**Measure it before trusting it**, exactly as for any other provider:
+
+```bash
+cd backend && .venv/Scripts/python.exe -m tools.evaluer_extraction ollama
+```
+
+Against the recorded baseline — 14/14 diplomas, 18/18 experiences for both `gemini-2.5-flash` and
+`ministral-14b-latest`. A local model that reads worse is not privacy, it is a worse grid; if it
+scores lower, try a larger one before accepting it. Nothing about "local" makes a wrong extraction
+less wrong.
+
+`PII_REDACTION` stays on regardless. Redaction is not only about the provider — it is what keeps
+identity out of the scoring payload, so a name or an age cannot influence a score.
+
+---
+
+## The barème
+
+The split is the firm's own, taken from their documents:
+
+| Critère | Points |
+|---|---|
+| Consistance du dossier | 3 |
+| Formation académique | 7 |
+| Expérience générale | 5 |
+| Expérience spécifique | **15** |
+| **Présélection** | **30** |
+
+Domains — of a degree, of an experience — are matched by **stem, not by string equality**. An avis
+asking for `comptabilité` is satisfied by a degree in `sciences comptables` or `comptabilité et
+finance`; one asking for `finance` is satisfied by `finance d'entreprise`. The match is directional
+and stays strict on substance: every significant word of the *expected* domain must be found in the
+declared one, so `droit` never meets `comptabilité`, and an avis demanding `finance d'entreprise` is
+not satisfied by `finance` alone. What it absorbs is spelling; what it refuses is a different trade.
+String equality — what it replaced — produced non-conformity reasons a human reader would have
+thrown out, on files that were perfectly in order.
+
+An avis often states more than one specific experience — "five years in procurement **and** three
+in project management". Each is declared separately, checked separately, and the 15 points are
+split between them in proportion to their weights; the criterion's total does not move. Merged into
+a single set of fields, as they used to be, the two requirements became one: eight years of
+procurement satisfied both, and someone who had never run a project cleared the bar.
+
+Certifications and the *formation complémentaire* named by the avis are worth **zero by default** —
+the firm's barème scores the diploma and nothing else. A client who wants them counted enables them
+per poste, and the points come **out of the 7 already allocated to formation**, so the total stays
+at 30. The match against the requested complementary training is a word comparison: the score line
+always names what it matched, because a word comparison is something a reader must be able to
+reject.
+
+Those 30 points are **30 % of a total out of 100**. The structured interviews carry the other 70 —
+techniques 30, relationnelles/managériales 20, leadership 12, langues 3, présentation 3,
+connaissances générales 2. The grid shows both: a mark out of 30 read on its own gets mistaken for
+a final result.
+
+### Interviews
+
+Recorded from the candidate drawer: the six criteria, a comment per criterion, the date, the jury's
+composition and general observations. **Nothing here is computed or suggested** — these 70 points
+are a judgement made in session, and the automated assistance has no part in them and no access to
+them.
+
+The whole grid is shown from the start, unscored criteria included, so a jury can see what is left
+to do; a criterion with no mark is `null`, never zero. A mark outside its range is **refused**
+rather than silently clamped — clamping would show the jury a mark it did not give. Until every
+criterion is scored, the /100 is labelled **partiel**, on screen and in the exported file: a running
+total mid-session is not a result. The grid used is frozen on the sheet, so changing how the 70
+points are split later cannot rewrite an evaluation already delivered.
+
+A file carrying an active elimination cannot be scored. Lift the reason first — interviewing someone
+who was ruled out is a decision, and it leaves a trace.
+
+The Excel export grows an **Entretiens** sheet once the stage has happened: per candidate, in
+ranking order, every criterion with its mark and what the jury observed, the total, and the general
+observations. That is the material for writing the recruitment report — which the app deliberately
+does not write. The sheet is omitted entirely when no interview has been recorded, rather than
+appearing empty.
+
+Two consequences worth knowing:
+
+- **Specific experience is half the total.** Fifteen points for having done *this* job against five
+  for seniority in general. The scoring curves are deliberately gentle so the criterion keeps
+  separating candidates across the whole plausible range instead of saturating just past the
+  requirement — with a steep curve, fifteen and twenty-five years score identically and the fifteen
+  points stop ranking anything.
+- **Consistance du dossier is scored, not a completeness gate.** Completeness and chronological
+  coherence are computed; the third point — motivation and written expression — is reserved for a
+  human, entered from the candidate drawer with a written reason. Until someone reads the file the
+  line says so and the point stays unclaimed: an unread file is not a bad file.
+
+Selection is by **ranking**, matching the firm's process ("les cinq (05) premiers candidats ayant
+obtenu les meilleures notes"). The threshold defaults to zero — no floor. Set `nombre_a_retenir` on
+a poste and the grid marks the top N as **proposés**; the rest stay **préqualifiés** and remain on
+the grid, because those are the ones you call back if a proposed candidate withdraws.
+
+`note_de_conformite()` gives the score of a candidate who exactly meets every requirement — a floor
+that can be defended, unlike a round number picked in advance.
+
+Everything above the category maxima is configurable per poste, and a copy of the barème used is
+stored with each score, so editing a poste never rewrites a grid already delivered.
+
 ---
 
 ## Known gaps
 
-- **The barème does not match the firm's real one.** The default split in
-  `backend/app/domain/bareme.py` was written before the real documents arrived. Their actual grid is
-  Consistance du dossier 3 / Formation 7 / Expérience générale 5 / Expérience spécifique 15 = **30**,
-  and those 30 points are **30 % of a total out of 100**, the interviews carrying the other 70 %.
-  Selection is **top-N** ("les cinq (05) premiers candidats"), not a threshold, with a distinction
-  between *préqualifiés* and *proposés*. "Consistance du dossier" is scored, not just a completeness
-  check. This needs its own pass before a grid is shown to a client.
+- **The internal curve of each criterion is a setting, not a document.** The four maxima
+  (3/7/5/15) and the 30/70 split come from the firm's papers. How many points at exactly the
+  required level, and how many per extra year, are defaults chosen to spread the field. Worth
+  confirming against a grid they have filled in by hand.
 - The imposed CV/email format is not yet encoded (see the mailbox section above).
 - PostgreSQL is configured but the local script runs on SQLite.
+- **The free tier caps how many dossiers a day can be read.** On the configured
+  `gemini-2.5-flash` that is 250 requests a day across the whole installation — a *dépouillement*
+  costs one, a report section costs one. A mandate with 150 applications fits, but two such
+  mandates in a morning do not. See *Choosing a provider* above: Mistral's free tier is the better
+  fit for French and for volume, and `LLM_PROVIDER=ollama` removes the ceiling entirely.
+- Extraction accuracy is measured against a small hand-written corpus
+  (`backend/tools/evaluer_extraction.py`), not against real files — which is deliberate, since a
+  real application has no place in a repository, but it does mean the corpus only covers the layouts
+  someone thought to write down. When a real CV is read badly, the fix is to add the equivalent
+  invented CV to the corpus and measure.
+- The match between the *formation complémentaire* an avis asks for and what a file contains is a
+  word comparison, not an understanding of either. It proposes; the score line names what it matched
+  so a reader can refuse it.

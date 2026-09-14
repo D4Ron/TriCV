@@ -205,7 +205,7 @@ def render(data: ExportData) -> bytes:
                 document.add_paragraph(candidate.hr_notes)
 
     footer = document.sections[0].footer.paragraphs[0]
-    footer.text = "TriCV"
+    footer.text = "Kapi Consult · TriCV"
     footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     buffer = io.BytesIO()

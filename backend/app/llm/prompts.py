@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -156,9 +157,14 @@ Ton seul travail est de relever le parcours : diplômes, expériences profession
 
 Règles :
 - Ne rapporte que ce qui est écrit. Aucune déduction, aucun comblement de trou.
-- Les niveaux de diplôme suivent l'échelle BAC+N : Licence = 3, Maîtrise ou Master 1 = 4, Master, Ingénieur, DEA ou DESS = 5, Doctorat = 8. Si le niveau n'est pas déterminable, mets null plutôt que de deviner.
+- Les niveaux de diplôme suivent l'échelle BAC+N, qui va de 0 à 8 :
+  Baccalauréat = 0 ; BAC+1 = 1 ; BTS, DUT, DEUG ou DEUST = 2 ; Licence, Licence professionnelle ou Bachelor = 3 ; Maîtrise ou Master 1 = 4 ; Master, Master 2, Ingénieur, DEA ou DESS = 5 ; Doctorat ou PhD = 8.
+  Un baccalauréat vaut donc 0, et non null : zéro est un niveau, l'absence de niveau n'en est pas un. Ne mets null que si l'intitulé ne permet vraiment pas de trancher.
 - Les dates s'écrivent AAAA-MM. Un poste toujours occupé a une fin à null.
+- Quand une période ne donne que des années — « 2015 - 2020 » —, écris "2015-01" et "2020-01". Compter jusqu'en décembre ajouterait une année que le dossier ne prouve pas, et cette année-là fait franchir des seuils d'ancienneté.
 - `domaines` rattache une expérience à son secteur, en minuscules et sans accents parasites : "gestion hoteliere", "finance", "logistique".
+- `certifications` ne recense que des titres délivrés par un organisme. Un logiciel maîtrisé, un outil ou une compétence n'en est pas une.
+- Le texte porte des marqueurs entre crochets — [NOM], [ADRESSE] — à la place des données retirées. Un marqueur n'est jamais un employeur, un établissement ni un intitulé : ne le recopie dans aucun champ.
 - Si le texte est illisible ou ne contient pas de CV, renvoie des listes vides.
 
 Réponds uniquement par un objet JSON, sans texte autour :
@@ -170,8 +176,31 @@ Réponds uniquement par un objet JSON, sans texte autour :
 }"""
 
 
-def extraction_system_prompt() -> str:
-    return _EXTRACTION_SYSTEME
+def extraction_system_prompt(domaines: Sequence[str] = ()) -> str:
+    """La consigne d'extraction, avec le vocabulaire du poste s'il est connu.
+
+    Le barème compare les domaines relevés à ceux que le poste déclare, et la
+    comparaison est exacte. Laissée libre, la formulation varie d'un dossier à
+    l'autre — « ressources humaines », « politique rh », « gestion du
+    personnel » désignent le même métier et ne se rapprochent d'aucun.
+    Un même parcours passait ou tombait selon le mot choisi par le modèle.
+
+    Donner les intitulés du poste ne fait rien juger au modèle : il continue de
+    ne relever que ce qui est écrit, mais le nomme dans les termes que la
+    grille sait lire.
+    """
+    connus = [d.strip() for d in domaines if d and d.strip()]
+    if not connus:
+        return _EXTRACTION_SYSTEME
+    liste = "\n".join(f'  - "{d}"' for d in dict.fromkeys(connus))
+    return (
+        f"{_EXTRACTION_SYSTEME}\n\n"
+        "Le poste visé emploie les intitulés de domaine suivants :\n"
+        f"{liste}\n"
+        "Quand un diplôme ou une expérience relève de l'un d'eux, reprends "
+        "l'intitulé mot pour mot plutôt qu'une reformulation. Sinon, garde le "
+        "domaine tel que le dossier le nomme : ne force aucun rapprochement."
+    )
 
 
 def extraction_user_prompt(texte: str) -> str:
@@ -179,3 +208,77 @@ def extraction_user_prompt(texte: str) -> str:
     extrait = texte[:24_000]
     suffixe = "\n\n[…document tronqué…]" if len(texte) > 24_000 else ""
     return f"Dossier à dépouiller :\n\n{extrait}{suffixe}"
+
+
+# --- rédaction : avis, rapports ---------------------------------------------
+#
+# Ces deux usages ne demandent pas du JSON mais de la prose. La consigne
+# commune tient en trois points : écrire en français administratif sobre, ne
+# rien inventer qui ne soit dans les données fournies, et ne jamais conclure à
+# la place de qui signera. Le troisième point n'est pas une précaution de
+# style : un rapport de recrutement engage le cabinet, et une phrase produite
+# par un modèle qui « recommande » un candidat mettrait une décision dans une
+# bouche qui n'a pas qualité pour la prendre.
+
+REDACTION_SYSTEM = (
+    "Vous rédigez pour un cabinet de conseil en recrutement basé à Lomé (Togo). "
+    "Le registre est administratif, sobre, en français soutenu mais sans "
+    "emphase. Écrivez au présent ou au passé composé, à la voix active, en "
+    "phrases courtes.\n"
+    "\n"
+    "Règles absolues :\n"
+    "- N'inventez aucun fait, chiffre, nom ou date qui ne figure pas dans les "
+    "données fournies. Si une information manque, ne la remplacez pas : "
+    "écrivez la section sans elle.\n"
+    # Interdire l'invention en général ne suffit pas : un modèle de petite
+    # taille comble les blancs avec ce qui « va de soi » dans un rapport de
+    # recrutement — des canaux de diffusion, des motifs d'élimination, des
+    # étapes de procédure. Ce sont précisément les passages qu'un client
+    # contesterait, et le cabinet les aurait signés. La consigne nomme donc ce
+    # qu'il ne faut pas inventer, plutôt que de s'en remettre au principe.
+    "- En particulier : n'inventez aucun canal de diffusion (site, journal, "
+    "réseau social, plateforme), aucun motif d'élimination, aucune étape de "
+    "procédure, aucun nom d'organisme, aucun critère et aucun pourcentage "
+    "qui ne soit écrit dans les données. Ne citez un support de publication "
+    "que si les données le nomment.\n"
+    "- N'énumérez pas ce que les données n'énumèrent pas. Une liste à puces "
+    "dont les éléments ne figurent pas ci-dessous est une invention.\n"
+    "- Mieux vaut une section courte et exacte qu'une section étoffée. Trois "
+    "phrases vraies valent mieux que dix phrases vraisemblables.\n"
+    "- Ne formulez aucune recommandation, aucun avis favorable ou défavorable "
+    "sur une personne. Vous décrivez ce qui a été fait et constaté ; la "
+    "décision appartient au cabinet et à son client.\n"
+    "- Ne citez aucun nom de candidat, sauf s'il figure explicitement dans les "
+    "données transmises.\n"
+    "- Répondez uniquement par le texte de la section demandée, sans titre, "
+    "sans introduction, sans commentaire sur votre propre travail."
+)
+
+
+def redaction_user_prompt(consigne: str, contexte: str) -> str:
+    return (
+        f"{consigne}\n"
+        "\n"
+        "Données disponibles :\n"
+        "---\n"
+        f"{contexte}\n"
+        "---\n"
+        "\n"
+        "Rédigez la section demandée."
+    )
+
+
+def avis_system_prompt() -> str:
+    return (
+        "Vous rédigez un avis de recrutement destiné à être publié, pour un "
+        "cabinet de conseil basé à Lomé (Togo). Registre administratif, "
+        "français soutenu, phrases courtes.\n"
+        "\n"
+        "Règles absolues :\n"
+        "- N'ajoutez aucune exigence, aucun avantage, aucune date qui ne "
+        "figure pas dans la fiche de poste fournie. Un avis publié engage le "
+        "cabinet : une condition inventée devient opposable.\n"
+        "- Reprenez les intitulés de pièces exactement tels qu'ils sont "
+        "donnés.\n"
+        "- Répondez uniquement par le texte de l'avis, sans commentaire."
+    )

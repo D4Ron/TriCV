@@ -55,7 +55,7 @@ class Doublon:
 
 
 async def trouver_identique(
-    db: AsyncSession, poste_id: str, empreintes: list[str]
+    db: AsyncSession, poste_id: str | None, empreintes: list[str]
 ) -> tuple[str, str] | None:
     """La candidature du même poste portant déjà l'un de ces fichiers.
 
@@ -64,6 +64,10 @@ async def trouver_identique(
     pièce, sans information nouvelle. Une adresse email répétée, elle, désigne
     souvent un candidat qui renvoie une version corrigée — l'écarter ferait
     perdre la bonne version, donc ce cas reste un simple signalement.
+
+    `poste_id=None` compare aux candidatures spontanées entre elles : elles ne
+    se rattachent à aucun poste, mais un même CV envoyé deux fois reste un
+    doublon.
     """
     if not empreintes:
         return None
@@ -73,7 +77,9 @@ async def trouver_identique(
             .join(Candidat, Candidat.id == Candidature.candidat_id)
             .join(PieceCandidature, PieceCandidature.candidature_id == Candidature.id)
             .where(
-                Candidature.poste_id == poste_id,
+                Candidature.poste_id.is_(None)
+                if poste_id is None
+                else Candidature.poste_id == poste_id,
                 PieceCandidature.empreinte.in_(empreintes),
             )
             .limit(1)

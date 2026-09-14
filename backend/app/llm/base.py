@@ -5,12 +5,13 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.config import settings
-from app.llm import prompts
+from app.llm import prompts, prose
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +20,43 @@ logger = logging.getLogger(__name__)
 _semaphore = asyncio.Semaphore(settings.llm_max_concurrency)
 
 
+def modele_configure(fournisseur: str, defaut: str = "") -> str:
+    """Le modèle à employer pour ce fournisseur.
+
+    Trois sources, par ordre de priorité : son propre réglage (`GEMINI_MODEL`),
+    puis `LLM_MODEL` **s'il est le fournisseur principal**, puis son défaut.
+
+    La condition du milieu est ce qui rend une chaîne de secours utilisable :
+    `LLM_MODEL` nomme le modèle du principal, et le laisser déborder sur les
+    suivants leur ferait demander un modèle qui n'existe pas chez eux.
+    """
+    propre = str(getattr(settings, f"{fournisseur}_model", "") or "").strip()
+    if propre:
+        return propre
+    if fournisseur == settings.llm_provider and settings.llm_model.strip():
+        return settings.llm_model.strip()
+    return defaut
+
+
 class LLMError(Exception):
     """Anything that stopped us getting a usable answer from the provider."""
 
 
 class LLMConfigError(LLMError):
     """Missing key, unknown provider, unsupported payload — not worth retrying."""
+
+
+class LLMQuotaError(LLMError):
+    """Ce fournisseur n'a plus d'allocation, et attendre n'y changera rien.
+
+    Distincte d'une panne : une réponse illisible se relance, un quota épuisé
+    ne se relance pas — il se contourne. C'est cette distinction qui permet à
+    une chaîne de fournisseurs de basculer sur le suivant sans basculer aussi
+    pour une erreur passagère.
+
+    Levée seulement après l'échec des quatre tentatives : une limite *par
+    minute* se rattrape dans le temps du repli, une limite *par jour* non.
+    """
 
 
 # --- payloads ---------------------------------------------------------------
@@ -164,6 +196,27 @@ def parse_json_object(raw: str) -> dict:
 # --- the interface ----------------------------------------------------------
 
 
+# Un marqueur d'expurgation — [CANDIDATE_NAME], [ADDRESS_2] — n'est ni un
+# employeur ni un intitulé de poste. Le modèle en recopie parfois un quand le
+# texte expurgé lui en met un à la place d'un nom d'entreprise : la ligne
+# rendue serait alors un employeur nommé « [ADDRESS_2] », affiché tel quel dans
+# la grille remise au client.
+_MARQUEUR = re.compile(r"\[[A-Z_]+(?:_\d+)?\]")
+
+
+def _texte_propre(valeur: object) -> str:
+    """None → "" et marqueurs retirés.
+
+    Le modèle rend légitimement `null` là où le CV ne dit rien — le domaine
+    d'un baccalauréat, par exemple. Refuser ce null invalidait l'objet entier,
+    et `extraire_dossier` jetait alors **tout le dossier** : un diplôme sans
+    domaine faisait perdre les six expériences qui l'accompagnaient.
+    """
+    if valeur is None:
+        return ""
+    return " ".join(_MARQUEUR.sub(" ", str(valeur)).split())
+
+
 class DiplomeExtrait(BaseModel):
     """Un diplôme lu dans un dossier. `niveau` est le N de BAC+N."""
 
@@ -172,6 +225,16 @@ class DiplomeExtrait(BaseModel):
     domaine: str = ""
     etablissement: str | None = None
     annee: int | None = None
+
+    @field_validator("intitule", "domaine", mode="before")
+    @classmethod
+    def _tolerer_null(cls, v: object) -> object:
+        return _texte_propre(v)
+
+    @field_validator("etablissement", mode="before")
+    @classmethod
+    def _nettoyer_etablissement(cls, v: object) -> object:
+        return _texte_propre(v) or None
 
     @field_validator("niveau", mode="before")
     @classmethod
@@ -204,12 +267,22 @@ class ExperienceExtraite(BaseModel):
     domaines: list[str] = Field(default_factory=list)
     pays: str | None = None
 
+    @field_validator("poste", "employeur", mode="before")
+    @classmethod
+    def _tolerer_null(cls, v: object) -> object:
+        return _texte_propre(v)
+
+    @field_validator("pays", mode="before")
+    @classmethod
+    def _nettoyer_pays(cls, v: object) -> object:
+        return _texte_propre(v) or None
+
     @field_validator("domaines", mode="before")
     @classmethod
     def _en_liste(cls, v: object) -> object:
         if isinstance(v, str):
-            return [x.strip() for x in v.split(",") if x.strip()]
-        return v or []
+            v = [x.strip() for x in v.split(",") if x.strip()]
+        return [p for p in (_texte_propre(x) for x in (v or [])) if p]
 
 
 class DossierExtrait(BaseModel):
@@ -229,8 +302,8 @@ class DossierExtrait(BaseModel):
     @classmethod
     def _en_liste(cls, v: object) -> object:
         if isinstance(v, str):
-            return [x.strip() for x in v.split(",") if x.strip()]
-        return v or []
+            v = [x.strip() for x in v.split(",") if x.strip()]
+        return [p for p in (_texte_propre(x) for x in (v or [])) if p]
 
 
 class LLMProvider(ABC):
@@ -242,13 +315,48 @@ class LLMProvider(ABC):
     @abstractmethod
     async def structure_fiche(self, raw_text: str, language: str = "fr") -> list[CriterionDraft]: ...
 
-    async def extraire_dossier(self, texte: str) -> DossierExtrait:
+    async def extraire_dossier(
+        self, texte: str, domaines: Sequence[str] = ()
+    ) -> DossierExtrait:
         """Propose le parcours lu dans un dossier déjà expurgé.
+
+        `domaines` porte les intitulés que le poste emploie, pour que le
+        parcours relevé soit nommé dans les termes que le barème compare.
 
         Non abstraite : un fournisseur qui ne sait pas le faire renvoie un
         dossier vide, ce qui laisse simplement le dépouillement à un humain.
         """
         return DossierExtrait()
+
+    async def rediger(
+        self, consigne: str, contexte: str, systeme: str = "", titre: str = ""
+    ) -> str:
+        """Propose un paragraphe à partir de données fournies.
+
+        Sert aux avis et aux sections de rapport. Le retour est de la prose, non
+        du JSON : il n'y a rien à valider automatiquement, et c'est justement
+        pourquoi tout ce qui sort d'ici passe par une relecture avant d'exister
+        ailleurs que dans un brouillon.
+
+        `titre` est celui de la section, quand l'appelant le connaît : il sert
+        au nettoyage à reconnaître un titre que le modèle aurait recopié.
+
+        Un fournisseur qui n'en est pas capable renvoie une chaîne vide, et
+        l'appelant présente alors un champ vierge à remplir à la main.
+        """
+        return ""
+
+    async def repondre_json(
+        self, consigne: str, contexte: str, systeme: str = ""
+    ) -> dict:
+        """Une question libre dont la réponse attendue est un objet JSON.
+
+        Distincte de `rediger`, qui rend de la prose : les deux ne veulent pas
+        le même mode chez le fournisseur, et les confondre revenait à demander
+        du JSON en mode prose — ou l'inverse, ce qui remplissait les rapports
+        d'accolades vides.
+        """
+        return {}
 
 
 @dataclass(slots=True)
@@ -269,19 +377,32 @@ class BaseLLMProvider(LLMProvider):
 
     @abstractmethod
     async def complete(
-        self, system: str, user: str, attachment: Attachment | None = None
+        self,
+        system: str,
+        user: str,
+        attachment: Attachment | None = None,
+        *,
+        json_mode: bool = True,
     ) -> str: ...
 
-    async def _guarded(self, system: str, user: str, attachment: Attachment | None) -> str:
+    async def _guarded(
+        self,
+        system: str,
+        user: str,
+        attachment: Attachment | None,
+        *,
+        json_mode: bool = True,
+    ) -> str:
         async with _semaphore:
             if settings.llm_log_payload:
                 logger.info(
-                    "[%s] payload -> provider (%s):\n%s",
+                    "[%s] payload -> provider (%s, %s):\n%s",
                     self.name,
                     "document attached" if attachment else "text only",
+                    "json" if json_mode else "prose",
                     user,
                 )
-            return await self.complete(system, user, attachment)
+            return await self.complete(system, user, attachment, json_mode=json_mode)
 
     async def analyze_cv(self, cv: CvPayload, fiche: FichePayload) -> AnalysisResult:
         if cv.is_document and not self.supports_documents:
@@ -317,17 +438,56 @@ class BaseLLMProvider(LLMProvider):
                 f"{second_error}"
             ) from second_error
 
-    async def extraire_dossier(self, texte: str) -> DossierExtrait:
+    async def extraire_dossier(
+        self, texte: str, domaines: Sequence[str] = ()
+    ) -> DossierExtrait:
         raw = await self._guarded(
-            prompts.extraction_system_prompt(), prompts.extraction_user_prompt(texte), None
+            prompts.extraction_system_prompt(domaines),
+            prompts.extraction_user_prompt(texte),
+            None,
         )
         try:
             return DossierExtrait.model_validate(parse_json_object(raw))
         except (ValidationError, LLMError) as exc:
-            # Une extraction illisible n'est pas une panne : le dossier reste
-            # à dépouiller à la main, ce qui était déjà le cas avant l'appel.
-            logger.warning("[%s] extraction illisible, dossier laissé vide : %s", self.name, exc)
-            return DossierExtrait()
+            # Renvoyer un dossier vide en silence faisait passer une panne pour
+            # un CV sans contenu : l'écran affichait « 0 diplôme, 0 expérience »
+            # et rien n'indiquait qu'il fallait recommencer. Le dépouillement
+            # attrape cette erreur et l'affiche ; la saisie manuelle reste
+            # possible, mais on sait pourquoi.
+            logger.warning("[%s] extraction illisible : %s", self.name, exc)
+            raise LLMError(
+                "La réponse du modèle n'a pas pu être lue. Relancez le dépouillement "
+                "ou saisissez le parcours à la main."
+            ) from exc
+
+    async def rediger(
+        self, consigne: str, contexte: str, systeme: str = "", titre: str = ""
+    ) -> str:
+        # `json_mode=False` : c'est de la prose qu'on demande ici. Le mode JSON
+        # était armé sur tous les appels, y compris celui-ci — un modèle
+        # contraint au JSON sans schéma à remplir rendait `{}` ou la phrase
+        # emballée dans un objet, et c'est cela qui se retrouvait imprimé dans
+        # les rapports.
+        raw = await self._guarded(
+            systeme or prompts.REDACTION_SYSTEM,
+            prompts.redaction_user_prompt(consigne, contexte),
+            None,
+            json_mode=False,
+        )
+        # Seconde ligne : aucune consigne n'empêche complètement un modèle
+        # d'encadrer sa prose. Voir `app.llm.prose`.
+        return prose.nettoyer(raw, titre)
+
+    async def repondre_json(
+        self, consigne: str, contexte: str, systeme: str = ""
+    ) -> dict:
+        raw = await self._guarded(
+            systeme or prompts.REDACTION_SYSTEM,
+            prompts.redaction_user_prompt(consigne, contexte),
+            None,
+            json_mode=True,
+        )
+        return parse_json_object(raw)
 
     async def structure_fiche(self, raw_text: str, language: str = "fr") -> list[CriterionDraft]:
         system = prompts.fiche_system_prompt(language)
@@ -353,5 +513,6 @@ __all__ = [
     "LLMConfigError",
     "LLMError",
     "LLMProvider",
+    "LLMQuotaError",
     "parse_json_object",
 ]

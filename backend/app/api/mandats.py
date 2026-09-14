@@ -22,7 +22,7 @@ from app.schemas.recrutement import (
     MandatOut,
     MandatUpdate,
 )
-from app.services import audit, purge
+from app.services import audit, espace_client, purge
 
 router = APIRouter(tags=["mandats"])
 
@@ -321,6 +321,14 @@ async def modifier_mandat(
     details: dict = {"champs": sorted(modifications)}
     if "statut" in modifications and mandat.statut != ancien_statut:
         details["statut"] = f"{ancien_statut.value} -> {mandat.statut.value}"
+        if not espace_client.mandat_ouvert(mandat):
+            # L'espace de suivi vit le temps du recrutement : le clore ferme la
+            # porte au lieu de la laisser ouverte « au cas où ».
+            fermes = await espace_client.fermer_ceux_du_mandat(
+                db, mandat, f"Mandat passé au statut {mandat.statut.value}"
+            )
+            if fermes:
+                details["acces_client_fermes"] = fermes
     await audit.record(
         db,
         action="mandat.update",
@@ -374,6 +382,8 @@ async def _basculer_archive(
     reste réservée aux saisies erronées, où il n'y a rien à conserver.
     """
     objet.archive_le = utcnow() if archiver else None
+    if archiver and isinstance(objet, Mandat):
+        await espace_client.fermer_ceux_du_mandat(db, objet, "Mandat archivé")
     await audit.record(
         db,
         action=f"{entite}.{'archive' if archiver else 'desarchive'}",

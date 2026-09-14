@@ -2,10 +2,13 @@ import { useAuthStore } from '@/store/auth'
 import type {
   AuditEntry,
   Avis,
+  Entretien,
   CandidaturesPage,
   Candidature,
   Client,
   Grille,
+  GrilleEntretien,
+  LigneBaremeEntretien,
   Mandat,
   Poste,
   CandidateDetail,
@@ -276,6 +279,20 @@ export const candidatesApi = {
 
 // --- chaîne de recrutement --------------------------------------------------
 
+/**
+ * Un dossier tel que le serveur propose de le découper.
+ *
+ * `depuis_arborescence` distingue un classement fait par quelqu'un — des
+ * sous-dossiers — d'une lecture des noms de fichiers. La confiance à lui
+ * accorder n'est pas la même, et l'écran le dit.
+ */
+export interface DossierPropose {
+  cle: string
+  libelle: string
+  depuis_arborescence: boolean
+  pieces: Array<{ nom: string; type_piece: string | null; index: number }>
+}
+
 export interface SuppressionResultat {
   supprime: string
   mandats: number
@@ -291,6 +308,89 @@ export interface PurgeResultat {
   mo: number
   candidatures: number
 }
+
+/**
+ * Les documents tableur d'un poste.
+ *
+ * Ils ne s'adressent pas aux mêmes personnes : le classement part au client,
+ * le tableau d'élimination se produit à un candidat qui conteste, les
+ * entretiens servent à écrire le rapport. Le classeur complet les réunit —
+ * pratique en interne, trop bavard pour un envoi.
+ */
+export type TypeGrille =
+  | 'PRESELECTION'
+  | 'ELIMINATION'
+  | 'ENTRETIENS'
+  | 'SYNTHESE'
+  | 'COMPLET'
+
+export const TYPES_GRILLE: Array<{
+  cle: TypeGrille
+  libelle: string
+  pour: string
+}> = [
+  {
+    cle: 'PRESELECTION',
+    libelle: 'Grille de présélection',
+    pour: 'Le classement noté, dossier par dossier. C’est le document remis au client.',
+  },
+  {
+    cle: 'ELIMINATION',
+    libelle: "Tableau d'élimination",
+    pour: 'Les dossiers écartés, groupés par motif, avec attendu et constaté. Se produit à un candidat qui conteste.',
+  },
+  {
+    cle: 'ENTRETIENS',
+    libelle: 'Détail des entretiens',
+    pour: 'Les notes du jury critère par critère et ses observations. La matière du rapport.',
+  },
+  {
+    cle: 'SYNTHESE',
+    libelle: 'Synthèse',
+    pour: 'Les effectifs et la répartition des motifs, en une page.',
+  },
+  {
+    cle: 'COMPLET',
+    libelle: 'Dossier complet',
+    pour: 'Les quatre documents en un seul classeur, pour le travail interne.',
+  },
+]
+
+/** À qui écrire. Les portées sont définies par le serveur. */
+export type PorteeEnvoi =
+  | 'tous'
+  | 'preselectionnes'
+  | 'elimines'
+  | 'a_verifier'
+  | 'sous_le_seuil'
+
+export const PORTEES_ENVOI: Array<{ cle: PorteeEnvoi; libelle: string; aide: string }> = [
+  {
+    cle: 'tous',
+    libelle: 'Tous les candidats',
+    aide: "Tout dossier reçu sur ce poste, quelle qu'en soit l'issue — un accusé de réception, par exemple.",
+  },
+  {
+    cle: 'preselectionnes',
+    libelle: 'Les préqualifiés',
+    aide: 'Ceux qui franchissent le seuil de présélection.',
+  },
+  {
+    cle: 'sous_le_seuil',
+    libelle: 'Les recevables sous le seuil',
+    aide: "Éligibles mais non retenus : ni écartés, ni proposés.",
+  },
+  {
+    cle: 'elimines',
+    libelle: 'Les dossiers écartés',
+    aide: 'Ceux dont un motif d’élimination est actif — une lettre de refus.',
+  },
+  {
+    cle: 'a_verifier',
+    libelle: 'Les dossiers à vérifier',
+    aide: 'Souvent pour réclamer une pièce manquante.',
+  },
+]
 
 export const recrutementApi = {
   clients: (recherche?: string, archives = false) => {
@@ -341,17 +441,49 @@ export const recrutementApi = {
     request<Poste>(`/mandats/${mandatId}/postes`, { method: 'POST', body: payload }),
   modifierPoste: (id: string, payload: Record<string, unknown>) =>
     request<Poste>(`/postes/${id}`, { method: 'PATCH', body: payload }),
+  /**
+   * Ce que la formation rapporte au-delà du diplôme.
+   *
+   * Ces points se prennent dans les 7 de la formation académique : le total du
+   * barème ne bouge pas. Endpoint étroit à dessein — reconstruire les trente
+   * points côté navigateur serait s'offrir l'occasion de les reconstruire faux.
+   */
+  definirExtrasFormation: (
+    id: string,
+    payload: {
+      points_par_certification: number
+      certifications_max: number
+      points_formation_complementaire: number
+    },
+  ) => request<Poste>(`/postes/${id}/bareme/formation`, { method: 'PUT', body: payload }),
   changerSeuil: (id: string, seuil: number, justification: string) =>
     request<Poste>(`/postes/${id}/seuil`, { method: 'POST', body: { seuil, justification } }),
   evaluerPoste: (id: string) =>
     request<{ candidatures_evaluees: number }>(`/postes/${id}/evaluer`, { method: 'POST' }),
   grille: (id: string) => request<Grille>(`/postes/${id}/grille`),
+  /**
+   * Les dossiers auxquels écrire, par portée.
+   *
+   * La liste vient du serveur et non de la grille affichée : « tous » doit
+   * couvrir toutes les candidatures reçues, y compris celles arrivées depuis
+   * le dernier rafraîchissement de l'écran.
+   */
+  destinataires: (id: string, portee: PorteeEnvoi) =>
+    request<{
+      portee: PorteeEnvoi
+      candidature_ids: string[]
+      total: number
+      sans_adresse: number
+    }>(`/postes/${id}/destinataires?portee=${portee}`),
   /** Le fichier est protégé par le jeton : on le récupère puis on le remet
    *  au navigateur, un lien direct renverrait un 401. */
-  telechargerGrille: async (id: string): Promise<void> => {
-    const response = await fetch(`${BASE}/postes/${id}/grille.xlsx`, {
-      headers: { Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}` },
-    })
+  telechargerGrille: async (id: string, type: TypeGrille = 'COMPLET'): Promise<void> => {
+    const response = await fetch(
+      `${BASE}/postes/${id}/grille.xlsx?type_grille=${type}`,
+      {
+        headers: { Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}` },
+      },
+    )
     if (!response.ok) throw new ApiError(response.status, "L'export a échoué")
 
     const disposition = response.headers.get('content-disposition') ?? ''
@@ -370,6 +502,8 @@ export const recrutementApi = {
   creerAvis: (posteId: string, payload: Record<string, unknown>) =>
     request<Avis>(`/postes/${posteId}/avis`, { method: 'POST', body: payload }),
   publierAvis: (id: string) => request<Avis>(`/avis/${id}/publier`, { method: 'POST' }),
+  /** Réservé aux brouillons : un avis publié se clôture, il ne s'efface pas. */
+  supprimerAvis: (id: string) => request<void>(`/avis/${id}`, { method: 'DELETE' }),
   cloturerAvis: (id: string) => request<Avis>(`/avis/${id}/cloturer`, { method: 'POST' }),
 
   candidatures: (posteId: string, params: Record<string, string | number> = {}) => {
@@ -383,14 +517,46 @@ export const recrutementApi = {
     )
   },
   candidature: (id: string) => request<Candidature>(`/candidatures/${id}`),
-  /** Dépôt en lot : un fichier = une candidature, à relire ensuite. */
-  depotMultiple: (posteId: string, fichiers: File[], depouiller: boolean) => {
+  /**
+   * Le découpage proposé pour un lot, avant tout envoi.
+   *
+   * Seuls les noms circulent : montrer le regroupement avant de téléverser
+   * cent fichiers évite une longue attente pour un aperçu.
+   */
+  apercuDepot: (posteId: string, noms: string[], chemins: string[] = []) => {
+    const formData = new FormData()
+    noms.forEach((n) => formData.append('noms', n))
+    chemins.forEach((c) => formData.append('chemins', c))
+    return request<{ dossiers: DossierPropose[] }>(
+      `/postes/${posteId}/candidatures/depot-multiple/apercu`,
+      { method: 'POST', formData },
+    )
+  },
+
+  /**
+   * Dépôt en lot.
+   *
+   * Un candidat envoie rarement un seul fichier. `groupes[i]` dit à quel
+   * dossier appartient `fichiers[i]` — c'est le découpage que l'écran a montré
+   * et qu'on a corrigé. Sans lui, le serveur le déduit du chemin d'origine puis
+   * du nom du fichier.
+   */
+  depotMultiple: (
+    posteId: string,
+    fichiers: File[],
+    depouiller: boolean,
+    options: { groupes?: string[]; types?: Array<string | null>; chemins?: string[] } = {},
+  ) => {
     const formData = new FormData()
     fichiers.forEach((f) => formData.append('fichiers', f))
     formData.append('type_piece', 'CV')
     formData.append('depouiller_aussitot', String(depouiller))
+    options.groupes?.forEach((g) => formData.append('groupes', g))
+    options.types?.forEach((x) => formData.append('types_pieces', x ?? ''))
+    options.chemins?.forEach((c) => formData.append('chemins', c))
     return request<{
       deposes: number
+      pieces: number
       refuses: number
       doublons_ignores: number
       doublons: number
@@ -400,9 +566,21 @@ export const recrutementApi = {
         erreur?: string
         doublon_de?: string
         candidature_id?: string
+        pieces?: number
         doublons?: Array<{ candidature_id: string; nom: string; motif: string }>
       }>
     }>(`/postes/${posteId}/candidatures/depot-multiple`, { method: 'POST', formData })
+  },
+
+  /** Rattache plusieurs fichiers d'un coup à un dossier déjà ouvert. */
+  joindrePieces: (id: string, fichiers: File[], types: Array<string | null> = []) => {
+    const formData = new FormData()
+    fichiers.forEach((f) => formData.append('fichiers', f))
+    types.forEach((x) => formData.append('types_pieces', x ?? ''))
+    return request<Candidature>(`/candidatures/${id}/pieces/lot`, {
+      method: 'POST',
+      formData,
+    })
   },
   creerCandidature: (posteId: string, payload: Record<string, unknown>) =>
     request<Candidature>(`/postes/${posteId}/candidatures`, { method: 'POST', body: payload }),
@@ -413,6 +591,10 @@ export const recrutementApi = {
       langues: number
       certifications: number
       pieces_lues: number
+      /** Propositions d'un dépouillement précédent remplacées par celui-ci. */
+      remplacees: number
+      /** L'adresse lue dans le dossier, quand elle change ce qu'on avait. */
+      email_trouve: string | null
       avertissements: string[]
     }>(`/candidatures/${id}/depouiller`, { method: 'POST' }),
   verifier: (id: string, payload: Record<string, boolean>) =>
@@ -424,14 +606,76 @@ export const recrutementApi = {
     }),
   noteManuelle: (id: string, note: number | null, motif: string) =>
     request<Candidature>(`/candidatures/${id}/note`, { method: 'PATCH', body: { note, motif } }),
-  joindrePiece: (id: string, typePiece: string, fichier: File) => {
+  /** Part humaine de la consistance : motivation et expression écrite. */
+  apprecier: (id: string, note: number | null, motif: string) =>
+    request<Candidature>(`/candidatures/${id}/appreciation`, {
+      method: 'PATCH',
+      body: { note, motif },
+    }),
+
+  /**
+   * Entretien : les 70 points attribués par le jury.
+   *
+   * Une fiche par juré. Le cabinet fait siéger un panel — sept personnes sur
+   * certains mandats — et retient la moyenne : enregistrer une fiche ne touche
+   * jamais à celles des autres.
+   */
+  entretien: (id: string) => request<Entretien>(`/candidatures/${id}/entretien`),
+  saisirEntretien: (
+    id: string,
+    payload: {
+      jure: string
+      lignes: Array<{ code: string; points: number | null; commentaire: string }>
+      date_entretien?: string | null
+      jury?: string
+      observations?: string
+    },
+  ) => request<Entretien>(`/candidatures/${id}/entretien`, { method: 'PUT', body: payload }),
+  /** Sans juré nommé, toutes les fiches du dossier sont effacées. */
+  effacerEntretien: (id: string, jure?: string) =>
+    request<Entretien>(
+      `/candidatures/${id}/entretien${jure ? `?jure=${encodeURIComponent(jure)}` : ''}`,
+      { method: 'DELETE' },
+    ),
+  /** La grille d'entretien, négociée avec le client poste par poste. */
+  grilleEntretien: (posteId: string) => request<GrilleEntretien>(`/postes/${posteId}/grille-entretien`),
+  definirGrilleEntretien: (posteId: string, criteres: LigneBaremeEntretien[] | null) =>
+    request<GrilleEntretien>(`/postes/${posteId}/grille-entretien`, {
+      method: 'PUT',
+      body: { criteres },
+    }),
+  /** Reclasser un dossier à la main exige un motif écrit. */
+  qualifier: (id: string, qualification: string | null, motif: string) =>
+    request<Candidature>(`/candidatures/${id}/qualification`, {
+      method: 'PATCH',
+      body: { qualification, motif },
+    }),
+  joindrePiece: (id: string, typePiece: string, fichier: File, intituleLibre?: string) => {
     const formData = new FormData()
     formData.append('type_piece', typePiece)
     formData.append('fichier', fichier)
+    if (intituleLibre) formData.append('intitule_libre', intituleLibre)
     return request<Candidature>(`/candidatures/${id}/pieces`, { method: 'POST', formData })
   },
   retirerPiece: (id: string, pieceId: string) =>
     request<Candidature>(`/candidatures/${id}/pieces/${pieceId}`, { method: 'DELETE' }),
+  /**
+   * Supprime un dossier entré par erreur.
+   *
+   * `confirmer` ne sert qu'au second appel : le premier revient en 409 si le
+   * dossier porte un entretien, un courriel parti ou une présélection, et le
+   * message dit lequel. L'interface le montre avant de redemander.
+   */
+  supprimerCandidature: (id: string, motif: string, confirmer = false) => {
+    const query = new URLSearchParams({ motif })
+    if (confirmer) query.set('confirmer', 'true')
+    return request<{
+      supprime: boolean
+      pieces_supprimees: number
+      profil_supprime: boolean
+      courriels_conserves: number
+    }>(`/candidatures/${id}?${query.toString()}`, { method: 'DELETE' })
+  },
   /** Même contrainte que les CV : le jeton ne passe pas dans une balise src. */
   pieceObjectUrl: async (id: string, pieceId: string): Promise<string> => {
     const response = await fetch(`${BASE}/candidatures/${id}/pieces/${pieceId}`, {
@@ -466,9 +710,25 @@ export const recrutementApi = {
     request<{
       crees: number
       ignores: number
+      /** Sans référence d'avis mais porteuses d'un CV : elles vont au vivier. */
+      spontanees: number
+      /** Réponses de promoteurs, versées au fil de leur mandat. */
+      echanges_client: number
       non_rattaches: string[]
       sans_piece: string[]
     }>('/courriel/relever', { method: 'POST' }),
+
+  /** Propose le texte d'un avis. N'écrit rien : c'est un brouillon à relire. */
+  redigerAvis: (
+    posteId: string,
+    payload: { avis_id?: string | null; modele_id?: string | null; avec_assistance?: boolean } = {},
+  ) =>
+    request<{ texte: string; propose: boolean; avertissement: string | null }>(
+      `/postes/${posteId}/avis/redaction`,
+      { method: 'POST', body: payload },
+    ),
+  modifierAvis: (id: string, payload: Record<string, unknown>) =>
+    request<Avis>(`/avis/${id}`, { method: 'PATCH', body: payload }),
 }
 
 // --- vivier -----------------------------------------------------------------
@@ -580,9 +840,9 @@ export const vivierApi = {
 export const settingsApi = {
   get: () => request<DeploymentSettings>('/settings'),
   modifier: (payload: {
-    seuil_preselection_defaut?: number
     redact_demographics?: boolean
     allow_self_registration?: boolean
+    candidatures_spontanees?: boolean
     courriel_actif?: boolean
     imap_host?: string
     imap_port?: number
@@ -590,7 +850,17 @@ export const settingsApi = {
     /** Omis ou vide = inchangé. Le serveur ne renvoie jamais le secret. */
     imap_password?: string
     imap_folder?: string
+    smtp_actif?: boolean
+    smtp_host?: string
+    smtp_port?: number
+    smtp_user?: string
+    smtp_password?: string
+    smtp_tls?: boolean
+    smtp_expediteur?: string
+    url_publique?: string
   }) => request<DeploymentSettings>('/settings', { method: 'PATCH', body: payload }),
+  /** Ouvre une session SMTP sans rien envoyer, pour valider la configuration. */
+  testerEnvoi: () => request<{ ok: boolean; expediteur: string }>('/messagerie/test', { method: 'POST' }),
 }
 
 export interface AvisPublicItem {
@@ -608,6 +878,14 @@ export interface AvisPublic extends AvisPublicItem {
   profil: string[]
   pieces_attendues: Array<{ code: string; libelle: string }>
   pieces_facultatives: Array<{ code: string; libelle: string }>
+  /** « La CNI ou le passeport » : un choix à présenter comme tel, pas deux cases. */
+  groupes_pieces: Array<{
+    mode: 'TOUTES' | 'AU_MOINS_UNE'
+    libelle: string
+    pieces: Array<{ code: string; libelle: string }>
+  }>
+  formats_pieces: Record<string, string[]>
+  pieces_libres_autorisees: boolean
   taille_max_mo: number
   formats_acceptes: string[]
   accepte_candidatures: boolean
@@ -624,7 +902,7 @@ export const avisPublicApi = {
       prenom: string
       email: string
       telephone?: string
-      pieces: Array<{ code: string; fichier: File }>
+      pieces: Array<{ code: string; fichier: File; intitule?: string }>
     },
   ) => {
     const formData = new FormData()
@@ -632,13 +910,48 @@ export const avisPublicApi = {
     formData.append('prenom', payload.prenom)
     formData.append('email', payload.email)
     if (payload.telephone) formData.append('telephone', payload.telephone)
-    // Les deux listes sont appariées par position côté serveur.
-    payload.pieces.forEach(({ code, fichier }) => {
+    // Les trois listes sont appariées par position côté serveur.
+    payload.pieces.forEach(({ code, fichier, intitule }) => {
       formData.append('types_pieces', code)
       formData.append('fichiers', fichier)
+      formData.append('intitules_pieces', intitule ?? '')
     })
     return request<{ ok: boolean; message: string; candidature_id: string }>(
       `/public/avis/${cle}/candidater`,
+      { method: 'POST', formData, auth: false },
+    )
+  },
+
+  /**
+   * Dépôt hors avis : « déposer votre CV ».
+   *
+   * Rattaché à aucun poste, donc jamais noté — il n'y a pas d'exigences à
+   * confronter. Le profil rejoint le vivier, où une recherche le retrouvera le
+   * jour où un mandat lui correspond.
+   */
+  candidatureSpontanee: (payload: {
+    nom: string
+    prenom: string
+    email: string
+    telephone?: string
+    domaine?: string
+    message?: string
+    pieces: Array<{ code: string; fichier: File; intitule?: string }>
+  }) => {
+    const formData = new FormData()
+    formData.append('nom', payload.nom)
+    formData.append('prenom', payload.prenom)
+    formData.append('email', payload.email)
+    if (payload.telephone) formData.append('telephone', payload.telephone)
+    if (payload.domaine) formData.append('domaine', payload.domaine)
+    if (payload.message) formData.append('message', payload.message)
+    payload.pieces.forEach(({ code, fichier, intitule }) => {
+      formData.append('types_pieces', code)
+      formData.append('fichiers', fichier)
+      formData.append('intitules_pieces', intitule ?? '')
+    })
+    return request<{ ok: boolean; message: string; candidature_id: string }>(
+      '/public/candidature-spontanee',
       { method: 'POST', formData, auth: false },
     )
   },
@@ -696,4 +1009,480 @@ export async function downloadExport(
   anchor.click()
   anchor.remove()
   URL.revokeObjectURL(url)
+}
+
+
+/**
+ * Récupère un fichier protégé par le jeton, puis le remet au navigateur.
+ *
+ * Ni `<a href>` ni `<iframe src>` ne portent d'en-tête d'autorisation : ils
+ * afficheraient le corps du 401. Renvoie les en-têtes de la réponse, dont
+ * certains portent un compte rendu que l'écran affiche sans rouvrir le fichier.
+ */
+async function telecharger(chemin: string, secours: string): Promise<Headers> {
+  const response = await fetch(`${BASE}${chemin}`, {
+    headers: { Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}` },
+  })
+  if (!response.ok) {
+    let payload: unknown = null
+    try {
+      payload = await response.json()
+    } catch {
+      /* corps non JSON : le statut suffit */
+    }
+    throw new ApiError(response.status, readDetail(payload, "Le téléchargement a échoué"))
+  }
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const nom = /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? secours
+  const url = URL.createObjectURL(await response.blob())
+  const lien = document.createElement('a')
+  lien.href = url
+  lien.download = nom
+  document.body.appendChild(lien)
+  lien.click()
+  lien.remove()
+  URL.revokeObjectURL(url)
+  return response.headers
+}
+
+// --- collaboration : courriels aux candidats, espace du promoteur -----------
+
+export interface ModeleCourriel {
+  code: string
+  libelle: string
+  description: string
+  sujet: string
+  corps: string
+  variables: string[]
+  /** À qui le modèle s'adresse : un candidat, ou le commanditaire. */
+  destinataire: 'CANDIDAT' | 'CLIENT'
+}
+
+export interface MessagePrepare {
+  candidature_id: string
+  destinataire: string
+  nom: string
+  sujet: string
+  corps: string
+  /** Variables du modèle restées sans valeur : à compléter avant d'envoyer. */
+  variables_manquantes: string[]
+}
+
+export interface MessageEnvoye {
+  id: string
+  destinataire: string
+  sujet: string
+  corps: string
+  modele: string | null
+  statut: 'ENVOYE' | 'ECHEC'
+  erreur: string | null
+  envoye_le: string
+}
+
+export interface AccesClient {
+  id: string
+  mandat_id: string
+  email: string
+  nom: string
+  fonction: string | null
+  active_le: string | null
+  dernier_acces_le: string | null
+  revoque_le: string | null
+  motif_revocation: string | null
+  /** Rendu une seule fois, à l'ouverture. Il n'est jamais relu ensuite. */
+  lien_activation?: string | null
+  courriel_envoye?: boolean | null
+  avertissement?: string | null
+}
+
+export interface EtapeMandat {
+  id?: string
+  ordre?: number
+  libelle: string
+  etat: 'A_VENIR' | 'EN_COURS' | 'TERMINEE'
+  date_prevue: string | null
+  date_reelle: string | null
+  visible_client: boolean
+}
+
+export interface EchangeClient {
+  id: string
+  mandat_id: string
+  poste_id: string | null
+  auteur: 'CABINET' | 'CLIENT'
+  auteur_nom: string
+  type_echange: 'MESSAGE' | 'DEMANDE_MODIFICATION' | 'VALIDATION'
+  objet: string | null
+  corps: string
+  envoye_le: string
+  lu_le: string | null
+  traite_le: string | null
+}
+
+/**
+ * Écrire aux candidats, et tenir l'espace du promoteur.
+ *
+ * `apercu` rend les messages rédigés sans rien envoyer ; `envoyer` expédie le
+ * texte qu'on lui donne. La séparation est délibérée : ce qui part est ce qui
+ * a été montré, et un courriel ne se rattrape pas.
+ */
+export const collaborationApi = {
+  modeles: (destinataire?: 'CANDIDAT' | 'CLIENT') =>
+    request<ModeleCourriel[]>(
+      `/messagerie/modeles${destinataire ? `?destinataire=${destinataire}` : ''}`,
+    ),
+  apercu: (modele: string, candidatureIds: string[], valeurs: Record<string, string> = {}) =>
+    request<MessagePrepare[]>('/messagerie/apercu', {
+      method: 'POST',
+      body: { modele, candidature_ids: candidatureIds, valeurs },
+    }),
+  envoyer: (
+    modele: string | null,
+    messages: Array<{ candidature_id: string; destinataire: string; sujet: string; corps: string }>,
+  ) =>
+    request<{
+      envoyes: number
+      echecs: number
+      details: Array<{ candidature_id: string; ok: boolean; erreur?: string }>
+    }>('/messagerie/envoyer', { method: 'POST', body: { modele, messages } }),
+  historique: (candidatureId: string) =>
+    request<MessageEnvoye[]>(`/candidatures/${candidatureId}/messages`),
+
+  acces: (mandatId: string) => request<AccesClient[]>(`/mandats/${mandatId}/acces`),
+  ouvrirAcces: (
+    mandatId: string,
+    payload: { email: string; nom: string; fonction?: string; envoyer_courriel: boolean },
+  ) => request<AccesClient>(`/mandats/${mandatId}/acces`, { method: 'POST', body: payload }),
+  revoquerAcces: (accesId: string, motif = '') =>
+    request<void>(`/acces-client/${accesId}?motif=${encodeURIComponent(motif)}`, {
+      method: 'DELETE',
+    }),
+
+  chronogramme: (mandatId: string) => request<EtapeMandat[]>(`/mandats/${mandatId}/chronogramme`),
+  ecrireChronogramme: (mandatId: string, etapes: EtapeMandat[]) =>
+    request<EtapeMandat[]>(`/mandats/${mandatId}/chronogramme`, { method: 'PUT', body: etapes }),
+
+  echanges: (mandatId: string) => request<EchangeClient[]>(`/mandats/${mandatId}/echanges`),
+  ecrireAuClient: (
+    mandatId: string,
+    payload: { corps: string; objet?: string; poste_id?: string; type_echange?: string },
+  ) => request<EchangeClient>(`/mandats/${mandatId}/echanges`, { method: 'POST', body: payload }),
+  marquerTraite: (echangeId: string) =>
+    request<EchangeClient>(`/echanges/${echangeId}/traiter`, { method: 'POST' }),
+}
+
+// --- rapports et gabarits imposés -------------------------------------------
+
+/** Le genre d'une ligne : ce qui la fait ressortir, ou la met en retrait. */
+export type GenreLigne = 'normal' | 'rubrique' | 'detail' | 'total'
+
+export interface TableauRapport {
+  titre: string
+  colonnes: Array<{ libelle: string; numerique: boolean }>
+  lignes: Array<{ cellules: string[]; genre: GenreLigne }>
+}
+
+export interface SectionRapport {
+  code: string
+  titre: string
+  contenu: string
+  /** PROPOSEE = pas encore relue. REDIGEE = écrite ou validée par un humain. */
+  origine: 'PROPOSEE' | 'REDIGEE' | 'CALCULEE'
+  /**
+   * Les tableaux d'une section calculée, en structure. Vide sur une section
+   * rédigée — et sur un rapport produit avant que la structure n'existe, qui
+   * garde son texte aligné dans `contenu`.
+   */
+  tableaux?: TableauRapport[]
+  /** 1 = section, 2 = sous-section. Le rapport remis est hiérarchisé. */
+  niveau?: number
+  /** Un titre sans texte à lui, qui porte des sous-sections. */
+  porteur?: boolean
+}
+
+/** Ce que le cabinet remet, et à quel moment de la mission. */
+export type TypeRapport = 'PRESELECTION' | 'ENTRETIENS' | 'FINAL'
+
+export const TYPES_RAPPORT: Array<{ cle: TypeRapport; libelle: string; quand: string }> = [
+  {
+    cle: 'PRESELECTION',
+    libelle: 'Rapport de présélection',
+    quand: "Après le dépouillement, avant les entretiens. S'arrête au classement des dossiers.",
+  },
+  {
+    cle: 'ENTRETIENS',
+    libelle: 'Rapport des entretiens',
+    quand: 'Après le passage devant le jury. Reprend le classement final.',
+  },
+  {
+    cle: 'FINAL',
+    libelle: 'Rapport final de recrutement',
+    quand: "Le document complet, de la publication de l'avis au classement final.",
+  },
+]
+
+export interface Rapport {
+  id: string
+  mandat_id: string
+  poste_id: string | null
+  modele_id: string | null
+  titre: string
+  type_rapport: TypeRapport
+  statut: 'BROUILLON' | 'EN_RELECTURE' | 'VALIDE'
+  sections: SectionRapport[]
+  donnees: Record<string, unknown>
+  valide_le: string | null
+  partage_le: string | null
+  created_at: string | null
+}
+
+export interface RapportItem {
+  id: string
+  titre: string
+  type_rapport: TypeRapport
+  statut: 'BROUILLON' | 'EN_RELECTURE' | 'VALIDE'
+  poste_id: string | null
+  valide_le: string | null
+  partage_le: string | null
+  created_at: string | null
+}
+
+export interface ModeleDocument {
+  id: string
+  client_id: string | null
+  mandat_id: string | null
+  libelle: string
+  usage: 'AVIS' | 'RAPPORT' | 'CV' | 'COURRIEL'
+  nom_fichier: string | null
+  actif: boolean
+  structure: {
+    sections?: Array<{
+      code: string
+      titre: string
+      consigne: string
+      calculee?: boolean
+      correspondance_proposee?: string | null
+    }>
+    titres_releves?: string[]
+  } | null
+  notes: string | null
+  created_at: string | null
+}
+
+export const rapportsApi = {
+  lister: (mandatId: string) => request<RapportItem[]>(`/mandats/${mandatId}/rapports`),
+  generer: (
+    mandatId: string,
+    payload: {
+      poste_id?: string | null
+      titre?: string | null
+      modele_id?: string | null
+      type_rapport?: TypeRapport
+      avec_assistance: boolean
+    },
+  ) => request<Rapport>(`/mandats/${mandatId}/rapports`, { method: 'POST', body: payload }),
+  lire: (id: string) => request<Rapport>(`/rapports/${id}`),
+  modifier: (
+    id: string,
+    payload: { titre?: string; sections?: Array<{ code: string; titre: string; contenu: string }> },
+  ) => request<Rapport>(`/rapports/${id}`, { method: 'PUT', body: payload }),
+  valider: (id: string) => request<Rapport>(`/rapports/${id}/valider`, { method: 'POST' }),
+  partager: (id: string, partager = true) =>
+    request<Rapport>(`/rapports/${id}/partager?partager=${partager}`, { method: 'POST' }),
+  /** Le fichier est protégé par le jeton : un lien direct renverrait un 401. */
+  exporter: async (id: string, format: 'docx' | 'pdf' | 'odt' | 'txt'): Promise<void> => {
+    const response = await fetch(`${BASE}/rapports/${id}/export?format=${format}`, {
+      headers: { Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}` },
+    })
+    if (!response.ok) throw new ApiError(response.status, "L'export a échoué")
+    const disposition = response.headers.get('content-disposition') ?? ''
+    const nom = /filename="?([^";]+)"?/.exec(disposition)?.[1] ?? `rapport.${format}`
+    const url = URL.createObjectURL(await response.blob())
+    const lien = document.createElement('a')
+    lien.href = url
+    lien.download = nom
+    document.body.appendChild(lien)
+    lien.click()
+    lien.remove()
+    URL.revokeObjectURL(url)
+  },
+
+  /**
+   * Le CV d'un candidat, remis en forme depuis les données du dossier.
+   *
+   * Refusé (409) tant que le parcours n'a pas été relu : un CV à en-tête du
+   * cabinet tiré d'une extraction non confirmée donnerait à une supposition
+   * l'autorité d'une pièce. `accepterNonVerifie` lève le refus, et la mention
+   * apparaît alors sur le document.
+   */
+  cvMaison: async (
+    candidatureId: string,
+    options: {
+      format?: 'docx' | 'pdf' | 'txt'
+      modeleId?: string | null
+      avecCoordonnees?: boolean
+      accepterNonVerifie?: boolean
+    } = {},
+  ): Promise<void> => {
+    const params = new URLSearchParams({ format: options.format ?? 'docx' })
+    if (options.modeleId) params.set('modele_id', options.modeleId)
+    if (options.avecCoordonnees === false) params.set('avec_coordonnees', 'false')
+    if (options.accepterNonVerifie) params.set('accepter_non_verifie', 'true')
+    await telecharger(`/candidatures/${candidatureId}/cv-maison?${params}`, 'cv.docx')
+  },
+
+  /** Les CV d'un poste sous une présentation unique, en une archive. */
+  cvsMaison: async (
+    posteId: string,
+    options: {
+      format?: 'docx' | 'pdf' | 'txt'
+      modeleId?: string | null
+      avecCoordonnees?: boolean
+      accepterNonVerifie?: boolean
+      portee?: 'proposes' | 'tous'
+    } = {},
+  ): Promise<{ inclus: number; ecartes: number }> => {
+    const params = new URLSearchParams({
+      format: options.format ?? 'docx',
+      portee: options.portee ?? 'proposes',
+    })
+    if (options.modeleId) params.set('modele_id', options.modeleId)
+    if (options.avecCoordonnees === false) params.set('avec_coordonnees', 'false')
+    if (options.accepterNonVerifie) params.set('accepter_non_verifie', 'true')
+    const entetes = await telecharger(`/postes/${posteId}/cvs-maison.zip?${params}`, 'cv.zip')
+    return {
+      inclus: Number(entetes.get('X-TriCV-Inclus') ?? 0),
+      ecartes: Number(entetes.get('X-TriCV-Ecartes') ?? 0),
+    }
+  },
+
+  modeles: (params: { client_id?: string; mandat_id?: string; usage?: string } = {}) => {
+    const query = new URLSearchParams()
+    Object.entries(params).forEach(([cle, valeur]) => {
+      if (valeur) query.set(cle, valeur)
+    })
+    const suffix = query.toString()
+    return request<ModeleDocument[]>(`/modeles-documents${suffix ? `?${suffix}` : ''}`)
+  },
+  deposerModele: (payload: {
+    libelle: string
+    usage: string
+    client_id?: string
+    mandat_id?: string
+    notes?: string
+    fichier: File
+  }) => {
+    const formData = new FormData()
+    formData.append('libelle', payload.libelle)
+    formData.append('usage', payload.usage)
+    if (payload.client_id) formData.append('client_id', payload.client_id)
+    if (payload.mandat_id) formData.append('mandat_id', payload.mandat_id)
+    if (payload.notes) formData.append('notes', payload.notes)
+    formData.append('fichier', payload.fichier)
+    return request<ModeleDocument>('/modeles-documents', { method: 'POST', formData })
+  },
+  corrigerModele: (
+    id: string,
+    payload: { structure: Record<string, unknown>; libelle?: string; notes?: string; actif?: boolean },
+  ) => request<ModeleDocument>(`/modeles-documents/${id}`, { method: 'PUT', body: payload }),
+  supprimerModele: (id: string) =>
+    request<void>(`/modeles-documents/${id}`, { method: 'DELETE' }),
+}
+
+// --- espace du promoteur (côté client) --------------------------------------
+
+export interface SuiviClient {
+  mandat: string
+  reference: string | null
+  client: string
+  etapes: Array<{ libelle: string; etat: string; date_prevue: string | null }>
+  postes: Array<{
+    intitule: string
+    nombre_a_pourvoir: number
+    avancement: string
+    avis_publie_le: string | null
+    date_cloture: string | null
+  }>
+  messages_non_lus: number
+  rapports_disponibles: number
+}
+
+/**
+ * L'espace du promoteur. Porte séparée de celle du cabinet, jusque dans le
+ * jeton : celui-ci est de type « client » et n'ouvre aucune route interne.
+ * Il est conservé hors du store d'authentification du personnel, pour la même
+ * raison.
+ */
+export const espaceClientApi = {
+  verifierLien: (jeton: string) =>
+    request<{ nom: string; email: string; mandat: string; client: string }>(
+      `/espace-client/activation/${jeton}`,
+      { auth: false },
+    ),
+  activer: (jeton: string, motDePasse: string) =>
+    request<{ token: string; nom: string; email: string; mandat: string; client: string }>(
+      '/espace-client/activation',
+      { method: 'POST', body: { jeton, mot_de_passe: motDePasse }, auth: false },
+    ),
+  connexion: (email: string, motDePasse: string) =>
+    request<{ token: string; nom: string; email: string; mandat: string; client: string }>(
+      '/espace-client/connexion',
+      { method: 'POST', body: { email, mot_de_passe: motDePasse }, auth: false },
+    ),
+  suivi: (token: string) => requestAvecJeton<SuiviClient>('/espace-client/suivi', token),
+  messages: (token: string) =>
+    requestAvecJeton<
+      Array<{
+        id: string
+        auteur: 'CABINET' | 'CLIENT'
+        auteur_nom: string
+        type_echange: string
+        objet: string | null
+        corps: string
+        envoye_le: string
+        traite_le: string | null
+      }>
+    >('/espace-client/messages', token),
+  ecrire: (
+    token: string,
+    payload: { corps: string; objet?: string; demande_modification?: boolean },
+  ) =>
+    requestAvecJeton('/espace-client/messages', token, { method: 'POST', body: payload }),
+  rapports: (token: string) =>
+    requestAvecJeton<Array<{ id: string; titre: string; partage_le: string | null }>>(
+      '/espace-client/rapports',
+      token,
+    ),
+}
+
+/**
+ * Appel porteur d'un jeton client explicite.
+ *
+ * Le client n'utilise pas le store d'authentification du personnel : mêler les
+ * deux ferait qu'une session cabinet ouverte dans le même navigateur
+ * détournerait les requêtes de l'espace client, et réciproquement.
+ */
+async function requestAvecJeton<T>(
+  path: string,
+  token: string,
+  options: { method?: string; body?: unknown } = {},
+): Promise<T> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+  const response = await fetch(`${BASE}${path}`, {
+    method: options.method ?? 'GET',
+    headers,
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+  })
+  if (!response.ok) {
+    let payload: unknown = null
+    try {
+      payload = await response.json()
+    } catch {
+      /* corps non JSON : le statut suffit */
+    }
+    throw new ApiError(response.status, readDetail(payload, response.statusText))
+  }
+  if (response.status === 204) return undefined as T
+  return (await response.json()) as T
 }

@@ -37,8 +37,13 @@ class NiveauDiplome(IntEnum):
 
         Renvoie None plutôt que de deviner : un niveau non reconnu doit
         remonter à un humain, pas être arrondi au plus proche.
+
+        Les accents sont retirés avant comparaison : « Ingénieur » et
+        « Maîtrise » s'écrivent toujours ainsi dans les CV, et la table
+        d'alias, elle, est sans accents. Sans cette réduction, les deux
+        diplômes les plus courants du pays n'étaient pas reconnus.
         """
-        normalise = "".join(texte.lower().split())
+        normalise = "".join(normaliser_domaine(texte).split())
         for cle, niveau in _ALIAS_NIVEAU.items():
             if cle in normalise:
                 return niveau
@@ -171,10 +176,14 @@ class PieceDossier(StrEnum):
     COPIE_DIPLOMES = "COPIE_DIPLOMES"
     ATTESTATIONS_TRAVAIL = "ATTESTATIONS_TRAVAIL"
     PIECE_IDENTITE = "PIECE_IDENTITE"
+    PASSEPORT = "PASSEPORT"
     CERTIFICAT_NATIONALITE = "CERTIFICAT_NATIONALITE"
     CASIER_JUDICIAIRE = "CASIER_JUDICIAIRE"
     CERTIFICAT_MEDICAL = "CERTIFICAT_MEDICAL"
     PHOTO = "PHOTO"
+    LETTRE_RECOMMANDATION = "LETTRE_RECOMMANDATION"
+    # Fourre-tout assumé : le candidat nomme lui-même ce qu'il ajoute.
+    AUTRE = "AUTRE"
 
     @property
     def libelle(self) -> str:
@@ -186,11 +195,14 @@ _LIBELLES_PIECE: dict[PieceDossier, str] = {
     PieceDossier.CV: "CV détaillé",
     PieceDossier.COPIE_DIPLOMES: "Copie des diplômes",
     PieceDossier.ATTESTATIONS_TRAVAIL: "Copie des attestations de travail",
-    PieceDossier.PIECE_IDENTITE: "Pièce d'identité",
+    PieceDossier.PIECE_IDENTITE: "Carte nationale d'identité",
+    PieceDossier.PASSEPORT: "Passeport",
     PieceDossier.CERTIFICAT_NATIONALITE: "Certificat de nationalité",
     PieceDossier.CASIER_JUDICIAIRE: "Extrait de casier judiciaire",
     PieceDossier.CERTIFICAT_MEDICAL: "Certificat médical",
     PieceDossier.PHOTO: "Photo d'identité",
+    PieceDossier.LETTRE_RECOMMANDATION: "Lettre de recommandation",
+    PieceDossier.AUTRE: "Autre document",
 }
 
 # Le dossier le plus fréquemment demandé dans les avis publiés.
@@ -235,4 +247,69 @@ def normaliser_domaine(texte: str) -> str:
         for c in unicodedata.normalize("NFD", texte.strip().lower())
         if unicodedata.category(c) != "Mn"
     )
-    return " ".join(sans_accents.replace("-", " ").replace("'", " ").split())
+    return " ".join(
+        sans_accents.replace("-", " ").replace("'", " ").replace(",", " ").split()
+    )
+
+
+# Mots de liaison : présents ou absents, ils ne changent pas le domaine désigné.
+_LIAISONS = frozenset(
+    "de du des la le les et en aux au a l d en sur pour dans par avec".split()
+)
+
+
+def _mots_signifiants(domaine: str) -> frozenset[str]:
+    return frozenset(m for m in normaliser_domaine(domaine).split() if m not in _LIAISONS)
+
+
+# Longueur de racine commune à partir de laquelle deux mots désignent la même
+# chose. « comptabilite » et « comptables » partagent « comptab » : sept
+# lettres, et c'est bien le même métier. « gestion » et « gestation » n'en
+# partagent que quatre. Six est le seuil qui sépare les deux, et il vaut mieux
+# se tromper de ce côté-ci : un rapprochement de trop se relit — tout ce qui
+# vient de l'extraction passe de toute façon devant un humain — alors qu'une
+# élimination pour non-conformité, elle, écarte le dossier.
+_RACINE_MINIMALE = 6
+
+
+def _meme_mot(un: str, autre: str) -> bool:
+    if un == autre:
+        return True
+    commun = 0
+    for a, b in zip(un, autre):
+        if a != b:
+            break
+        commun += 1
+    return commun >= _RACINE_MINIMALE
+
+
+def domaine_correspond(declare: str, attendu: str) -> bool:
+    """Le domaine déclaré relève-t-il du domaine attendu ?
+
+    La comparaison était l'égalité de deux chaînes, et c'était le défaut le
+    plus coûteux de la présélection : « comptabilité et finance » ne valait pas
+    « comptabilité, finance », « finance d'entreprise » ne valait pas
+    « finance », et le dossier repartait avec un motif de non-conformité qu'un
+    lecteur humain aurait refusé. Un avis n'a pas d'orthographe stable, et le
+    parcours d'un candidat encore moins.
+
+    La règle retenue : **le domaine attendu doit se retrouver en entier dans
+    celui qui est déclaré**, mots de liaison exclus. « finance » se retrouve
+    dans « finance d'entreprise », donc un diplôme de finance d'entreprise
+    relève de la finance. L'inverse n'est pas vrai — un avis qui exige
+    « finance d'entreprise » n'est pas satisfait par « finance » tout court,
+    qui n'en dit pas assez.
+
+    Elle reste donc **directionnelle et stricte sur le fond** : « droit » ne
+    rencontre pas « comptabilité », et « droit social » ne rencontre pas
+    « droit des affaires ». Ce qu'elle absorbe, ce sont les variations
+    d'écriture, pas les différences de métier.
+    """
+    mots_attendus = _mots_signifiants(attendu)
+    if not mots_attendus:
+        return True
+    mots_declares = _mots_signifiants(declare)
+    return all(
+        any(_meme_mot(attendu_mot, declare_mot) for declare_mot in mots_declares)
+        for attendu_mot in mots_attendus
+    )

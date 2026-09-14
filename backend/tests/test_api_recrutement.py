@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
+
+from app.db import SessionLocal
+from app.models import AuditLog
 
 pytestmark = pytest.mark.anyio
 
@@ -50,6 +54,10 @@ def dossier(**overrides) -> dict:
     candidat = {
         "nom": "Kodjo",
         "prenom": "Amina",
+        # Exigée à la saisie : c'est par là qu'on accuse réception, qu'on
+        # réclame une pièce et qu'on convoque, et elle figure en colonne dans
+        # le tableau des préqualifiés remis au client.
+        "email": "amina.kodjo@example.tg",
         "date_naissance": "1985-03-01",
         "sexe": "F",
         "nationalites": ["Togolaise"],
@@ -187,7 +195,14 @@ async def test_une_condition_restrictive_justifiee_est_journalisee(client, auth)
 
 
 async def test_abaisser_le_seuil_exige_une_justification(client, auth):
+    # Le plancher vaut zéro par défaut — le classement sélectionne. Il faut
+    # donc qu'un plancher existe pour qu'on puisse l'abaisser : on le pose sur
+    # le poste, ce qui est désormais le seul endroit où il se règle.
     poste_id = await monter_poste(client, auth)
+    pose = await client.post(
+        f"{API}/postes/{poste_id}/seuil", json={"seuil": 20}, headers=auth
+    )
+    assert pose.status_code == 200, pose.text
 
     refus = await client.post(
         f"{API}/postes/{poste_id}/seuil", json={"seuil": 15, "justification": ""}, headers=auth
@@ -415,6 +430,107 @@ async def test_telecharger_puis_retirer_une_piece(client, auth):
     assert all(p["id"] != piece_id for p in retrait.json()["pieces"])
 
 
+async def test_supprimer_un_dossier_entre_par_erreur(client, auth):
+    """Le cas courant : un dossier saisi en double, qui fausse les comptes."""
+    poste_id = await monter_poste(client, auth)
+    # Incomplet, donc éliminé : rien ne retient sa suppression.
+    candidature_id = (
+        await client.post(
+            f"{API}/postes/{poste_id}/candidatures",
+            json=dossier(pieces_fournies=["CV"]),
+            headers=auth,
+        )
+    ).json()["id"]
+    await client.post(
+        f"{API}/candidatures/{candidature_id}/pieces",
+        data={"type_piece": "CV"},
+        files={"fichier": ("cv.pdf", PDF, "application/pdf")},
+        headers=auth,
+    )
+
+    reponse = await client.request(
+        "DELETE",
+        f"{API}/candidatures/{candidature_id}",
+        params={"motif": "saisi deux fois, celui-ci est le doublon"},
+        headers=auth,
+    )
+    assert reponse.status_code == 200, reponse.text
+    corps = reponse.json()
+    assert corps["pieces_supprimees"] == 1
+    # Le profil n'existait que pour ce dossier : il part avec lui, plutôt que
+    # de rester dans le vivier sans pièce ni candidature.
+    assert corps["profil_supprime"] is True
+
+    assert (
+        await client.get(f"{API}/candidatures/{candidature_id}", headers=auth)
+    ).status_code == 404
+    grille = (await client.get(f"{API}/postes/{poste_id}/grille", headers=auth)).json()
+    assert grille["nombre_candidatures"] == 0
+
+    # Le dossier a disparu, pas la trace de sa disparition.
+    async with SessionLocal() as db:
+        entree = (
+            await db.execute(
+                select(AuditLog).where(AuditLog.action == "candidature.supprimer")
+            )
+        ).scalar_one()
+        assert entree.entity_id == candidature_id
+        assert entree.details["motif"] == "saisi deux fois, celui-ci est le doublon"
+        assert entree.details["candidat"] == "Kodjo Amina"
+        assert entree.details["pieces"] == ["cv.pdf"]
+
+
+async def test_supprimer_un_dossier_sans_motif_est_refuse(client, auth):
+    poste_id = await monter_poste(client, auth)
+    candidature_id = (
+        await client.post(f"{API}/postes/{poste_id}/candidatures", json=dossier(), headers=auth)
+    ).json()["id"]
+
+    reponse = await client.request(
+        "DELETE", f"{API}/candidatures/{candidature_id}", headers=auth
+    )
+    assert reponse.status_code == 422
+
+
+async def test_un_dossier_preselectionne_resiste_puis_cede(client, auth):
+    """Ce qui a déjà servi ne s'efface pas d'un clic, mais reste effaçable.
+
+    Le refus n'est pas un verrou : il oblige à voir ce que le dossier porte
+    avant de le confirmer.
+    """
+    poste_id = await monter_poste(client, auth)
+    depot = (
+        await client.post(f"{API}/postes/{poste_id}/candidatures", json=dossier(), headers=auth)
+    ).json()
+    assert depot["statut"] == "PRESELECTIONNEE"
+
+    refus = await client.request(
+        "DELETE",
+        f"{API}/candidatures/{depot['id']}",
+        params={"motif": "erreur de poste"},
+        headers=auth,
+    )
+    assert refus.status_code == 409
+    assert "présélection" in refus.json()["detail"]
+
+    accepte = await client.request(
+        "DELETE",
+        f"{API}/candidatures/{depot['id']}",
+        params={"motif": "erreur de poste", "confirmer": "true"},
+        headers=auth,
+    )
+    assert accepte.status_code == 200, accepte.text
+
+    async with SessionLocal() as db:
+        entree = (
+            await db.execute(
+                select(AuditLog).where(AuditLog.action == "candidature.supprimer")
+            )
+        ).scalar_one()
+        # Le journal dit ce sur quoi on est passé outre.
+        assert entree.details["passe_outre"] == ["il figure dans la présélection"]
+
+
 async def test_un_fichier_non_pdf_est_refuse(client, auth):
     poste_id = await monter_poste(client, auth)
     candidature_id = (
@@ -455,7 +571,10 @@ async def test_export_excel_de_la_grille(client, auth):
     reponse = await client.get(f"{API}/postes/{poste_id}/grille.xlsx", headers=auth)
     assert reponse.status_code == 200, reponse.text
     assert "spreadsheetml" in reponse.headers["content-type"]
-    assert "grille-preselection-" in reponse.headers["content-disposition"]
+    # « dossier-complet » et non « grille-preselection » : depuis que la grille
+    # de présélection s'exporte seule, deux fichiers différents porteraient
+    # sinon le même nom dans le dossier de téléchargement.
+    assert "dossier-complet-" in reponse.headers["content-disposition"]
 
     classeur = load_workbook(io.BytesIO(reponse.content))
     assert classeur.sheetnames == [
@@ -468,9 +587,11 @@ async def test_export_excel_de_la_grille(client, auth):
     entete = {row[0] for row in grille.iter_rows(min_col=1, max_col=1, values_only=True)}
     # L'en-tête doit permettre de relire la grille des mois plus tard.
     assert "Client" in entete
-    assert "Seuil de présélection" in entete
     assert "Date de clôture" in entete
-    assert any(cell and "Présélectionnés" in str(cell) for cell in entete)
+    # Le barème rappelle que la présélection ne pèse que 30 % de la note
+    # finale : une note sur 30 lue seule se prendrait pour un résultat.
+    assert "Barème de présélection" in entete
+    assert any(cell and "Classement des dossiers" in str(cell) for cell in entete)
 
     contenu = [
         c
@@ -494,7 +615,9 @@ async def test_export_excel_de_la_grille(client, auth):
         row[0]: row[1] for row in synthese.iter_rows(min_col=1, max_col=2, values_only=True)
     }
     assert valeurs["Candidatures reçues"] == 2
-    assert valeurs["Présélectionnés"] == 1
+    # Le vocabulaire du processus : préqualifiés d'abord, proposés ensuite.
+    assert valeurs["Préqualifiés"] == 1
+    assert "Proposés au client" in valeurs
 
 
 async def test_l_export_porte_la_justification_du_seuil_abaisse(client, auth):
@@ -683,3 +806,149 @@ async def test_un_avis_cloture_refuse_les_depots(client, auth):
 async def test_authentification_requise(client):
     reponse = await client.get(f"{API}/clients")
     assert reponse.status_code == 401
+
+
+# --- la fiche de poste se modifie après coup ---------------------------------
+
+
+async def test_modifier_une_exigence_reevalue_le_poste(client, auth):
+    """La grille est ce que le client relit : elle ne peut pas rester en arrière.
+
+    Sans cette réévaluation, changer le niveau exigé laissait les motifs
+    d'élimination d'avant la modification, et il fallait penser à cliquer
+    « Recalculer » pour que la grille corresponde à la fiche.
+    """
+    poste_id = await monter_poste(client, auth)
+
+    reponse = await client.patch(
+        f"{API}/postes/{poste_id}", json={"niveau_min": 5}, headers=auth
+    )
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["niveau_min"] == 5
+
+    async with SessionLocal() as db:
+        journal = (
+            await db.execute(select(AuditLog).where(AuditLog.action == "poste.update"))
+        ).scalars().all()
+    assert journal, "une modification de fiche se journalise"
+    assert "candidatures_reevaluees" in journal[-1].details
+
+
+async def test_plusieurs_experiences_specifiques_se_declarent(client, auth):
+    poste_id = await monter_poste(client, auth)
+    reponse = await client.patch(
+        f"{API}/postes/{poste_id}",
+        json={
+            "annees_experience_specifique_min": 0,
+            "domaines_experience": [],
+            "experiences_specifiques": [
+                {"libelle": "passation des marchés", "domaines": ["marches"], "annees_min": 5},
+                {"libelle": "gestion de projet", "domaines": ["projet"], "annees_min": 3,
+                 "poids": 2},
+            ],
+        },
+        headers=auth,
+    )
+    assert reponse.status_code == 200, reponse.text
+    exigences = reponse.json()["experiences_specifiques"]
+    assert [e["libelle"] for e in exigences] == ["passation des marchés", "gestion de projet"]
+    assert exigences[1]["poids"] == 2
+
+
+async def test_une_exigence_specifique_ne_depasse_pas_l_experience_generale(client, auth):
+    poste_id = await monter_poste(client, auth)
+    reponse = await client.patch(
+        f"{API}/postes/{poste_id}",
+        json={
+            "annees_experience_min": 5,
+            "experiences_specifiques": [
+                {"libelle": "trop long", "domaines": ["x"], "annees_min": 12}
+            ],
+        },
+        headers=auth,
+    )
+    assert reponse.status_code == 422
+
+
+async def test_une_exigence_doit_pouvoir_se_nommer(client, auth):
+    """Sans libellé ni domaine, ni la grille ni le candidat ne savent de quoi
+    il s'agit."""
+    poste_id = await monter_poste(client, auth)
+    reponse = await client.patch(
+        f"{API}/postes/{poste_id}",
+        json={"experiences_specifiques": [{"annees_min": 3}]},
+        headers=auth,
+    )
+    assert reponse.status_code == 422
+
+
+async def test_les_extras_de_formation_restent_dans_les_sept_points(client, auth):
+    poste_id = await monter_poste(client, auth)
+    reponse = await client.put(
+        f"{API}/postes/{poste_id}/bareme/formation",
+        json={
+            "points_par_certification": 0.5,
+            "certifications_max": 3,
+            "points_formation_complementaire": 1.0,
+        },
+        headers=auth,
+    )
+    assert reponse.status_code == 200, reponse.text
+    formation = reponse.json()["bareme"]["formation"]
+    assert formation["points_par_certification"] == 0.5
+    assert formation["points_formation_complementaire"] == 1.0
+    # Le maximum de la ligne n'a pas bougé : le barème vaut toujours 30.
+    assert formation["points_max"] == 7.0
+    assert reponse.json()["bareme"]["total_max"] == 30.0
+
+
+async def test_les_destinataires_se_listent_par_portee(client, auth):
+    poste_id = await monter_poste(client, auth)
+    reponse = await client.get(f"{API}/postes/{poste_id}/destinataires", headers=auth)
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["portee"] == "tous"
+    assert reponse.json()["candidature_ids"] == []
+
+    refus = await client.get(
+        f"{API}/postes/{poste_id}/destinataires?portee=inconnue", headers=auth
+    )
+    assert refus.status_code == 422
+
+
+async def test_deplacer_le_seuil_reevalue_la_preselection(client, auth):
+    """C'est le seul objet de ce geste.
+
+    L'écran montre la distribution des notes pour aider à placer la barre ;
+    la barre bougeait, et la liste des préqualifiés restait celle de l'ancienne
+    jusqu'à ce que quelqu'un pense à cliquer « Recalculer ».
+    """
+    poste_id = await monter_poste(client, auth)
+
+    reponse = await client.post(
+        f"{API}/postes/{poste_id}/seuil",
+        json={"seuil": 12, "justification": "Barre posée au vu des notes reçues."},
+        headers=auth,
+    )
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["seuil_preselection"] == 12
+
+    async with SessionLocal() as db:
+        journal = (
+            await db.execute(select(AuditLog).where(AuditLog.action == "poste.seuil"))
+        ).scalars().all()
+    assert journal, "un déplacement de barre se journalise"
+    assert "candidatures_reevaluees" in journal[-1].details
+
+
+async def test_abaisser_le_seuil_sans_justification_est_refuse(client, auth):
+    """Abaisser la barre change qui est écarté : cela ne peut pas être implicite."""
+    poste_id = await monter_poste(client, auth)
+    await client.post(
+        f"{API}/postes/{poste_id}/seuil",
+        json={"seuil": 20, "justification": "Première barre, posée sur la distribution."},
+        headers=auth,
+    )
+    refus = await client.post(
+        f"{API}/postes/{poste_id}/seuil", json={"seuil": 10, "justification": ""}, headers=auth
+    )
+    assert refus.status_code == 422

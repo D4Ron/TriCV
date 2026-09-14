@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SCORE_BG, SCORE_TEXT, formatScore, scoreTone } from '@/lib/format'
 
@@ -19,7 +19,13 @@ export function Spinner({ className = 'h-4 w-4' }: { className?: string }) {
 export function PageLoader() {
   const { t } = useTranslation()
   return (
-    <div className="flex items-center justify-center gap-3 py-24 text-ink-500">
+    // Apparition retardée : une requête qui répond en 80 ms ne doit pas faire
+    // clignoter un indicateur de chargement. En dessous du délai, l'écran
+    // reste simplement vide, ce qui se remarque moins qu'un aller-retour.
+    <div
+      className="flex animate-fade-in items-center justify-center gap-3 py-24 text-ink-500"
+      style={{ animationDelay: '200ms' }}
+    >
       <Spinner className="h-5 w-5" />
       <span className="text-sm">{t('app.loading')}</span>
     </div>
@@ -30,7 +36,7 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   const { t } = useTranslation()
   const message = error instanceof Error ? error.message : t('app.error')
   return (
-    <div className="card p-8 text-center">
+    <div className="card animate-rise p-8 text-center">
       <p className="text-sm font-medium text-ink-900">{t('app.error')}</p>
       <p className="mt-1 text-sm text-ink-500">{message}</p>
       {onRetry && (
@@ -54,13 +60,25 @@ export function EmptyState({
   icon?: ReactNode
 }) {
   return (
-    <div className="card flex flex-col items-center px-8 py-14 text-center">
+    <div className="card flex animate-rise flex-col items-center px-8 py-14 text-center">
       {icon && <div className="mb-4 text-ink-300">{icon}</div>}
       <p className="text-sm font-medium text-ink-900">{title}</p>
       {hint && <p className="mt-1 max-w-sm text-sm text-ink-500">{hint}</p>}
       {action && <div className="mt-5">{action}</div>}
     </div>
   )
+}
+
+/**
+ * Décalage d'apparition d'un élément de liste.
+ *
+ * Plafonné volontairement : sur cinquante lignes, un escalier complet
+ * transforme l'affichage en attente. Les premiers éléments s'échelonnent, les
+ * suivants arrivent ensemble — ce que l'oeil lit de toute façon comme une
+ * seule apparition.
+ */
+export function delaiListe(index: number, pas = 24, plafond = 8) {
+  return { '--delai': `${Math.min(index, plafond) * pas}ms` } as CSSProperties
 }
 
 export function Badge({
@@ -102,7 +120,7 @@ export function ScoreBar({
       {showBar && (
         <span className="h-1.5 w-16 overflow-hidden rounded-full bg-ink-100" aria-hidden="true">
           <span
-            className={`block h-full rounded-full ${SCORE_BG[tone]}`}
+            className={`block h-full rounded-full transition-[width] duration-500 ease-out-soft ${SCORE_BG[tone]}`}
             style={{ width: `${Math.max(0, Math.min(100, score ?? 0))}%` }}
           />
         </span>
@@ -188,13 +206,15 @@ export function Modal({
   if (!open) return null
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4"
+      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-ink-900/40 p-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
     >
+      {/* Le fond se voile, le panneau monte : l'oeil sait d'où vient la
+          fenêtre et où revenir en la fermant. */}
       <div
-        className="w-full max-w-lg rounded-xl bg-white shadow-xl"
+        className="w-full max-w-lg animate-scale-in rounded-xl bg-white shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-ink-200 px-5 py-4">
@@ -244,7 +264,9 @@ export function Callout({
     success: 'border-emerald-200 bg-emerald-50 text-emerald-900',
   }
   return (
-    <div className={`rounded-lg border px-4 py-3 text-sm ${tones[tone]}`}>
+    // Un encadré apparaît souvent en réponse à une action — un refus, une
+    // confirmation. L'apparition le rattache au geste qui l'a provoqué.
+    <div className={`animate-rise rounded-lg border px-4 py-3 text-sm ${tones[tone]}`}>
       {title && <p className="font-semibold">{title}</p>}
       <div className={title ? 'mt-1' : ''}>{children}</div>
     </div>

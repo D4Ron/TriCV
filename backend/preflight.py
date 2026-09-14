@@ -154,14 +154,31 @@ def controler_modele(rapport: Rapport) -> None:
         "gemini": settings.gemini_api_key,
         "anthropic": settings.anthropic_api_key,
         "ollama": "local",
+        "openai": settings.llm_api_key,
     }
     cle = cles.get(settings.llm_provider, "")
-    if not cle:
+    if not cle and settings.llm_fallback.strip():
+        # Un secours est déclaré : la chaîne, contrôlée juste après, dira ce
+        # qui tourne vraiment. Annoncer ici « aucun modèle » serait faux.
+        rapport.ajouter(
+            A_VOIR,
+            f"Le fournisseur principal ({settings.llm_provider}) attend sa clé.",
+            "Il est écarté tant qu'elle manque ; le secours prend le relais.\n"
+            "Poser la clé suffit à le promouvoir, sans rien changer d'autre.",
+        )
+    elif not cle:
         rapport.ajouter(
             A_VOIR,
             f"Aucune clé pour {settings.llm_provider}.",
             "La présélection déterministe (barème, éligibilité, grille) fonctionne sans\n"
             "modèle. Seule l'aide à l'extraction des CV en a besoin.",
+        )
+    elif settings.llm_provider == "openai" and not settings.llm_base_url:
+        rapport.ajouter(
+            A_VOIR,
+            "LLM_PROVIDER=openai sans LLM_BASE_URL.",
+            "Ce fournisseur désigne une adresse, pas une marque : Groq, Mistral,\n"
+            "OpenRouter, un vLLM local. Voir .env.example.",
         )
     elif settings.llm_provider == "gemini" and cle:
         rapport.ajouter(
@@ -170,8 +187,70 @@ def controler_modele(rapport: Rapport) -> None:
             "L'offre gratuite de Google autorise l'entraînement sur ce qui est envoyé.\n"
             "Pour de vrais CV : clé payante, ou LLM_PROVIDER=ollama (rien ne sort).",
         )
+    elif settings.llm_provider == "openai" and "mistral.ai" in settings.llm_base_url:
+        # La même réserve que pour Gemini, avec une différence qui compte : chez
+        # Mistral l'entraînement sur l'offre gratuite se refuse d'une case à
+        # décocher, sans changer d'offre ni de carte.
+        rapport.ajouter(
+            A_VOIR,
+            "Fournisseur Mistral : vérifier le refus d'entraînement.",
+            "L'offre gratuite (Experiment) autorise par défaut l'entraînement sur\n"
+            "ce qui est envoyé. Le refus se pose dans la console Mistral,\n"
+            "Admin > Privacy. Sans ce geste, de vrais parcours y passent.",
+        )
+        if settings.llm_max_concurrency > 1:
+            rapport.ajouter(
+                A_VOIR,
+                f"LLM_MAX_CONCURRENCY={settings.llm_max_concurrency} sur une offre à 1 requête/s.",
+                "L'offre gratuite de Mistral plafonne à une requête par seconde.\n"
+                "Au-delà de 1, les appels partent en rafale, se font refuser, et\n"
+                "attendent la reprise. LLM_MAX_CONCURRENCY=1 va plus vite.",
+            )
     else:
         rapport.ajouter(OK, f"Fournisseur {settings.llm_provider} configuré.")
+
+    _controler_chaine(rapport)
+
+
+def _controler_chaine(rapport: Rapport) -> None:
+    """La chaîne de secours : ce qu'elle est, et ce qu'une bascule changerait."""
+    if not settings.llm_fallback.strip():
+        return
+
+    from app.llm.factory import build_chain
+
+    try:
+        chaine = build_chain()
+    except Exception as exc:  # LLMConfigError, et tout ce qui empêche de bâtir
+        rapport.ajouter(A_VOIR, f"Chaîne de secours inutilisable : {exc}")
+        return
+
+    noms = [f.name for f in getattr(chaine, "fournisseurs", [chaine])]
+    if len(noms) == 1:
+        rapport.ajouter(
+            A_VOIR,
+            f"Secours déclaré, mais un seul fournisseur utilisable ({noms[0]}).",
+            "Les autres manquent de clé et sont écartés. L'application marche,\n"
+            "sans filet : un quota épuisé arrêtera le dépouillement.",
+        )
+        return
+
+    rapport.ajouter(OK, "Chaîne de secours : " + " puis ".join(noms) + ".")
+
+    # La réserve qui compte. Les offres gratuites n'ont pas la même politique :
+    # celle de Mistral se règle pour refuser l'entraînement, celle de Google
+    # entraîne sans réglage possible. Descendre de l'une à l'autre sans le
+    # savoir ferait passer de vrais parcours d'un fournisseur qui les oublie à
+    # un fournisseur qui les retient — et personne ne l'aurait décidé.
+    if "gemini" in noms[1:] and settings.gemini_api_key:
+        rapport.ajouter(
+            A_VOIR,
+            "Le secours Gemini n'a pas la même confidentialité que le principal.",
+            "Sur l'offre gratuite, Google entraîne sur ce qui est envoyé, sans\n"
+            "réglage pour le refuser. Une bascule y enverra donc des parcours\n"
+            "réels — expurgés de toute identité, mais réels. À décider une fois :\n"
+            "clé payante, ou LLM_FALLBACK vide et un quota épuisé qui s'assume.",
+        )
 
 
 def controler_stockage(rapport: Rapport) -> None:
@@ -259,6 +338,43 @@ async def controler_courriel(rapport: Rapport) -> None:
         )
 
 
+async def controler_envoi(rapport: Rapport) -> None:
+    """L'envoi de courriels, et l'adresse publique dont dépendent les liens."""
+    from app.services import parametres
+
+    try:
+        async with SessionLocal() as db:
+            reglages = await parametres.lire(db)
+    except Exception:  # pragma: no cover
+        return
+
+    if reglages.envoi_utilisable:
+        rapport.ajouter(OK, f"Envoi de courriels configuré ({reglages.expediteur}).")
+    elif reglages.smtp_actif:
+        rapport.ajouter(
+            A_VOIR,
+            "Envoi activé mais incomplet.",
+            "Compléter dans Paramètres › Envoi de courriels, puis « Tester l'envoi ».",
+        )
+    else:
+        rapport.ajouter(
+            A_VOIR,
+            "Envoi de courriels désactivé.",
+            "Les convocations et les réponses se rédigent quand même dans l'application,\n"
+            "mais doivent être recopiées à la main. L'ouverture d'un accès client, elle,\n"
+            "affichera son lien d'activation à transmettre soi-même.",
+        )
+
+    if not reglages.url_publique:
+        rapport.ajouter(
+            A_VOIR,
+            "Adresse publique de l'application non renseignée.",
+            "Sans elle, les liens d'activation envoyés aux clients ne peuvent pas être\n"
+            "construits — le serveur ne connaît que son adresse d'écoute.\n"
+            "À renseigner dans Paramètres › Envoi de courriels.",
+        )
+
+
 def controler_reseau(rapport: Rapport) -> None:
     origines = [o for o in settings.cors_origins if o]
     if any("*" == o for o in origines):
@@ -280,6 +396,7 @@ async def principal() -> int:
     controler_reseau(rapport)
     await controler_base(rapport)
     await controler_courriel(rapport)
+    await controler_envoi(rapport)
 
     print()
     print("  TriCV — contrôle avant usage réel")

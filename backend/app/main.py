@@ -12,11 +12,14 @@ from app.api import (
     auth,
     candidates,
     candidatures,
+    collaboration,
     exports,
     mandats,
+    portail_client,
     postes,
     public,
     public_avis,
+    rapports,
     sessions,
     stats,
     vivier,
@@ -68,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="TriCV",
+    title="TriCV — Kapi Consult",
     version="1.0.0",
     summary="AI-assisted CV screening. The tool ranks and recommends; HR decides.",
     lifespan=lifespan,
@@ -80,6 +83,16 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Un navigateur ne laisse lire, sur une réponse d'une autre origine, que six
+    # en-têtes standard — et `Content-Disposition` n'en fait pas partie. Sans
+    # cette liste, l'interface ne voyait pas le nom du fichier renvoyé par les
+    # exports et retombait sur un nom générique, ni le compte rendu que porte
+    # l'export des CV.
+    expose_headers=[
+        "Content-Disposition",
+        "X-TriCV-Inclus",
+        "X-TriCV-Ecartes",
+    ],
 )
 
 
@@ -117,9 +130,10 @@ async def widget() -> Response:
 async def root() -> dict:
     return {
         "service": "TriCV",
+        "cabinet": "Kapi Consult",
         "docs": "/docs",
         "api": API_PREFIX,
-        "note": "TriCV classe et recommande. Les RH décident.",
+        "note": "TriCV classe et recommande. Les RH de Kapi Consult décident.",
     }
 
 
@@ -129,7 +143,11 @@ for router in (
     mandats.router,
     postes.router,
     candidatures.router,
+    collaboration.router,
+    rapports.router,
     public_avis.router,
+    # L'espace du promoteur : porte separee, jeton de type distinct.
+    portail_client.router,
     vivier.router,
     # Ancien modèle (session/candidat), encore servi à l'interface le temps de
     # la bascule.

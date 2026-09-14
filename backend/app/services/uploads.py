@@ -40,6 +40,41 @@ class AcceptedFile:
 PLAFOND_ABSOLU_MO = 100
 
 
+def valider_octets(
+    data: bytes, filename: str, max_mb: int | None = None
+) -> AcceptedFile:
+    """Le contrôle proprement dit, sur un contenu déjà lu.
+
+    Séparé de `validate` parce que tout ne vient pas d'un `UploadFile` : les
+    pièces extraites d'une archive arrivent en mémoire, et elles doivent passer
+    exactement le même contrôle. Dupliquer la règle aurait laissé une porte où
+    l'extension fait foi.
+    """
+    if not data:
+        raise RejectedUpload("Le fichier est vide.")
+    if max_mb is not None and len(data) > max_mb * 1024 * 1024:
+        raise RejectedUpload(
+            f"Le fichier « {(filename or 'sans nom')[:60]} » fait "
+            f"{len(data) / 1_048_576:.0f} Mo, ce qui dépasse la limite de {max_mb} Mo "
+            "applicable aux dépôts par le formulaire public."
+        )
+
+    nom = (filename or "cv").strip()[:255]
+    mime_type = extraction.sniff_mime(data, nom)
+    if mime_type is None or mime_type not in extraction.ALLOWED_MIME_TYPES:
+        raise RejectedUpload(
+            f"« {nom[:60]} » n'est ni un PDF ni un document Word : son contenu ne "
+            "correspond à aucun de ces formats."
+        )
+
+    return AcceptedFile(
+        data=data,
+        mime_type=mime_type,
+        filename=nom,
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
+
+
 async def validate(file: UploadFile, max_mb: int | None = None) -> AcceptedFile:
     """Size, then magic bytes. The extension is never trusted.
 
@@ -48,30 +83,7 @@ async def validate(file: UploadFile, max_mb: int | None = None) -> AcceptedFile:
     """
     data = await file.read()
     await file.close()
-
-    if not data:
-        raise RejectedUpload("Le fichier est vide.")
-    if max_mb is not None and len(data) > max_mb * 1024 * 1024:
-        raise RejectedUpload(
-            f"Le fichier « {(file.filename or 'sans nom')[:60]} » fait "
-            f"{len(data) / 1_048_576:.0f} Mo, ce qui dépasse la limite de {max_mb} Mo "
-            "applicable aux dépôts par le formulaire public."
-        )
-
-    filename = (file.filename or "cv").strip()[:255]
-    mime_type = extraction.sniff_mime(data, filename)
-    if mime_type is None or mime_type not in extraction.ALLOWED_MIME_TYPES:
-        raise RejectedUpload(
-            "Only PDF and Word (.docx) files are accepted. This file's contents do not "
-            "match either format."
-        )
-
-    return AcceptedFile(
-        data=data,
-        mime_type=mime_type,
-        filename=filename,
-        sha256=hashlib.sha256(data).hexdigest(),
-    )
+    return valider_octets(data, file.filename or "", max_mb)
 
 
 async def store(accepted: AcceptedFile) -> str:

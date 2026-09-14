@@ -21,10 +21,13 @@ from sqlalchemy.orm import selectinload
 from app.domain import (
     BAREME_PAR_DEFAUT,
     Bareme,
+    qualifier,
     DecisionSeuil,
     Diplome,
+    ExigenceSpecifique,
     ExigencesPoste,
     Experience,
+    GroupePieces,
     Notation,
     ProfilCandidat,
     RestrictionPoste,
@@ -39,6 +42,7 @@ from app.models.recrutement import (
     Candidat,
     Candidature,
     Elimination,
+    Entretien,
     LigneNotation,
     Notation as NotationDb,
     Poste,
@@ -98,7 +102,25 @@ def construire_exigences(poste: Poste, date_cloture: date | None = None) -> Exig
         annees_experience_min=poste.annees_experience_min,
         annees_experience_specifique_min=poste.annees_experience_specifique_min,
         domaines_experience=frozenset(poste.domaines_experience or ()),
+        experiences_specifiques=tuple(
+            ExigenceSpecifique(
+                libelle=str(e.get("libelle") or ""),
+                domaines=frozenset(e.get("domaines") or ()),
+                annees_min=int(e.get("annees_min") or 0),
+                poids=float(e.get("poids") or 1.0),
+            )
+            for e in (poste.experiences_specifiques or ())
+        ),
+        formation_complementaire=poste.formation_complementaire_souhaitee or "",
         pieces_requises=frozenset(poste.pieces_requises or ()),
+        groupes_pieces=tuple(
+            GroupePieces(
+                codes=frozenset(g.get("codes") or ()),
+                mode=g.get("mode") or "TOUTES",
+                libelle=g.get("libelle") or "",
+            )
+            for g in (poste.groupes_pieces or ())
+        ),
         langues_requises=frozenset(poste.langues_requises or ()),
         restriction=restriction,
         date_reference=date_cloture or date.today(),
@@ -160,6 +182,9 @@ _CHARGEMENT_COMPLET = (
     selectinload(Candidature.eliminations),
     selectinload(Candidature.poste),
     selectinload(Candidature.notation).selectinload(NotationDb.lignes),
+    # L'entretien voyage avec le dossier : la note sur 100 s'affiche partout où
+    # la candidature s'affiche, et un lazy load hors greenlet serait une erreur.
+    selectinload(Candidature.entretiens).selectinload(Entretien.lignes),
 )
 
 
@@ -189,7 +214,9 @@ async def _date_cloture(db: AsyncSession, poste_id: str) -> date | None:
     return resultat.scalars().first()
 
 
-async def evaluer_candidature(db: AsyncSession, candidature: Candidature) -> NotationDb:
+async def evaluer_candidature(
+    db: AsyncSession, candidature: Candidature
+) -> NotationDb | None:
     """Recalcule éligibilité et note, puis persiste les deux.
 
     Ne commit pas : l'appelant décide de la transaction, ce qui permet de
@@ -197,6 +224,12 @@ async def evaluer_candidature(db: AsyncSession, candidature: Candidature) -> Not
     """
     poste = candidature.poste
     candidat = candidature.candidat
+
+    if poste is None:
+        # Candidature spontanée : il n'y a pas d'exigences à confronter, donc
+        # rien à noter. Le profil vaut pour lui-même, dans le vivier.
+        candidature.statut = StatutCandidature.RECUE
+        return None
 
     cloture = await _date_cloture(db, poste.id)
     exigences = construire_exigences(poste, cloture)
@@ -206,12 +239,35 @@ async def evaluer_candidature(db: AsyncSession, candidature: Candidature) -> Not
 
     motifs = evaluer_eligibilite(profil, exigences, candidature.recue_le)
     provenances = provenances_du_dossier(candidat)
-    notation = noter(profil, exigences, bareme)
+    # L'appréciation humaine, quand elle a été portée, entre dans la note ;
+    # sinon la ligne « consistance » le dit et les points restent à prendre.
+    appreciation = (
+        float(candidature.appreciation_consistance)
+        if candidature.appreciation_consistance is not None
+        else None
+    )
+    notation = noter(profil, exigences, bareme, appreciation_consistance=appreciation)
 
     await _remplacer_eliminations(db, candidature, motifs, provenances)
     enregistrement = await _remplacer_notation(db, candidature, notation, bareme)
 
-    candidature.statut = _statut(candidature, notation, provenances)
+    # La note **retenue** — celle que la grille affiche et qui a servi à classer
+    # — décide aussi du franchissement du seuil. Le calcul seul y suffisait, et
+    # un dossier noté 27 à la main sous un seuil de 24 restait rangé « sous le
+    # seuil » : l'écran montrait 27/30 dans l'onglet des non-retenus, sans
+    # qu'aucune ligne n'explique pourquoi. Une saisie humaine qui ne change pas
+    # le sort du dossier n'est pas une saisie, c'est un affichage.
+    retenue = replace(notation, total=float(enregistrement.note_retenue))
+    candidature.statut = _statut(candidature, retenue, provenances)
+    # La catégorie remise au client suit la note **retenue**, c'est-à-dire
+    # celle qui a servi à classer. Quand les RH ont saisi une note à la main,
+    # elle prime sur le calcul ; qualifier sur le calcul donnerait un dossier
+    # affiché à 27/30 et étiqueté « partiellement qualifié », ce qui est
+    # incompréhensible et se retrouverait tel quel dans le rapport du client.
+    #
+    # La catégorie reste indicative : un recruteur peut la réinscrire, et
+    # `qualification_manuelle` prime alors.
+    candidature.qualification = qualifier(retenue).value
     return enregistrement
 
 
@@ -327,13 +383,24 @@ def definir_seuil(poste: Poste, seuil: float, justification: str = "") -> None:
     Passe par `DecisionSeuil` pour que la règle « abaisser exige une
     justification » soit appliquée partout, et pas seulement là où l'API pense
     à la vérifier. Relever le seuil ne demande rien : cela ne lèse personne.
+
+    Le seuil n'ayant plus de valeur d'établissement — il variait trop d'un
+    mandat à l'autre —, c'est **le premier seuil posé sur le poste qui devient
+    la référence**. Le geste réel est celui-ci : on regarde la distribution des
+    notes, on trace une barre, et c'est cette barre qui engage. La déplacer vers
+    le bas ensuite, une fois qu'on sait qui elle écarte, est exactement le cas
+    qu'il faut justifier par écrit.
     """
+    nominal = float(poste.seuil_nominal or 0.0)
+    premiere_decision = nominal <= 0.0
     decision = DecisionSeuil(
         seuil_retenu=seuil,
-        seuil_nominal=float(poste.seuil_nominal),
+        seuil_nominal=0.0 if premiere_decision else nominal,
         justification=justification,
     )
     poste.seuil_preselection = decision.seuil_retenu
+    if premiere_decision:
+        poste.seuil_nominal = decision.seuil_retenu
     poste.seuil_justification = justification.strip() or None
 
 

@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react'
+﻿import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { recrutementApi } from '@/lib/api'
+import { rapportsApi, recrutementApi } from '@/lib/api'
 import {
   Callout,
   CopyField,
@@ -11,8 +11,16 @@ import {
   Modal,
   PageLoader,
   Spinner,
+  delaiListe,
 } from '@/components/ui'
 import CandidatureDrawer from '@/components/CandidatureDrawer'
+import DepotEnLot from '@/components/DepotEnLot'
+import { LIBELLE_PIECE } from '@/lib/pieces'
+import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
+import ChoisirDestinataires from '@/components/ChoisirDestinataires'
+import ChoisirExportGrille from '@/components/ChoisirExportGrille'
+import FichePosteEditeur from '@/components/FichePosteEditeur'
+import GrilleEntretienEditeur from '@/components/GrilleEntretienEditeur'
 import type { Avis, LigneGrille, Poste } from '@/types'
 
 type Onglet = 'preselection' | 'sous_seuil' | 'elimination' | 'a_verifier'
@@ -25,15 +33,6 @@ const NIVEAUX: Record<number, string> = {
   4: 'BAC+4 (Maîtrise, Master 1)',
   5: 'BAC+5 (Master, Ingénieur)',
   8: 'BAC+8 (Doctorat)',
-}
-
-const LIBELLE_PIECE: Record<string, string> = {
-  LETTRE_MOTIVATION: 'Lettre de motivation',
-  CV: 'CV détaillé',
-  COPIE_DIPLOMES: 'Copie des diplômes',
-  ATTESTATIONS_TRAVAIL: 'Attestations de travail',
-  PIECE_IDENTITE: "Pièce d'identité",
-  CERTIFICAT_NATIONALITE: 'Certificat de nationalité',
 }
 
 const LIBELLE_TYPE_AVIS: Record<string, string> = {
@@ -66,7 +65,8 @@ function Statistique({
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className={`card px-4 py-3 text-left transition-colors ${
+      className={`card px-4 py-3 text-left transition-[background-color,border-color,box-shadow]
+        duration-180 ease-out-soft ${
         onClick ? 'hover:border-ink-300' : ''
       } ${actif ? 'border-ink-900' : ''}`}
     >
@@ -85,12 +85,29 @@ function FichePoste({ poste }: { poste: Poste }) {
       poste.domaines_acceptes.length ? poste.domaines_acceptes.join(', ') : 'tous',
     ],
     ['Expérience générale', `${poste.annees_experience_min} an(s)`],
-    [
-      'Dont expérience spécifique',
-      `${poste.annees_experience_specifique_min} an(s)${
-        poste.domaines_experience.length ? ` en ${poste.domaines_experience.join(', ')}` : ''
-      }`,
-    ],
+    // Plusieurs exigences spécifiques ne tiennent pas dans la ligne unique :
+    // affichée telle quelle, elle annonçait « 0 an(s) » alors que le poste en
+    // exigeait deux fois plusieurs années.
+    poste.experiences_specifiques.length > 0
+      ? ([
+          'Dont expériences spécifiques',
+          poste.experiences_specifiques
+            .map(
+              (e) =>
+                `${e.annees_min} an(s) en ${
+                  e.libelle || e.domaines.join(', ') || 'le domaine du poste'
+                }`,
+            )
+            .join(' ; '),
+        ] as [string, string])
+      : ([
+          'Dont expérience spécifique',
+          `${poste.annees_experience_specifique_min} an(s)${
+            poste.domaines_experience.length
+              ? ` en ${poste.domaines_experience.join(', ')}`
+              : ''
+          }`,
+        ] as [string, string]),
     [
       'Pièces exigées',
       poste.pieces_requises.map((c) => LIBELLE_PIECE[c] ?? c).join(', ') || 'aucune',
@@ -99,9 +116,35 @@ function FichePoste({ poste }: { poste: Poste }) {
       'Pièces facultatives',
       poste.pieces_facultatives.map((c) => LIBELLE_PIECE[c] ?? c).join(', ') || 'aucune',
     ],
-    ['Formats acceptés', 'PDF ou Word'],
     ['Postes à pourvoir', String(poste.nombre_a_pourvoir)],
   ]
+
+  if (poste.formation_complementaire_souhaitee) {
+    lignes.splice(2, 0, [
+      'Formation complémentaire souhaitée',
+      poste.formation_complementaire_souhaitee,
+    ])
+  }
+  for (const groupe of poste.groupes_pieces ?? []) {
+    lignes.push([
+      groupe.libelle || 'Pièces liées',
+      groupe.codes
+        .map((c) => LIBELLE_PIECE[c] ?? c)
+        .join(groupe.mode === 'AU_MOINS_UNE' ? ' ou ' : ' et '),
+    ])
+  }
+  const formats = Object.entries(poste.formats_pieces ?? {}).filter(([, f]) => f.length)
+  lignes.push([
+    'Formats acceptés',
+    formats.length
+      ? formats
+          .map(([code, f]) => `${LIBELLE_PIECE[code] ?? code} : ${f.join('/').toUpperCase()}`)
+          .join(' · ')
+      : 'PDF ou Word',
+  ])
+  if (poste.pieces_libres_autorisees) {
+    lignes.push(['Documents libres', 'le candidat peut en joindre'])
+  }
 
   return (
     <section className="card p-4">
@@ -120,35 +163,134 @@ function FichePoste({ poste }: { poste: Poste }) {
   )
 }
 
-function PanneauAvis({ posteId }: { posteId: string }) {
+/**
+ * Les avis du poste, et leur rédaction.
+ *
+ * Le niveau de diplôme minimum et la formation complémentaire souhaitée se
+ * saisissent ici, au moment où l'on rédige l'avis : c'est là qu'on y pense, et
+ * c'est là que le cabinet les a demandés. Ils s'écrivent bien sur la fiche de
+ * poste — ce sont des exigences, pas du texte — mais l'écran ne doit pas
+ * obliger à faire un détour pour les poser.
+ *
+ * La rédaction du texte est facultative, et de deux sortes : à partir de la
+ * fiche seule, ou en suivant un modèle imposé par le client. Dans les deux
+ * cas ce n'est qu'un brouillon : un avis publié est opposable, et une condition
+ * inventée devient une condition réelle.
+ */
+function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
   const queryClient = useQueryClient()
-  const [ouvert, setOuvert] = useState(false)
+  // `null` = fermé, `''` = création, un identifiant = reprise de ce brouillon.
+  // Un seul état plutôt que deux booléens : le formulaire est le même, seule
+  // la destination change.
+  const [ouvert, setOuvert] = useState<string | null>(null)
   const [reference, setReference] = useState('')
   const [type, setType] = useState('NATIONAL')
   const [cloture, setCloture] = useState('')
+  const [niveau, setNiveau] = useState(poste.niveau_min)
+  const [complementaire, setComplementaire] = useState(
+    poste.formation_complementaire_souhaitee ?? '',
+  )
   const [erreur, setErreur] = useState<string | null>(null)
 
+  // Rédaction assistée : le texte proposé, l'avis qu'il concerne, le modèle.
+  const [redaction, setRedaction] = useState<{
+    avisId: string
+    texte: string
+    propose: boolean
+    avertissement: string | null
+  } | null>(null)
+  const [modeleId, setModeleId] = useState('')
+
   const avis = useQuery({ queryKey: ['avis', posteId], queryFn: () => recrutementApi.avis(posteId) })
+  const modeles = useQuery({
+    queryKey: ['modeles-documents', 'avis', poste.mandat_id],
+    queryFn: () => rapportsApi.modeles({ mandat_id: poste.mandat_id, usage: 'AVIS' }),
+  })
 
   const rafraichir = () => {
     void queryClient.invalidateQueries({ queryKey: ['avis', posteId] })
     void queryClient.invalidateQueries({ queryKey: ['grille', posteId] })
   }
 
+  /** Ouvre le formulaire sur un avis existant, ou vide pour en créer un. */
+  const reprendre = (a: Avis | null) => {
+    setErreur(null)
+    setReference(a?.reference ?? '')
+    setType(a?.type_avis ?? 'NATIONAL')
+    setCloture(a?.date_cloture ?? '')
+    setNiveau(poste.niveau_min)
+    setComplementaire(poste.formation_complementaire_souhaitee ?? '')
+    setOuvert(a?.id ?? '')
+  }
+
+  const supprimer = useMutation({
+    mutationFn: (id: string) => recrutementApi.supprimerAvis(id),
+    onSuccess: rafraichir,
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Suppression impossible'),
+  })
+
   const creer = useMutation({
-    mutationFn: () =>
-      recrutementApi.creerAvis(posteId, {
+    mutationFn: async () => {
+      // Les exigences saisies dans ce formulaire appartiennent à la fiche de
+      // poste : c'est elle qui fait foi pour la présélection. On les y écrit
+      // avant de créer l'avis, pour que le texte publié et la règle appliquée
+      // ne puissent pas diverger.
+      if (
+        niveau !== poste.niveau_min ||
+        complementaire.trim() !== (poste.formation_complementaire_souhaitee ?? '')
+      ) {
+        await recrutementApi.modifierPoste(posteId, {
+          niveau_min: niveau,
+          formation_complementaire_souhaitee: complementaire.trim() || null,
+        })
+      }
+      const donnees = {
         reference: reference.trim() || null,
         type_avis: type,
         date_cloture: cloture || null,
-      }),
+      }
+      // Reprise d'un brouillon, ou création : la même saisie sert aux deux.
+      return ouvert
+        ? recrutementApi.modifierAvis(ouvert, donnees)
+        : recrutementApi.creerAvis(posteId, donnees)
+    },
     onSuccess: () => {
-      setOuvert(false)
+      setOuvert(null)
       setReference('')
       setCloture('')
+      void queryClient.invalidateQueries({ queryKey: ['poste', posteId] })
       rafraichir()
     },
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Création impossible'),
+  })
+
+  const rediger = useMutation({
+    mutationFn: (params: { avisId: string; avecAssistance: boolean }) =>
+      recrutementApi.redigerAvis(posteId, {
+        avis_id: params.avisId,
+        modele_id: modeleId || null,
+        avec_assistance: params.avecAssistance,
+      }),
+    onSuccess: (r, params) => {
+      setErreur(null)
+      setRedaction({
+        avisId: params.avisId,
+        texte: r.texte,
+        propose: r.propose,
+        avertissement: r.avertissement,
+      })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Rédaction impossible'),
+  })
+
+  const enregistrerTexte = useMutation({
+    mutationFn: () =>
+      recrutementApi.modifierAvis(redaction!.avisId, { texte: redaction!.texte }),
+    onSuccess: () => {
+      setRedaction(null)
+      rafraichir()
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Enregistrement impossible'),
   })
 
   const publier = useMutation({
@@ -169,7 +311,7 @@ function PanneauAvis({ posteId }: { posteId: string }) {
         <button
           type="button"
           className="btn-ghost ml-auto px-2 py-1 text-xs"
-          onClick={() => setOuvert(true)}
+          onClick={() => reprendre(null)}
         >
           Nouvel avis
         </button>
@@ -217,20 +359,59 @@ function PanneauAvis({ posteId }: { posteId: string }) {
               >
                 {LIBELLE_STATUT_AVIS[a.statut]}
               </span>
-              <span className="ml-auto text-xs text-ink-500">
-                {a.date_cloture ? `clôture le ${a.date_cloture}` : 'sans date de clôture'}
+              <span
+                className={`ml-auto text-xs ${
+                  a.date_cloture ? 'text-ink-500' : 'text-amber-700'
+                }`}
+              >
+                {a.date_cloture
+                  ? `clôture le ${a.date_cloture}`
+                  : 'sans date de clôture — à fixer pour publier'}
               </span>
             </div>
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {a.statut === 'BROUILLON' && (
+                <>
+                  <button
+                    type="button"
+                    className="btn-ghost px-2 py-1 text-xs"
+                    disabled={publier.isPending || !a.date_cloture}
+                    title={
+                      a.date_cloture
+                        ? undefined
+                        : 'Fixez la date de clôture : elle sert de référence au calcul.'
+                    }
+                    onClick={() => publier.mutate(a.id)}
+                  >
+                    Publier
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost px-2 py-1 text-xs"
+                    onClick={() => reprendre(a)}
+                  >
+                    Modifier
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                    disabled={supprimer.isPending}
+                    onClick={() => supprimer.mutate(a.id)}
+                  >
+                    Supprimer
+                  </button>
+                </>
+              )}
+              {a.statut !== 'CLOTURE' && (
                 <button
                   type="button"
                   className="btn-ghost px-2 py-1 text-xs"
-                  disabled={publier.isPending}
-                  onClick={() => publier.mutate(a.id)}
+                  disabled={rediger.isPending}
+                  onClick={() => rediger.mutate({ avisId: a.id, avecAssistance: true })}
                 >
-                  Publier
+                  {rediger.isPending && <Spinner />}
+                  {a.texte ? 'Reprendre le texte' : 'Rédiger le texte'}
                 </button>
               )}
               {a.statut === 'PUBLIE' && (
@@ -261,8 +442,93 @@ function PanneauAvis({ posteId }: { posteId: string }) {
         ))}
       </div>
 
-      {ouvert && (
-        <Modal open title="Nouvel avis de recrutement" onClose={() => setOuvert(false)}>
+      {redaction && (
+        <Modal open title="Texte de l'avis" onClose={() => setRedaction(null)}>
+          <div className="space-y-4">
+            {redaction.avertissement && <Callout tone="warning">{redaction.avertissement}</Callout>}
+            {redaction.propose && (
+              <Callout tone="info">
+                Ce texte a été proposé à partir de la fiche de poste. Relisez-le : une fois
+                publié, un avis est opposable, et une condition qui s'y trouve devient une
+                condition réelle.
+              </Callout>
+            )}
+
+            {(modeles.data?.length ?? 0) > 0 && (
+              <Field
+                label="Modèle imposé par le client"
+                htmlFor="avis-modele"
+                hint="Facultatif. Le texte suit alors sa présentation, mais les exigences restent celles de la fiche."
+              >
+                <div className="flex gap-2">
+                  <select
+                    id="avis-modele"
+                    className="input"
+                    value={modeleId}
+                    onChange={(e) => setModeleId(e.target.value)}
+                  >
+                    <option value="">Présentation du cabinet</option>
+                    {modeles.data!.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.libelle}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn-ghost shrink-0 px-3 text-xs"
+                    disabled={rediger.isPending}
+                    onClick={() =>
+                      rediger.mutate({ avisId: redaction.avisId, avecAssistance: true })
+                    }
+                  >
+                    Reproposer
+                  </button>
+                </div>
+              </Field>
+            )}
+
+            <textarea
+              className="input min-h-[24rem] font-mono text-xs"
+              value={redaction.texte}
+              aria-label="Texte de l'avis"
+              onChange={(e) => setRedaction((r) => (r ? { ...r, texte: e.target.value } : r))}
+            />
+
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                disabled={rediger.isPending}
+                onClick={() =>
+                  rediger.mutate({ avisId: redaction.avisId, avecAssistance: false })
+                }
+              >
+                Repartir des seuls éléments de la fiche
+              </button>
+              <button type="button" className="btn-ghost" onClick={() => setRedaction(null)}>
+                Annuler
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={enregistrerTexte.isPending}
+                onClick={() => enregistrerTexte.mutate()}
+              >
+                {enregistrerTexte.isPending && <Spinner />}
+                Enregistrer le texte
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {ouvert !== null && (
+        <Modal
+          open
+          title={ouvert ? "Reprendre le brouillon d'avis" : 'Nouvel avis de recrutement'}
+          onClose={() => setOuvert(null)}
+        >
           <div className="space-y-4">
             <Field
               label="Référence"
@@ -307,8 +573,41 @@ function PanneauAvis({ posteId }: { posteId: string }) {
               />
             </Field>
 
+            <Field
+              label="Niveau de diplôme minimum exigé"
+              htmlFor="avis-niveau"
+              hint="Écrit sur la fiche de poste : c'est cette valeur qui écarte un dossier, pas le texte de l'avis."
+            >
+              <select
+                id="avis-niveau"
+                className="input"
+                value={niveau}
+                onChange={(e) => setNiveau(Number(e.target.value))}
+              >
+                {Object.entries(NIVEAUX).map(([valeur, libelle]) => (
+                  <option key={valeur} value={valeur}>
+                    {libelle}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field
+              label="Formation complémentaire souhaitée"
+              htmlFor="avis-complementaire"
+              hint="Souhaitée, non exigée : elle figure dans l'avis et se compare à la lecture. Aucune règle de présélection ne la note."
+            >
+              <input
+                id="avis-complementaire"
+                className="input"
+                value={complementaire}
+                placeholder="Certification en gestion de projet, formation en passation de marchés…"
+                onChange={(e) => setComplementaire(e.target.value)}
+              />
+            </Field>
+
             <div className="flex justify-end gap-2">
-              <button type="button" className="btn-ghost" onClick={() => setOuvert(false)}>
+              <button type="button" className="btn-ghost" onClick={() => setOuvert(null)}>
                 Annuler
               </button>
               <button
@@ -318,7 +617,7 @@ function PanneauAvis({ posteId }: { posteId: string }) {
                 onClick={() => creer.mutate()}
               >
                 {creer.isPending && <Spinner />}
-                Créer l'avis
+                {ouvert ? 'Enregistrer' : "Créer l'avis"}
               </button>
             </div>
           </div>
@@ -328,92 +627,25 @@ function PanneauAvis({ posteId }: { posteId: string }) {
   )
 }
 
-/** Dépôt en lot : le cas où les RH ont déjà les CV dans leur boîte email. */
-function DepotEnLot({ posteId }: { posteId: string }) {
-  const queryClient = useQueryClient()
-  const fichierRef = useRef<HTMLInputElement>(null)
-  const [depouiller, setDepouiller] = useState(false)
-  const [compte, setCompte] = useState<string | null>(null)
-  const [details, setDetails] = useState<string[]>([])
-
-  const deposer = useMutation({
-    mutationFn: (fichiers: File[]) =>
-      recrutementApi.depotMultiple(posteId, fichiers, depouiller),
-    onSuccess: (r) => {
-      const parts = [`${r.deposes} dossier(s) déposé(s)`]
-      if (r.doublons_ignores) parts.push(`${r.doublons_ignores} doublon(s) ignoré(s)`)
-      if (r.refuses) parts.push(`${r.refuses} refusé(s)`)
-      setCompte(parts.join(' · '))
-      setDetails(
-        r.resultats
-          .filter((x) => !x.accepte)
-          .map((x) => `${x.fichier} — ${x.erreur}`),
-      )
-      void queryClient.invalidateQueries({ queryKey: ['grille', posteId] })
-      void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
-    },
-    onError: (e) => setCompte(e instanceof Error ? e.message : 'Dépôt impossible'),
-  })
-
-  return (
-    <section className="card p-4">
-      <h2 className="mb-1 text-sm font-semibold text-ink-900">Déposer des dossiers</h2>
-      <p className="mb-3 text-xs text-ink-500">
-        Pour les CV déjà reçus par ailleurs. Un fichier donne une candidature ; les doublons sont
-        signalés et rien n'est éliminé avant relecture.
-      </p>
-
-      <label className="mb-3 flex items-center gap-2 text-xs text-ink-700">
-        <input
-          type="checkbox"
-          checked={depouiller}
-          onChange={(e) => setDepouiller(e.target.checked)}
-        />
-        Dépouiller aussitôt (lecture assistée des CV — plus lent)
-      </label>
-
-      <input
-        ref={fichierRef}
-        type="file"
-        multiple
-        accept=".pdf,.docx,.doc"
-        className="hidden"
-        onChange={(e) => {
-          const fichiers = Array.from(e.target.files ?? [])
-          if (fichiers.length) deposer.mutate(fichiers)
-          e.target.value = ''
-        }}
-      />
-      <button
-        type="button"
-        className="btn-ghost w-full"
-        disabled={deposer.isPending}
-        onClick={() => fichierRef.current?.click()}
-      >
-        {deposer.isPending && <Spinner />}
-        Choisir des fichiers…
-      </button>
-
-      {compte && <p className="mt-3 text-sm font-medium text-ink-800">{compte}</p>}
-      {details.length > 0 && (
-        <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-ink-600">
-          {details.map((d) => (
-            <li key={d}>{d}</li>
-          ))}
-        </ul>
-      )}
-    </section>
-  )
-}
-
+/**
+ * Le tableau de la grille.
+ *
+ * Le rang ouvre la ligne : le processus retient « les N premiers candidats
+ * ayant obtenu les meilleures notes », donc c'est la première chose qu'on
+ * cherche. La note est affichée sur 30 *et* sur 100, parce qu'une note sur 30
+ * lue seule se prend pour un résultat final alors que la présélection ne pèse
+ * que 30 % — les entretiens portent le reste.
+ */
 function TableauGrille({
   lignes,
   onOuvrir,
   colonneMotifs = false,
+  colonneRang = false,
 }: {
   lignes: LigneGrille[]
   onOuvrir: (id: string) => void
   colonneMotifs?: boolean
+  colonneRang?: boolean
 }) {
   if (lignes.length === 0) return <EmptyState title="Aucun dossier dans cette catégorie" />
   return (
@@ -421,6 +653,7 @@ function TableauGrille({
       <table className="w-full min-w-[52rem] text-sm">
         <thead>
           <tr className="border-b border-ink-200 text-left text-xs uppercase tracking-wide text-ink-500">
+            {colonneRang && <th className="px-3 py-2 font-medium">Rang</th>}
             <th className="px-3 py-2 font-medium">Nom</th>
             <th className="px-3 py-2 font-medium">Prénom</th>
             <th className="px-3 py-2 font-medium">Âge</th>
@@ -431,17 +664,40 @@ function TableauGrille({
             <th className="px-3 py-2 text-right font-medium">
               {colonneMotifs ? 'Motifs' : 'Note'}
             </th>
+            {colonneRang && <th className="px-3 py-2 text-right font-medium">Finale /100</th>}
           </tr>
         </thead>
         <tbody>
-          {lignes.map((ligne) => (
+          {lignes.map((ligne, index) => (
             <tr
               key={ligne.candidature_id}
-              className="cursor-pointer border-b border-ink-100 last:border-0 hover:bg-ink-50"
+              className="row-interactive stagger animate-fade-in border-b border-ink-100 last:border-0"
+              style={delaiListe(index, 16)}
               onClick={() => onOuvrir(ligne.candidature_id)}
             >
+              {colonneRang && (
+                <td className="px-3 py-2 tabular-nums text-ink-500">
+                  {ligne.rang ?? '—'}
+                  {ligne.propose && ligne.rang !== null && (
+                    <span
+                      className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800"
+                      title="Fait partie des candidats proposés au client"
+                    >
+                      proposé
+                    </span>
+                  )}
+                </td>
+              )}
               <td className="px-3 py-2 font-medium text-ink-900">
                 {ligne.nom}
+                {ligne.appreciation_attendue && !ligne.elimine && (
+                  <span
+                    className="ml-1.5 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-800"
+                    title="La motivation et l'expression écrite n'ont pas encore été appréciées : des points de consistance restent à prendre"
+                  >
+                    à lire
+                  </span>
+                )}
                 {ligne.doublons > 0 && (
                   <span
                     className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
@@ -464,9 +720,39 @@ function TableauGrille({
                   <span className="font-semibold tabular-nums text-ink-900">
                     {ligne.note ?? '—'}
                     <span className="text-ink-400">/{ligne.total_max ?? ''}</span>
+                    {ligne.note_sur_cent !== null && (
+                      <span
+                        className="ml-1.5 text-xs font-normal text-ink-500"
+                        title="Contribution à la note finale sur 100 ; les entretiens portent les 70 % restants"
+                      >
+                        ({ligne.note_sur_cent}/100)
+                      </span>
+                    )}
                   </span>
                 )}
               </td>
+              {colonneRang && (
+                <td className="px-3 py-2 text-right">
+                  {ligne.note_finale_sur_cent === null ? (
+                    <span className="text-xs text-ink-400" title="Pas encore reçu en entretien">
+                      —
+                    </span>
+                  ) : (
+                    <span className="font-semibold tabular-nums text-ink-900">
+                      {ligne.note_finale_sur_cent}
+                      <span className="text-ink-400">/100</span>
+                      {!ligne.entretien_complet && (
+                        <span
+                          className="ml-1 text-[10px] font-normal text-amber-700"
+                          title="Tous les critères d'entretien ne sont pas notés"
+                        >
+                          partiel
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -475,22 +761,45 @@ function TableauGrille({
   )
 }
 
+/**
+ * Poser la barre de présélection.
+ *
+ * Le geste réel est celui-ci : on regarde comment les notes se répartissent, et
+ * on trace la barre là où elle sépare quelque chose. Un seuil choisi d'avance,
+ * avant d'avoir vu les dossiers, revenait à décider à l'aveugle — c'est pour
+ * cela qu'il a quitté les paramètres du cabinet.
+ *
+ * La répartition est donc affichée ici, à côté du champ. Une barre tracée juste
+ * au-dessus d'un peloton de douze candidats n'est pas la même décision qu'une
+ * barre tracée dans un vide, et l'écran doit le montrer.
+ */
 function ReglerSeuil({
   posteId,
   seuilActuel,
   seuilNominal,
+  totalMax,
+  distribution,
   onClose,
 }: {
   posteId: string
   seuilActuel: number
   seuilNominal: number
+  totalMax: number
+  distribution: Array<{ de: number; a: number; candidats: number }>
   onClose: () => void
 }) {
   const queryClient = useQueryClient()
   const [seuil, setSeuil] = useState(seuilActuel)
   const [justification, setJustification] = useState('')
   const [erreur, setErreur] = useState<string | null>(null)
-  const abaisse = seuil < seuilNominal
+  // Le premier seuil posé devient la référence : c'est lui qui engage, et
+  // c'est l'abaisser ensuite qui demande une justification écrite.
+  const premiere = seuilNominal <= 0
+  const abaisse = !premiere && seuil < seuilNominal
+  const maximum = Math.max(...distribution.map((d) => d.candidats), 1)
+  const retenus = distribution
+    .filter((tranche) => tranche.a > seuil)
+    .reduce((somme, tranche) => somme + tranche.candidats, 0)
 
   const enregistrer = useMutation({
     mutationFn: () => recrutementApi.changerSeuil(posteId, seuil, justification),
@@ -506,13 +815,59 @@ function ReglerSeuil({
   return (
     <Modal open title="Seuil de présélection" onClose={onClose}>
       <div className="space-y-4">
-        <Field label={`Seuil (nominal : ${seuilNominal})`} htmlFor="seuil">
+        {distribution.length > 0 && (
+          <div>
+            <p className="text-sm font-medium text-ink-800">Répartition des notes obtenues</p>
+            <p className="mt-0.5 text-xs text-ink-500">
+              Environ {retenus} dossier{retenus > 1 ? 's' : ''} au-dessus de la barre actuelle.
+            </p>
+            <div className="mt-2 space-y-1">
+              {[...distribution].reverse().map((tranche) => {
+                const auDessus = tranche.a > seuil
+                return (
+                  <button
+                    key={`${tranche.de}-${tranche.a}`}
+                    type="button"
+                    className="flex w-full items-center gap-2 text-left"
+                    title={`Poser la barre à ${tranche.de}`}
+                    onClick={() => setSeuil(tranche.de)}
+                  >
+                    <span className="w-20 shrink-0 text-right text-xs tabular-nums text-ink-500">
+                      {tranche.de}–{tranche.a}
+                    </span>
+                    <span className="h-4 flex-1 rounded bg-ink-100">
+                      <span
+                        className={`block h-4 rounded ${
+                          auDessus ? 'bg-brand-600' : 'bg-ink-300'
+                        }`}
+                        style={{ width: `${(tranche.candidats / maximum) * 100}%` }}
+                      />
+                    </span>
+                    <span className="w-6 shrink-0 text-xs tabular-nums text-ink-600">
+                      {tranche.candidats}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <Field
+          label={premiere ? `Seuil (sur ${totalMax})` : `Seuil (référence : ${seuilNominal})`}
+          htmlFor="seuil"
+          hint={
+            premiere
+              ? "Aucune barre n'a encore été posée. Celle que vous tracez ici devient la référence : l'abaisser ensuite demandera une justification écrite."
+              : undefined
+          }
+        >
           <input
             id="seuil"
             type="number"
             step={0.5}
             min={0}
-            max={30}
+            max={totalMax}
             className="input"
             value={seuil}
             onChange={(e) => setSeuil(Number(e.target.value))}
@@ -568,7 +923,19 @@ export default function PosteDetailPage() {
   const [ongletChoisi, setOnglet] = useState<Onglet | null>(null)
   const [selection, setSelection] = useState<string | null>(null)
   const [seuilOuvert, setSeuilOuvert] = useState(false)
+  const [grilleOuverte, setGrilleOuverte] = useState(false)
+  // Les dossiers à qui écrire. Vide = aucune fenêtre d'envoi ouverte.
+  const [destinataires, setDestinataires] = useState<string[]>([])
+  // Fenêtre de choix de la portée, ouverte avant la rédaction.
+  const [choixPortee, setChoixPortee] = useState(false)
+  // Quel document tableur exporter : le choix se fait avant, pas après.
+  const [choixExport, setChoixExport] = useState(false)
+  const [ficheOuverte, setFicheOuverte] = useState(false)
   const [erreur, setErreur] = useState<string | null>(null)
+  // Ce qu'une action menée dans une fenêtre laisse derrière elle : un dossier
+  // supprimé, une fiche modifiée. La fenêtre se referme et les compteurs de la
+  // grille changent ; sans cette ligne, rien ne dirait pourquoi.
+  const [compteRendu, setCompteRendu] = useState<string | null>(null)
 
   const poste = useQuery({ queryKey: ['poste', posteId], queryFn: () => recrutementApi.poste(posteId) })
   const grille = useQuery({ queryKey: ['grille', posteId], queryFn: () => recrutementApi.grille(posteId) })
@@ -585,9 +952,33 @@ export default function PosteDetailPage() {
     },
   })
 
-  const exporter = useMutation({
-    mutationFn: () => recrutementApi.telechargerGrille(posteId),
-    onError: (e) => setErreur(e instanceof Error ? e.message : "L'export a échoué"),
+  /**
+   * Les CV des candidats proposés, sous une présentation unique.
+   *
+   * La demande réelle du client : recevoir vingt dossiers sous la même forme.
+   * Un dossier dont le parcours n'a pas été relu est écarté de l'archive — sur
+   * un lot, une mention se perdrait — et le compte rendu le dit.
+   */
+  const [compteRenduCv, setCompteRenduCv] = useState<string | null>(null)
+  const exporterCv = useMutation({
+    mutationFn: (anonyme: boolean) =>
+      rapportsApi.cvsMaison(posteId, {
+        format: 'docx',
+        portee: 'proposes',
+        avecCoordonnees: !anonyme,
+      }),
+    onSuccess: (r) => {
+      setErreur(null)
+      setCompteRenduCv(
+        r.ecartes
+          ? `${r.inclus} CV exporté(s) · ${r.ecartes} écarté(s), parcours non relu — la liste est dans l'archive.`
+          : `${r.inclus} CV exporté(s).`,
+      )
+    },
+    onError: (e) => {
+      setCompteRenduCv(null)
+      setErreur(e instanceof Error ? e.message : "L'export a échoué")
+    },
   })
 
   if (poste.isLoading || grille.isLoading) return <PageLoader />
@@ -607,7 +998,7 @@ export default function PosteDetailPage() {
           : 'preselection')
 
   const onglets: Array<[Onglet, string, number]> = [
-    ['preselection', 'Présélectionnés', g.nombre_preselectionnes],
+    ['preselection', 'Préqualifiés', g.nombre_preselectionnes],
     ['sous_seuil', 'Sous le seuil', g.non_retenus.length],
     ['elimination', 'Éliminés', g.nombre_elimines],
     ['a_verifier', 'À vérifier', g.nombre_a_verifier],
@@ -637,7 +1028,21 @@ export default function PosteDetailPage() {
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <button type="button" className="btn-ghost" onClick={() => setSeuilOuvert(true)}>
-            Seuil : {g.seuil}/{g.total_max}
+            {g.seuil > 0 ? `Seuil : ${g.seuil}/${g.total_max}` : 'Poser un seuil'}
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => setFicheOuverte(true)}>
+            Modifier la fiche
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => setGrilleOuverte(true)}>
+            Grille d&apos;entretien
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={g.nombre_candidatures === 0}
+            onClick={() => setChoixPortee(true)}
+          >
+            Écrire aux candidats
           </button>
           <button
             type="button"
@@ -650,12 +1055,21 @@ export default function PosteDetailPage() {
           </button>
           <button
             type="button"
-            className="btn-primary"
-            disabled={exporter.isPending || g.nombre_candidatures === 0}
-            onClick={() => exporter.mutate()}
+            className="btn-ghost"
+            disabled={exporterCv.isPending || g.nombre_preselectionnes === 0}
+            title="Les CV des candidats proposés, remis en forme à l'en-tête du cabinet."
+            onClick={() => exporterCv.mutate(false)}
           >
-            {exporter.isPending && <Spinner />}
-            Exporter la grille (Excel)
+            {exporterCv.isPending && <Spinner />}
+            CV à en-tête (Word)
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={g.nombre_candidatures === 0}
+            onClick={() => setChoixExport(true)}
+          >
+            Exporter (Excel)
           </button>
         </div>
       </div>
@@ -666,9 +1080,32 @@ export default function PosteDetailPage() {
         </div>
       )}
 
+      {compteRenduCv && (
+        <div className="mb-5">
+          <Callout tone={compteRenduCv.includes('écarté') ? 'warning' : 'success'}>
+            {compteRenduCv}
+          </Callout>
+        </div>
+      )}
+
+      {compteRendu && (
+        <div className="mb-5">
+          <Callout tone="info">
+            {compteRendu}{' '}
+            <button
+              type="button"
+              className="font-medium underline"
+              onClick={() => setCompteRendu(null)}
+            >
+              Masquer
+            </button>
+          </Callout>
+        </div>
+      )}
+
       <div className="mb-5 grid gap-4 lg:grid-cols-2">
         <FichePoste poste={p} />
-        <PanneauAvis posteId={posteId} />
+        <PanneauAvis posteId={posteId} poste={p} />
       </div>
 
       <div className="mb-5">
@@ -695,7 +1132,11 @@ export default function PosteDetailPage() {
         <Statistique valeur={g.nombre_candidatures} libelle="Candidatures" ton="text-ink-900" />
         <Statistique
           valeur={g.nombre_preselectionnes}
-          libelle="Présélectionnés"
+          libelle={
+            g.nombre_a_proposer
+              ? `Préqualifiés · ${g.nombre_proposes} proposé(s)`
+              : 'Préqualifiés'
+          }
           ton="text-emerald-700"
           actif={onglet === 'preselection'}
           onClick={() => setOnglet('preselection')}
@@ -741,7 +1182,51 @@ export default function PosteDetailPage() {
           </div>
 
           {onglet === 'preselection' && (
-            <TableauGrille lignes={g.preselectionnes} onOuvrir={setSelection} />
+            <>
+          {g.preselectionnes.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="btn-ghost px-3 py-1.5 text-xs"
+                onClick={() =>
+                  setDestinataires(g.preselectionnes.map((ligne) => ligne.candidature_id))
+                }
+              >
+                Écrire aux {g.preselectionnes.length} préqualifiés
+              </button>
+              {g.nombre_a_proposer !== null && g.nombre_proposes > 0 && (
+                <button
+                  type="button"
+                  className="btn-ghost px-3 py-1.5 text-xs"
+                  onClick={() =>
+                    setDestinataires(
+                      g.preselectionnes
+                        .filter((ligne) => ligne.propose)
+                        .map((ligne) => ligne.candidature_id),
+                    )
+                  }
+                >
+                  Écrire aux {g.nombre_proposes} proposés au client
+                </button>
+              )}
+              <span className="text-xs text-ink-500">
+                Le texte est montré avant d&apos;être expédié.
+              </span>
+            </div>
+          )}
+          <p className="mb-3 text-xs text-ink-500">
+            Classement par note décroissante sur {g.total_max}, soit{' '}
+            {g.poids_preselection} % de la note finale — les entretiens portent les{' '}
+            {100 - g.poids_preselection} % restants.
+            {g.nombre_a_proposer
+              ? ` Les ${g.nombre_a_proposer} premiers sont proposés au client ; les suivants restent préqualifiés.`
+              : " Aucun nombre de candidats à proposer n'est fixé sur ce poste."}
+            {g.nombre_entretiens > 0
+              ? ` ${g.nombre_entretiens} entretien(s) saisi(s).`
+              : " Les entretiens se saisissent depuis le dossier d'un candidat."}
+          </p>
+          <TableauGrille lignes={g.preselectionnes} onOuvrir={setSelection} colonneRang />
+        </>
           )}
           {onglet === 'sous_seuil' && (
             <TableauGrille lignes={g.non_retenus} onOuvrir={setSelection} />
@@ -812,6 +1297,61 @@ export default function PosteDetailPage() {
           candidatureId={selection}
           posteId={posteId}
           onClose={() => setSelection(null)}
+          // Le tiroir s'est fermé sur un dossier qui n'existe plus : sans ce
+          // rappel, la grille se recompte toute seule et rien ne dit ce qui
+          // est parti.
+          onSupprime={(compteRendu) => {
+            setErreur(null)
+            setCompteRendu(compteRendu)
+          }}
+        />
+      )}
+
+      {grilleOuverte && (
+        <GrilleEntretienEditeur posteId={posteId} onClose={() => setGrilleOuverte(false)} />
+      )}
+
+      {ficheOuverte && (
+        <FichePosteEditeur
+          poste={p}
+          onClose={() => setFicheOuverte(false)}
+          onEnregistre={(compteRendu) => {
+            setErreur(null)
+            setCompteRendu(compteRendu)
+          }}
+        />
+      )}
+
+      {choixExport && (
+        <ChoisirExportGrille
+          posteId={posteId}
+          nombreEntretiens={g.nombre_entretiens}
+          onClose={() => setChoixExport(false)}
+          onExporte={(libelle) => {
+            setErreur(null)
+            setCompteRendu(`${libelle} téléchargé.`)
+          }}
+        />
+      )}
+
+      {choixPortee && (
+        <ChoisirDestinataires
+          posteId={posteId}
+          onClose={() => setChoixPortee(false)}
+          onChoisi={(ids, _libelle, note) => {
+            setChoixPortee(false)
+            setDestinataires(ids)
+            // Les dossiers sans adresse ne recevront rien : le dire avant
+            // l'envoi, pas après, sous forme d'échecs à interpréter.
+            if (note) setCompteRendu(note)
+          }}
+        />
+      )}
+
+      {destinataires.length > 0 && (
+        <EnvoyerAuxCandidats
+          candidatureIds={destinataires}
+          onClose={() => setDestinataires([])}
         />
       )}
 
@@ -820,9 +1360,12 @@ export default function PosteDetailPage() {
           posteId={posteId}
           seuilActuel={g.seuil}
           seuilNominal={p.seuil_nominal}
+          totalMax={g.total_max}
+          distribution={g.distribution}
           onClose={() => setSeuilOuvert(false)}
         />
       )}
     </div>
   )
 }
+

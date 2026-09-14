@@ -5,7 +5,14 @@ import logging
 
 from app.config import settings
 from app.llm import http
-from app.llm.base import Attachment, BaseLLMProvider, LLMConfigError, LLMError
+from app.llm.base import (
+    Attachment,
+    BaseLLMProvider,
+    LLMConfigError,
+    LLMError,
+    LLMQuotaError,
+    modele_configure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +46,7 @@ class AnthropicProvider(BaseLLMProvider):
         if not settings.anthropic_api_key:
             raise LLMConfigError("LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY to be set.")
 
-        self.model = settings.llm_model or DEFAULT_MODEL
+        self.model = modele_configure("anthropic", DEFAULT_MODEL)
         # max_retries=0: backoff is handled by app.llm.http.retry_async so every
         # provider retries on the same schedule.
         self.client = AsyncAnthropic(
@@ -59,8 +66,16 @@ class AnthropicProvider(BaseLLMProvider):
         return False
 
     async def complete(
-        self, system: str, user: str, attachment: Attachment | None = None
+        self,
+        system: str,
+        user: str,
+        attachment: Attachment | None = None,
+        *,
+        json_mode: bool = True,
     ) -> str:
+        # `json_mode` ne change rien ici : la Messages API n'a pas de mode JSON
+        # global, le format tient à la consigne. Le paramètre existe pour que
+        # tous les fournisseurs présentent la même signature.
         import anthropic
 
         content: list[dict] = []
@@ -98,7 +113,16 @@ class AnthropicProvider(BaseLLMProvider):
             )
         except anthropic.AuthenticationError as exc:
             raise LLMConfigError(f"Anthropic rejected the API key: {exc}") from exc
+        except anthropic.RateLimitError as exc:
+            # Survivre aux quatre tentatives veut dire que la limite n'est pas
+            # celle de la minute : c'est l'allocation. Une chaîne de secours
+            # doit pouvoir le distinguer d'une panne.
+            raise LLMQuotaError(f"Anthropic rate limit persists: {exc}") from exc
         except anthropic.APIStatusError as exc:
+            if exc.status_code in (402, 429):
+                raise LLMQuotaError(
+                    f"Anthropic returned HTTP {exc.status_code}: {exc.message}"
+                ) from exc
             raise LLMError(f"Anthropic returned HTTP {exc.status_code}: {exc.message}") from exc
 
         # A refusal is a successful HTTP 200 with empty or partial content —

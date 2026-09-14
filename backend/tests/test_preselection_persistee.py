@@ -149,7 +149,13 @@ async def test_la_notation_est_persistee_avec_son_detail():
             await db.execute(select(Notation).where(Notation.candidature_id == candidature.id))
         ).scalar_one()
         codes = {ligne.code for ligne in stocke.lignes}
-        assert codes == {"FORMATION", "EXPERIENCE_GENERALE", "EXPERIENCE_SPECIFIQUE", "AJOUTS"}
+        # Le barème du cabinet : quatre critères, sans ligne « ajouts ».
+        assert codes == {
+            "CONSISTANCE",
+            "FORMATION",
+            "EXPERIENCE_GENERALE",
+            "EXPERIENCE_SPECIFIQUE",
+        }
         for ligne in stocke.lignes:
             assert ligne.detail
 
@@ -163,7 +169,8 @@ async def test_le_bareme_est_fige_dans_la_notation():
         await db.commit()
 
         assert notation.bareme_utilise["total_max"] == 30.0
-        assert notation.bareme_utilise["formation"]["points_max"] == 10.0
+        assert notation.bareme_utilise["formation"]["points_max"] == 7.0
+        assert notation.bareme_utilise["consistance"]["points_max"] == 3.0
 
 
 async def test_un_dossier_incomplet_est_elimine_avec_le_motif():
@@ -302,6 +309,33 @@ async def test_la_note_manuelle_survit_au_recalcul():
 
         assert float(recalculee.note_manuelle) == 27.0
         assert recalculee.note_retenue == 27.0
+
+
+async def test_la_note_manuelle_decide_aussi_du_seuil():
+    """Une note saisie à la main classe, ou elle ne sert à rien.
+
+    Le franchissement du seuil se jugeait sur le calcul seul : un dossier
+    remonté à 27 sous un seuil de 26 restait « sous le seuil », et la grille
+    affichait 27/30 dans l'onglet des non-retenus sans qu'aucune ligne
+    n'explique pourquoi.
+    """
+    async with SessionLocal() as db:
+        poste = await monter_poste(db)
+        poste.seuil_preselection = 26.0
+        candidature = await monter_candidature(db, poste)
+        notation = await evaluer_candidature(db, candidature)
+        await db.flush()
+
+        assert float(notation.total) < 26.0, "le dossier de départ doit être sous le seuil"
+
+        notation.note_manuelle = 27.0
+        notation.note_manuelle_motif = "Diplôme étranger reconnu équivalent après vérification."
+        await db.flush()
+
+        await evaluer_candidature(db, candidature)
+        await db.commit()
+
+        assert candidature.statut is StatutCandidature.PRESELECTIONNEE
 
 
 async def test_la_restriction_du_poste_est_appliquee_depuis_la_base():

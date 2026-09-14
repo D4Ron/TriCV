@@ -81,7 +81,7 @@ def _footer(canvas, doc) -> None:
     canvas.saveState()
     canvas.setFont("Helvetica", 7.5)
     canvas.setFillColor(MUTED)
-    canvas.drawString(18 * mm, 12 * mm, "TriCV")
+    canvas.drawString(18 * mm, 12 * mm, "Kapi Consult · TriCV")
     canvas.drawRightString(A4[0] - 18 * mm, 12 * mm, str(canvas.getPageNumber()))
     canvas.setStrokeColor(RULE)
     canvas.setLineWidth(0.4)
@@ -298,7 +298,7 @@ def render(data: ExportData) -> bytes:
         buffer,
         pagesize=A4,
         title=f"{data.label('title')} — {data.session.title}",
-        author="TriCV",
+        author="Kapi Consult",
         leftMargin=18 * mm,
         rightMargin=18 * mm,
         topMargin=18 * mm,

@@ -15,7 +15,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from app.domain.referentiel import NiveauDiplome, Sexe, normaliser_domaine
+from app.domain.referentiel import (
+    NiveauDiplome,
+    Sexe,
+    domaine_correspond,
+    normaliser_domaine,
+)
 
 
 def _mois_entre(debut: date, fin: date) -> int:
@@ -60,11 +65,19 @@ class Experience:
         return self.debut, min(self.fin or reference, reference)
 
     def concerne(self, domaines: frozenset[str]) -> bool:
-        """Vrai si l'expérience relève d'au moins un des domaines visés."""
+        """Vrai si l'expérience relève d'au moins un des domaines visés.
+
+        Le rapprochement passe par `domaine_correspond` et non par l'égalité :
+        une expérience étiquetée « comptabilité générale et analytique » relève
+        bien de la « comptabilité générale » que le poste attend.
+        """
         if not domaines:
             return True
-        cibles = frozenset(normaliser_domaine(d) for d in domaines)
-        return bool(self.domaines_normalises & cibles)
+        return any(
+            domaine_correspond(declare, attendu)
+            for declare in self.domaines
+            for attendu in domaines
+        )
 
 
 def fusionner_intervalles(intervalles: list[tuple[date, date]]) -> list[tuple[date, date]]:
@@ -140,10 +153,19 @@ class ProfilCandidat:
         return principal.niveau if principal else None
 
     def diplomes_dans(self, domaines: frozenset[str]) -> tuple[Diplome, ...]:
+        """Les diplômes qui relèvent d'un des domaines acceptés.
+
+        Même rapprochement que pour les expériences : un « Master en sciences
+        comptables » relève de la « comptabilité » attendue, et l'exiger au mot
+        près écartait des diplômes parfaitement conformes.
+        """
         if not domaines:
             return self.diplomes
-        cibles = frozenset(normaliser_domaine(d) for d in domaines)
-        return tuple(d for d in self.diplomes if d.domaine_normalise in cibles)
+        return tuple(
+            d
+            for d in self.diplomes
+            if any(domaine_correspond(d.domaine, attendu) for attendu in domaines)
+        )
 
     def mois_experience(self, reference: date) -> int:
         return duree_mois(self.experiences, reference)
@@ -195,6 +217,73 @@ SANS_RESTRICTION = RestrictionPoste()
 
 
 @dataclass(frozen=True, slots=True)
+class GroupePieces:
+    """Un ensemble de pièces et la règle qui les lie.
+
+    Une pièce exigée seule est le cas courant, mais deux situations réelles ne
+    s'expriment pas ainsi :
+
+    - « une carte d'identité **ou** un passeport » : exiger les deux
+      éliminerait des candidats parfaitement en règle ;
+    - « le diplôme **et** l'attestation de travail » : n'en exiger qu'une
+      laisserait passer un dossier incomplet.
+
+    D'où deux modes seulement. `TOUTES` reproduit exactement l'ancien
+    comportement, ce qui permet de convertir sans rien changer aux résultats.
+    """
+
+    codes: frozenset[str]
+    mode: str = "TOUTES"  # TOUTES | AU_MOINS_UNE
+    libelle: str = ""
+
+    def satisfait(self, fournies: frozenset[str]) -> bool:
+        if not self.codes:
+            return True
+        if self.mode == "AU_MOINS_UNE":
+            return bool(self.codes & fournies)
+        return self.codes <= fournies
+
+    def manquantes(self, fournies: frozenset[str]) -> frozenset[str]:
+        """Ce qu'il reste à fournir pour satisfaire le groupe.
+
+        Pour un groupe « au moins une », toutes les options restent
+        acceptables tant qu'aucune n'est arrivée : on les nomme donc toutes,
+        car le candidat choisit laquelle envoyer.
+        """
+        if self.satisfait(fournies):
+            return frozenset()
+        if self.mode == "AU_MOINS_UNE":
+            return self.codes
+        return self.codes - fournies
+
+
+@dataclass(frozen=True, slots=True)
+class ExigenceSpecifique:
+    """Une expérience spécifique attendue : un métier, ses domaines, son seuil.
+
+    Un avis en énonce souvent plusieurs — « 5 ans en passation de marchés
+    **et** 3 ans en gestion de projet ». Réunies en un seul jeu de domaines,
+    comme elles l'étaient, ces deux exigences devenaient une seule : huit
+    années passées dans l'un des deux suffisaient, et un candidat n'ayant
+    jamais conduit de projet franchissait la barre.
+
+    `poids` répartit les points de l'expérience spécifique entre les
+    exigences. Égal par défaut : rien n'autorise à supposer qu'une compte
+    davantage tant que personne ne l'a dit.
+    """
+
+    libelle: str = ""
+    domaines: frozenset[str] = field(default_factory=frozenset)
+    annees_min: int = 0
+    poids: float = 1.0
+
+    @property
+    def nom(self) -> str:
+        """De quoi nommer l'exigence dans une grille ou un motif."""
+        return self.libelle.strip() or ", ".join(sorted(self.domaines)) or "le domaine du poste"
+
+
+@dataclass(frozen=True, slots=True)
 class ExigencesPoste:
     """Ce que l'avis exige, sous forme comparable."""
 
@@ -203,8 +292,19 @@ class ExigencesPoste:
     annees_experience_min: int = 0
     annees_experience_specifique_min: int = 0
     domaines_experience: frozenset[str] = field(default_factory=frozenset)
+    # Vide = une seule exigence, décrite par les deux champs ci-dessus. C'est
+    # la forme historique, et elle reste la plus fréquente : la liste ne se
+    # remplit que lorsqu'un avis distingue vraiment plusieurs métiers.
+    experiences_specifiques: tuple[ExigenceSpecifique, ...] = ()
     pieces_requises: frozenset[str] = field(default_factory=frozenset)
+    # Groupes de pieces liees par « toutes » ou « au moins une ». Vides,
+    # seule `pieces_requises` s'applique — l'ancien comportement, inchange.
+    groupes_pieces: tuple[GroupePieces, ...] = ()
     langues_requises: frozenset[str] = field(default_factory=frozenset)
+    # Ce que l'avis dit souhaiter en plus du diplôme. Jamais éliminatoire — un
+    # souhait n'est pas une exigence — mais notable si le barème du poste lui
+    # accorde des points.
+    formation_complementaire: str = ""
     restriction: RestrictionPoste = SANS_RESTRICTION
     # Date de clôture de l'avis : sert de référence à l'âge comme à
     # l'ancienneté, pour que la grille soit reproductible dans le temps.
@@ -217,3 +317,21 @@ class ExigencesPoste:
     @property
     def mois_experience_specifique_min(self) -> int:
         return self.annees_experience_specifique_min * 12
+
+    @property
+    def specifiques(self) -> tuple[ExigenceSpecifique, ...]:
+        """Les exigences spécifiques à évaluer, forme ancienne comprise.
+
+        Un poste qui n'en déclare aucune en a tout de même une : celle que
+        portent `annees_experience_specifique_min` et `domaines_experience`.
+        Tout le moteur travaille donc sur une liste, et le cas à une exigence
+        — de loin le plus courant — reste noté exactement comme avant.
+        """
+        if self.experiences_specifiques:
+            return self.experiences_specifiques
+        return (
+            ExigenceSpecifique(
+                domaines=self.domaines_experience,
+                annees_min=self.annees_experience_specifique_min,
+            ),
+        )

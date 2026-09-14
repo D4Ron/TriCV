@@ -280,7 +280,10 @@ async def test_non_document_uploads_are_rejected_on_magic_bytes(client, auth):
     )
     assert response.status_code == 202
     assert response.json()["accepted"] == 0
-    assert "PDF and Word" in response.json()["results"][0]["error"]
+    # Le refus nomme le fichier : sur un lot, « un fichier a été refusé » sans
+    # dire lequel n'aide personne.
+    erreur = response.json()["results"][0]["error"]
+    assert "evil.pdf" in erreur and "Word" in erreur
 
 
 async def test_duplicate_files_are_flagged_not_blocked(client, auth, stub_provider):

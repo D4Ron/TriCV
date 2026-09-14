@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 import httpx
 
 from app.config import settings
-from app.llm.base import LLMError
+from app.llm.base import LLMError, LLMQuotaError
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,15 @@ T = TypeVar("T")
 BACKOFF_SECONDS = (1, 2, 4, 8)
 MAX_ATTEMPTS = 4
 RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+# Les mots par lesquels un fournisseur annonce une allocation épuisée sur un
+# code qui, autrement, veut dire « accès refusé ».
+_MOTS_DE_QUOTA = ("quota", "credit", "billing", "insufficient", "exceeded", "exhausted")
+
+
+def _parle_de_quota(corps: str) -> bool:
+    minuscules = corps.lower()
+    return any(mot in minuscules for mot in _MOTS_DE_QUOTA)
 
 
 async def post_json(
@@ -34,6 +43,11 @@ async def post_json(
     raised on the first attempt rather than retried four times.
     """
     last_error: Exception | None = None
+    # Un 429 qui survit aux quatre tentatives n'est plus une limite par minute :
+    # c'est l'allocation du jour. On le dit à l'appelant plutôt que de le noyer
+    # dans une panne générique, pour qu'une chaîne de fournisseurs sache qu'il
+    # faut passer au suivant et non réessayer.
+    dernier_429 = False
 
     async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
         for attempt in range(MAX_ATTEMPTS):
@@ -41,6 +55,7 @@ async def post_json(
                 response = await client.post(url, json=json, headers=headers or {})
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = exc
+                dernier_429 = False
                 logger.warning("[%s] transport error on attempt %d: %s", provider, attempt + 1, exc)
             else:
                 if response.status_code < 400:
@@ -52,8 +67,21 @@ async def post_json(
                         ) from exc
 
                 body = response.text[:500]
-                if response.status_code not in RETRY_STATUS:
+                if response.status_code == 429:
+                    dernier_429 = True
+                elif response.status_code not in RETRY_STATUS:
+                    # 402 et 403 disent parfois « plus de crédit » plutôt que
+                    # « accès refusé ». Les traiter en quota laisse la chaîne
+                    # essayer le suivant ; une clé vraiment invalide échouera
+                    # de la même façon chez lui, et le message d'origine est
+                    # conservé.
+                    if response.status_code in (402, 403) and _parle_de_quota(body):
+                        raise LLMQuotaError(
+                            f"{provider} returned HTTP {response.status_code}: {body}"
+                        )
                     raise LLMError(f"{provider} returned HTTP {response.status_code}: {body}")
+                else:
+                    dernier_429 = False
 
                 last_error = LLMError(f"HTTP {response.status_code}: {body}")
                 logger.warning(
@@ -66,7 +94,8 @@ async def post_json(
                 delay = BACKOFF_SECONDS[attempt] * (1 + random.random() * 0.25)
                 await asyncio.sleep(delay)
 
-    raise LLMError(f"{provider} unreachable after {MAX_ATTEMPTS} attempts: {last_error}")
+    message = f"{provider} unreachable after {MAX_ATTEMPTS} attempts: {last_error}"
+    raise LLMQuotaError(message) if dernier_429 else LLMError(message)
 
 
 async def retry_async(

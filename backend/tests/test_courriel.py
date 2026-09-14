@@ -198,6 +198,7 @@ async def test_une_piece_jointe_non_supportee_est_ignoree_sans_echec():
 
 
 async def test_un_message_sans_reference_n_est_pas_rattache_au_hasard():
+    """Sans référence, le dossier ne rejoint aucun poste — surtout pas le seul ouvert."""
     async with SessionLocal() as db:
         await monter_poste(db)
         await db.commit()
@@ -208,7 +209,44 @@ async def test_un_message_sans_reference_n_est_pas_rattache_au_hasard():
         await db.commit()
 
         assert resultat.crees == 0
+        assert resultat.spontanees == 1
+
+        candidature = (await db.execute(select(Candidature))).scalar_one()
+        assert candidature.poste_id is None
+        assert candidature.spontanee is True
+
+
+async def test_un_message_sans_reference_reste_de_cote_si_les_spontanees_sont_fermees():
+    async with SessionLocal() as db:
+        await monter_poste(db)
+        await db.commit()
+
+        resultat = await courriel.relever(
+            db,
+            BoiteFactice([construire_message(sujet="Candidature spontanée")]),
+            accepter_spontanees=False,
+        )
+        await db.commit()
+
+        assert resultat.crees == 0
+        assert resultat.spontanees == 0
         assert resultat.non_rattaches == ["Candidature spontanée"]
+        assert (await db.execute(select(Candidature))).scalars().all() == []
+
+
+async def test_un_message_sans_reference_ni_piece_reste_non_rattache():
+    """Rien à en tirer : ni avis, ni CV. Il attend une lecture humaine."""
+    async with SessionLocal() as db:
+        await monter_poste(db)
+        await db.commit()
+
+        resultat = await courriel.relever(
+            db, BoiteFactice([construire_message(sujet="Bonjour", pieces=())])
+        )
+        await db.commit()
+
+        assert resultat.spontanees == 0
+        assert resultat.non_rattaches == ["Bonjour"]
         assert (await db.execute(select(Candidature))).scalars().all() == []
 
 
@@ -267,7 +305,9 @@ async def test_plusieurs_messages_en_un_releve():
         await db.commit()
 
         assert resultat.crees == 2
-        assert len(resultat.non_rattaches) == 1
+        # Le troisième n'a pas de référence : il devient une candidature
+        # spontanée plutôt que d'être écarté.
+        assert resultat.spontanees == 1
 
 
 async def test_un_dossier_identique_renvoye_par_email_est_ignore():

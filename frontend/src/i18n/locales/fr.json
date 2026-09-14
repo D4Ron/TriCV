@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "TriCV",
-    "tagline": "TriCV classe et recommande. Les RH décident.",
+    "tagline": "TriCV classe et recommande. Les RH de Kapi Consult décident.",
     "loading": "Chargement…",
     "saving": "Enregistrement…",
     "retry": "Réessayer",

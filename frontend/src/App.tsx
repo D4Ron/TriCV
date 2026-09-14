@@ -15,6 +15,7 @@ import SessionDetailPage from '@/pages/SessionDetailPage'
 import SettingsPage from '@/pages/SettingsPage'
 import ApplyPage from '@/pages/ApplyPage'
 import CareersPage from '@/pages/CareersPage'
+import EspaceClientPage, { ActivationEspaceClient } from '@/pages/EspaceClientPage'
 import { useAuthStore } from '@/store/auth'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -42,6 +43,10 @@ export default function App() {
       {/* Public — no auth, no chrome. Candidates never sign in. */}
       <Route path="/careers" element={<CareersPage />} />
       <Route path="/apply/:publicKey" element={<ApplyPage />} />
+      {/* L'espace du promoteur. Porte séparée de celle du cabinet, jusque dans
+          le type de jeton : un accès client n'ouvre aucune route interne. */}
+      <Route path="/espace-client" element={<EspaceClientPage />} />
+      <Route path="/espace-client/activation/:jeton" element={<ActivationEspaceClient />} />
       <Route path="/login" element={<LoginPage />} />
       {/* HR self-registration. The page itself reports when it is disabled. */}
       <Route path="/signup" element={<SignupPage />} />

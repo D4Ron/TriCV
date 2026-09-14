@@ -29,6 +29,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.referentiel import PieceDossier
 from app.models import (
+    AccesClient,
+    AuteurEchange,
+    EchangeClient,
+    TypeEchange,
     Avis,
     Candidat,
     Candidature,
@@ -326,6 +330,9 @@ def type_de_piece(nom_fichier: str) -> str:
 class ResultatReleve:
     crees: int = 0
     ignores: int = 0
+    spontanees: int = 0
+    # Réponses de promoteurs versées au fil de leur mandat.
+    echanges_client: int = 0
     non_rattaches: list[str] = field(default_factory=list)
     sans_piece: list[str] = field(default_factory=list)
 
@@ -338,7 +345,7 @@ async def _deja_recu(db: AsyncSession, message_id: str) -> bool:
 
 
 async def creer_depuis_message(
-    db: AsyncSession, message: MessageEntrant, poste: Poste
+    db: AsyncSession, message: MessageEntrant, poste: Poste | None
 ) -> Candidature:
     nom, prenom = nom_prenom(message)
     candidat = Candidat(
@@ -352,12 +359,17 @@ async def creer_depuis_message(
     await db.flush()
 
     candidature = Candidature(
-        poste_id=poste.id,
+        poste_id=poste.id if poste is not None else None,
         candidat_id=candidat.id,
         source=SourceCandidature.EMAIL,
         recue_le=message.recu_le,
         message_id=message.message_id,
-        notes_rh=f"Reçu par email — objet : {message.sujet}",
+        spontanee=poste is None,
+        notes_rh=(
+            f"Reçu par email — objet : {message.sujet}"
+            if poste is not None
+            else f"Candidature spontanée reçue par email — objet : {message.sujet}"
+        ),
     )
     db.add(candidature)
     await db.flush()
@@ -411,12 +423,15 @@ async def apercu(
             for p in message.pieces
         ]
         nom, prenom = nom_prenom(message)
+        acces = await acces_de_l_expediteur(db, message)
         if await _deja_recu(db, message.message_id):
             action = "deja_recu"
-        elif poste is None:
-            action = "non_rattache"
+        elif acces is not None:
+            action = "reponse_du_promoteur"
         elif not any(p["retenue"] for p in pieces):
             action = "aucune_piece_exploitable"
+        elif poste is None:
+            action = "creerait_une_candidature_spontanee"
         else:
             action = "creerait_une_candidature"
 
@@ -435,13 +450,83 @@ async def apercu(
     return lignes
 
 
+async def acces_de_l_expediteur(db: AsyncSession, message: MessageEntrant) -> AccesClient | None:
+    """L'accès client correspondant à l'expéditeur, s'il y en a un d'ouvert.
+
+    Un promoteur qui répond à un message du cabinet écrit depuis l'adresse à
+    laquelle son accès a été ouvert. C'est un rattachement sûr — bien plus que
+    la référence d'avis cherchée dans un objet — et il vaut d'être tenté en
+    premier.
+    """
+    adresse = (message.expediteur or "").strip().lower()
+    if not adresse:
+        return None
+    return (
+        await db.execute(
+            select(AccesClient)
+            .where(AccesClient.email == adresse, AccesClient.revoque_le.is_(None))
+            .order_by(AccesClient.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _deja_verse(db: AsyncSession, message_id: str) -> bool:
+    """Ce message a-t-il déjà rejoint un fil ? Le relevé doit être rejouable."""
+    if not message_id:
+        return False
+    return (
+        await db.execute(
+            select(EchangeClient.id).where(EchangeClient.message_id == message_id).limit(1)
+        )
+    ).scalar_one_or_none() is not None
+
+
+async def verser_au_fil(
+    db: AsyncSession, message: MessageEntrant, acces: AccesClient
+) -> EchangeClient:
+    """Range la réponse du promoteur dans le fil de son mandat.
+
+    Le corps est repris tel quel, sans tentative de retirer la citation du
+    message précédent : un découpage approximatif amputerait parfois la
+    réponse elle-même, et une citation en trop se lit sans peine.
+    """
+    echange = EchangeClient(
+        mandat_id=acces.mandat_id,
+        auteur=AuteurEchange.CLIENT,
+        auteur_nom=acces.nom,
+        type_echange=TypeEchange.MESSAGE,
+        objet=(message.sujet or None),
+        corps=message.corps.strip() or "(message sans texte)",
+        message_id=message.message_id,
+        envoye_le=message.recu_le,
+    )
+    db.add(echange)
+    await db.flush()
+    return echange
+
+
 async def relever(
-    db: AsyncSession, source: SourceCourriel, limite: int = 50
+    db: AsyncSession,
+    source: SourceCourriel,
+    limite: int = 50,
+    accepter_spontanees: bool = True,
 ) -> ResultatReleve:
-    """Relève la boîte et crée les candidatures rattachables.
+    """Relève la boîte et crée les candidatures.
 
     Un message déjà reçu est ignoré : le relevé peut donc être rejoué sans
     créer de doublons, ce qui compte si le marquage « lu » échoue.
+
+    Un message sans référence d'avis mais porteur d'un CV lisible devient une
+    **candidature spontanée** : le profil rejoint le vivier sans poste, prêt à
+    ressortir le jour où un mandat lui correspond. Auparavant il était
+    simplement signalé « non rattaché » et laissé de côté, ce qui revenait à
+    jeter des candidatures que le cabinet avait bel et bien reçues.
+
+    Un message venant d'un promoteur — reconnu à son adresse — rejoint le fil de
+    son mandat plutôt que la file des candidatures. Sans quoi sa réponse restait
+    dans la boîte, invisible de l'écran où le reste de l'échange se lit, et le
+    fil « à côté du dossier » n'était vrai qu'à moitié.
     """
     resultat = ResultatReleve()
 
@@ -451,10 +536,20 @@ async def relever(
             source.marquer_traite(message.message_id)
             continue
 
-        poste = await poste_du_message(db, message)
-        if poste is None:
-            resultat.non_rattaches.append(message.sujet or message.expediteur)
+        # Le promoteur d'abord : il écrit depuis une adresse connue, et sa
+        # réponse n'est jamais une candidature — même si elle porte une pièce
+        # jointe, qui serait alors un document de travail et non un CV.
+        acces = await acces_de_l_expediteur(db, message)
+        if acces is not None:
+            if not await _deja_verse(db, message.message_id):
+                await verser_au_fil(db, message, acces)
+                resultat.echanges_client += 1
+            else:
+                resultat.ignores += 1
+            source.marquer_traite(message.message_id)
             continue
+
+        poste = await poste_du_message(db, message)
 
         # Un message sans pièce lisible — accusé de réception, question,
         # réponse automatique — n'est pas une candidature. Le créer polluerait
@@ -465,16 +560,30 @@ async def relever(
             if extraction.sniff_mime(p.donnees, p.nom) in extraction.ALLOWED_MIME_TYPES
         ]
         if not empreintes:
-            resultat.sans_piece.append(message.sujet or message.expediteur)
+            # Sans référence *et* sans pièce, il n'y a rien à en tirer : le
+            # message reste non lu pour qu'une personne le regarde.
+            if poste is None:
+                resultat.non_rattaches.append(message.sujet or message.expediteur)
+            else:
+                resultat.sans_piece.append(message.sujet or message.expediteur)
             continue
 
-        if await doublons.trouver_identique(db, poste.id, empreintes):
+        if poste is None and not accepter_spontanees:
+            resultat.non_rattaches.append(message.sujet or message.expediteur)
+            continue
+
+        if await doublons.trouver_identique(
+            db, poste.id if poste is not None else None, empreintes
+        ):
             resultat.ignores += 1
             source.marquer_traite(message.message_id)
             continue
 
         await creer_depuis_message(db, message, poste)
-        resultat.crees += 1
+        if poste is None:
+            resultat.spontanees += 1
+        else:
+            resultat.crees += 1
         source.marquer_traite(message.message_id)
 
     return resultat

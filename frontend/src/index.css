@@ -11,7 +11,14 @@
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   }
   :focus-visible {
-    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-white;
+    @apply outline-none ring-2 ring-brand-600 ring-offset-2 ring-offset-white;
+  }
+
+  /* Playfair Display pour les titres de page, comme sur kapiconsult.tg. Une
+     serif sur les seuls h1 : elle signe l'écran sans gêner la lecture des
+     tableaux, qui restent en DM Sans. */
+  h1 {
+    @apply font-titre;
   }
 }
 
@@ -20,15 +27,33 @@
     @apply rounded-xl border border-ink-200 bg-white shadow-card;
   }
 
+  /* Une carte sur laquelle on peut cliquer le dit au survol : l'ombre se
+     creuse et la bordure se marque. Rien ne bouge de place — un déplacement
+     ferait sauter la ligne voisine dans une liste dense. */
+  .card-interactive {
+    @apply card transition-[box-shadow,border-color] duration-180 ease-out-soft
+           hover:border-brand-300 hover:shadow-card-hover;
+  }
+
+  /* Une carte de tête — celle qui porte l'objet de l'écran — se distingue par
+     un filet or à gauche, repris du liseré de l'en-tête. */
+  .card-marquee {
+    @apply card border-l-4 border-l-or-500;
+  }
+
   .btn {
     @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm
-           font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+           font-medium transition-[background-color,color,border-color,transform] duration-120
+           ease-out disabled:cursor-not-allowed disabled:opacity-50
+           active:scale-[0.98] disabled:active:scale-100;
   }
+  /* Le bleu profond de la marque porte l'action principale. */
   .btn-primary {
-    @apply btn bg-ink-900 text-white hover:bg-ink-800;
+    @apply btn bg-brand-700 text-white hover:bg-brand-800;
   }
   .btn-secondary {
-    @apply btn border border-ink-200 bg-white text-ink-700 hover:bg-ink-50;
+    @apply btn border border-ink-200 bg-white text-ink-700
+           hover:border-brand-200 hover:bg-brand-50 hover:text-brand-800;
   }
   .btn-ghost {
     @apply btn text-ink-600 hover:bg-ink-100;
@@ -39,8 +64,8 @@
 
   .input {
     @apply w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900
-           placeholder:text-ink-400 focus:border-brand-500 focus:outline-none
-           focus:ring-1 focus:ring-brand-500;
+           placeholder:text-ink-400 transition-[border-color,box-shadow] duration-120 ease-out
+           focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600;
   }
   .label {
     @apply mb-1.5 block text-sm font-medium text-ink-700;
@@ -55,16 +80,34 @@
   .table-head {
     @apply bg-ink-50 text-left text-xs font-semibold uppercase tracking-wide text-ink-500;
   }
+
+  /* Ligne de tableau cliquable : le fond seul change, en douceur. */
+  .row-interactive {
+    @apply cursor-pointer transition-colors duration-120 ease-out hover:bg-ink-50;
+  }
 }
 
-/* The drawer slides in; respect a reduced-motion preference. */
-@keyframes slide-in {
-  from { transform: translateX(1.5rem); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+@layer utilities {
+  /* Apparition échelonnée d'une liste.
+     Le décalage est appliqué en style inline par le composant et plafonné :
+     au-delà de quelques éléments, l'escalier devient une file d'attente. */
+  .stagger {
+    animation-delay: var(--delai, 0ms);
+  }
 }
-.animate-slide-in {
-  animation: slide-in 160ms ease-out;
-}
+
+/* --- mouvement réduit ------------------------------------------------------
+   Une seule règle, générale, plutôt qu'une exception par animation : la
+   prochaine animation ajoutée est couverte d'office. Les transitions ne sont
+   pas supprimées mais ramenées à l'instantané, ce qui évite qu'un état à
+   moitié appliqué reste figé. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-slide-in { animation: none; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

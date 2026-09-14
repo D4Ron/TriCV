@@ -35,7 +35,7 @@ async def depot(client, auth, poste_id, fichiers):
     )
 
 
-async def test_depot_multiple_cree_une_candidature_par_fichier(client, auth):
+async def test_depot_multiple_cree_une_candidature_par_candidat(client, auth):
     poste_id = await monter_poste(client, auth)
     reponse = await depot(
         client, auth, poste_id, [("kodjo_amina.pdf", PDF_A), ("mensah_kofi.pdf", PDF_B)]
@@ -47,8 +47,14 @@ async def test_depot_multiple_cree_une_candidature_par_fichier(client, auth):
 
     page = (await client.get(f"{API}/postes/{poste_id}/candidatures", headers=auth)).json()
     assert page["total"] == 2
-    # Le nom du fichier sert d'identité provisoire.
-    assert {i["nom"] for i in page["items"]} == {"kodjo_amina", "mensah_kofi"}
+    # Le nom du fichier sert d'identité provisoire, débarrassé de ses
+    # séparateurs, puis réparti entre nom et prénom : « kodjo_amina.pdf »
+    # remplit les deux colonnes de la grille. Versé d'un bloc dans le nom, il
+    # laissait la colonne « prénom » vide sur tout dossier arrivé en lot.
+    assert {(i["nom"], i["prenom"]) for i in page["items"]} == {
+        ("kodjo", "amina"),
+        ("mensah", "kofi"),
+    }
 
 
 async def test_les_dossiers_deposes_en_lot_attendent_une_relecture(client, auth):

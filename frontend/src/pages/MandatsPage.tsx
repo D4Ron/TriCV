@@ -2,7 +2,16 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi } from '@/lib/api'
-import { Badge, EmptyState, ErrorState, Field, Modal, PageLoader, Spinner } from '@/components/ui'
+import {
+  Badge,
+  EmptyState,
+  ErrorState,
+  Field,
+  Modal,
+  PageLoader,
+  Spinner,
+  delaiListe,
+} from '@/components/ui'
 import GuidePipeline from '@/components/GuidePipeline'
 import PanneauCourriel from '@/components/PanneauCourriel'
 import ActionsMandat from '@/components/ActionsMandat'
@@ -214,10 +223,11 @@ export default function MandatsPage() {
         />
       ) : (
         <div className="grid gap-3">
-          {mandats.data?.map((mandat) => (
+          {mandats.data?.map((mandat, index) => (
             <div
               key={mandat.id}
-              className="card flex flex-wrap items-center gap-3 p-4 transition-colors hover:border-ink-300"
+              className="card-interactive stagger flex animate-rise flex-wrap items-center gap-3 p-4"
+              style={delaiListe(index)}
             >
               <Link to={`/mandats/${mandat.id}`} className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-ink-900">{mandat.intitule}</p>

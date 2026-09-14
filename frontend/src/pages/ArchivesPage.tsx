@@ -1,8 +1,16 @@
-import { useState, type ReactNode } from 'react'
+import { useState, type CSSProperties, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ApiError, recrutementApi, type PurgeResultat } from '@/lib/api'
-import { Callout, EmptyState, ErrorState, Modal, PageLoader, Spinner } from '@/components/ui'
+import {
+  Callout,
+  EmptyState,
+  ErrorState,
+  Modal,
+  PageLoader,
+  Spinner,
+  delaiListe,
+} from '@/components/ui'
 import { formatDate } from '@/lib/format'
 
 /**
@@ -118,6 +126,7 @@ function LigneArchivee({
   supprimer,
   onChange,
   actions,
+  delai,
 }: {
   titre: string
   soustitre: string
@@ -127,6 +136,7 @@ function LigneArchivee({
   supprimer: (confirmer: boolean) => Promise<{ candidatures: number }>
   onChange: () => void
   actions?: ReactNode
+  delai?: CSSProperties
 }) {
   const [confirmation, setConfirmation] = useState<string | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
@@ -153,7 +163,7 @@ function LigneArchivee({
   })
 
   return (
-    <div className="card flex flex-wrap items-center gap-3 p-4">
+    <div className="card stagger flex animate-rise flex-wrap items-center gap-3 p-4" style={delai}>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold text-ink-900">{titre}</p>
         <p className="mt-0.5 truncate text-xs text-ink-500">
@@ -275,9 +285,10 @@ export default function ArchivesPage() {
                 Mandats <span className="font-normal text-ink-400">({mandatsArchives.length})</span>
               </h2>
               <div className="grid gap-3">
-                {mandatsArchives.map((mandat) => (
+                {mandatsArchives.map((mandat, index) => (
                   <LigneArchivee
                     key={mandat.id}
+                    delai={delaiListe(index)}
                     titre={mandat.intitule}
                     soustitre={mandat.client_nom ?? '—'}
                     date={mandat.archive_le}
@@ -298,9 +309,10 @@ export default function ArchivesPage() {
                 Clients <span className="font-normal text-ink-400">({clientsArchives.length})</span>
               </h2>
               <div className="grid gap-3">
-                {clientsArchives.map((client) => (
+                {clientsArchives.map((client, index) => (
                   <LigneArchivee
                     key={client.id}
+                    delai={delaiListe(index)}
                     titre={client.nom}
                     soustitre={client.secteur ?? '—'}
                     date={client.archive_le}

@@ -22,21 +22,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.referentiel import PieceDossier, Sexe, TypeAvis
 from app.models import (
+    AccesClient,
     Avis,
     Candidat,
     Candidature,
     Client,
     DiplomeCandidat,
+    EchangeClient,
+    EtapeMandat,
     ExperienceCandidat,
     Mandat,
+    MessageEnvoye,
+    ModeleDocument,
     PieceCandidature,
     Poste,
     Provenance,
+    Rapport,
     SourceCandidature,
     StatutAvis,
     StatutMandat,
 )
-from app.services import storage
+from app.services import entretiens, storage
 from app.services.preselection import charger_candidature, evaluer_candidature
 
 logger = logging.getLogger(__name__)
@@ -265,9 +271,48 @@ async def _creer_candidature(
     return chargee
 
 
+async def _semer_entretien(
+    db: AsyncSession,
+    candidature: Candidature,
+    *,
+    jure: str,
+    notes: dict[str, float],
+    commentaires: dict[str, str] | None = None,
+    jury: str = "",
+    observations: str = "",
+) -> None:
+    """Une fiche d'entretien de démonstration, passée par le service réel.
+
+    Écrire les lignes à la main donnerait une fiche que le service n'aurait pas
+    validée — et donc une démonstration qui ne prouve rien du chemin réel.
+
+    Une fiche par juré : le cabinet fait siéger un panel et retient la moyenne.
+    La démonstration doit le montrer, sinon l'écran des entretiens paraît prévu
+    pour une personne seule.
+    """
+    await entretiens.enregistrer(
+        db,
+        await charger_candidature(db, candidature.id),
+        entretiens.SaisieEntretien(
+            notes=notes,
+            commentaires=commentaires or {},
+            jure=jure,
+            date_entretien=CLOTURE,
+            jury=jury,
+            observations=observations,
+        ),
+    )
+
+
 async def _wipe(db: AsyncSession) -> None:
     """Rejouable : la démo est remplacée, jamais dupliquée."""
     # L'ordre suit les dépendances ; les cascades font le reste.
+    await db.execute(delete(EchangeClient))
+    await db.execute(delete(EtapeMandat))
+    await db.execute(delete(AccesClient))
+    await db.execute(delete(Rapport))
+    await db.execute(delete(MessageEnvoye))
+    await db.execute(delete(ModeleDocument))
     await db.execute(delete(Candidature))
     await db.execute(delete(Candidat))
     await db.execute(delete(Avis))
@@ -405,6 +450,11 @@ async def semer(db: AsyncSession) -> dict:
         "Entretien téléphonique très favorable ; expérience du secteur hospitalier."
     )
     await db.flush()
+    # Réévaluer : la catégorie remise au client suit la note retenue, et c'est
+    # ce que fait l'application quand une note est saisie. Écrire la note sans
+    # ce passage donnerait une démonstration qui ne se comporte pas comme le
+    # produit — un dossier à 27/30 étiqueté « partiellement qualifié ».
+    await evaluer_candidature(db, await charger_candidature(db, seconde.id))
 
     # Un motif levé sur le dossier incomplet : la pièce est arrivée à part.
     incomplet = creees[7]
@@ -413,6 +463,67 @@ async def semer(db: AsyncSession) -> dict:
         motif.leve_motif = "Lettre de motivation reçue séparément par email, versée au dossier."
     await db.flush()
     await evaluer_candidature(db, await charger_candidature(db, incomplet.id))
+
+    # Deux entretiens saisis, dont un partiel : la démonstration doit montrer
+    # les deux étapes de la note sur 100, et la différence entre un résultat et
+    # un acquis en cours de séance.
+    JURY = "Mme Adjovi (DRH Dogta-Lafiè), M. Lawson (Kapi Consult)"
+
+    # Deux jurés sur le même dossier, avec des notes proches mais distinctes :
+    # c'est ce qui fait apparaître la moyenne et l'écart entre jurés, et donc
+    # la raison d'être du panel.
+    await _semer_entretien(
+        db,
+        creees[1],
+        jure="Mme Adjovi",
+        notes={
+            "PRESENTATION": 2,
+            "MOTIVATION": 2,
+            "RELATIONNELLES": 17,
+            "TECHNIQUES": 22,
+            "POTENTIEL": 17,
+            "CONNAISSANCES_CLIENT": 1,
+        },
+        commentaires={
+            "TECHNIQUES": "Maîtrise des outils de paie et du droit social togolais.",
+            "RELATIONNELLES": "Exemples précis de médiation d'un conflit d'équipe.",
+            "POTENTIEL": "A conduit une réorganisation de service sur deux ans.",
+        },
+        jury=JURY,
+        observations=(
+            "Candidate la plus solide du panel. Connaît le secteur hospitalier "
+            "et se projette dans le poste."
+        ),
+    )
+    await _semer_entretien(
+        db,
+        creees[1],
+        jure="M. Lawson",
+        notes={
+            "PRESENTATION": 1.5,
+            "MOTIVATION": 2,
+            "RELATIONNELLES": 15,
+            "TECHNIQUES": 23,
+            "POTENTIEL": 15,
+            "CONNAISSANCES_CLIENT": 1,
+        },
+        commentaires={
+            "PRESENTATION": "Exposé clair, un peu long sur la partie technique.",
+        },
+        jury=JURY,
+        observations="Profil solide, à confirmer sur la conduite du changement.",
+    )
+    # Une fiche partielle : la note sur 100 doit s'annoncer comme telle plutôt
+    # que de passer pour un résultat.
+    await _semer_entretien(
+        db,
+        creees[3],
+        jure="Mme Adjovi",
+        notes={"TECHNIQUES": 18, "RELATIONNELLES": 12},
+        commentaires={"TECHNIQUES": "Bonnes bases, moins à l'aise sur la GPEC."},
+        jury=JURY,
+        observations="Séance interrompue, à reprendre.",
+    )
 
     # --- 3. mandat de gré à gré, avec condition restrictive ----------------
     sarakawa = Client(nom="Groupe Hôtelier Sarakawa", secteur="Hôtellerie et restauration")

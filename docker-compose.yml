@@ -48,7 +48,20 @@ services:
     depends_on:
       - backend
 
-  # Local, fully offline LLM. Enable with:  docker compose --profile local-llm up
+  # Local, fully offline LLM. Nothing leaves the machine — the only option
+  # where a real candidate's CV never reaches a third party.
+  #
+  #   docker compose --profile local-llm up -d ollama
+  #   docker compose exec ollama ollama pull qwen3:8b     # ~5 Go, une fois
+  #
+  # puis dans .env :  LLM_PROVIDER=ollama  et  OLLAMA_MODEL=qwen3:8b
+  #
+  # Sans carte graphique, le modèle tourne sur le processeur : cela marche,
+  # comptez quelques minutes par dossier au lieu de quelques secondes. Avec une
+  # carte NVIDIA, décommentez le bloc `deploy` ci-dessous — il faut le NVIDIA
+  # Container Toolkit installé (sous Windows : Docker Desktop + WSL2, qui le
+  # fournit). Laisser le bloc actif sans carte fait échouer le démarrage, d'où
+  # le commentaire par défaut.
   ollama:
     image: ollama/ollama:latest
     profiles: ["local-llm"]
@@ -56,6 +69,13 @@ services:
       - tricv_ollama:/root/.ollama
     ports:
       - "11434:11434"
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
 volumes:
   tricv_pgdata:

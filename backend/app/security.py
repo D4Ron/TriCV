@@ -10,7 +10,11 @@ from app.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-TokenType = Literal["access", "refresh"]
+# « client » désigne le jeton d'un promoteur sur son espace de suivi. Le type
+# est vérifié au décodage, donc un jeton client ne peut pas ouvrir une route
+# interne même si la signature est la bonne : c'est la séparation des deux
+# portes, exprimée là où elle se vérifie.
+TokenType = Literal["access", "refresh", "client"]
 
 
 def hash_password(password: str) -> str:
@@ -43,6 +47,21 @@ def _create_token(subject: str, token_type: TokenType, expires: timedelta, **cla
 def create_access_token(user_id: str, role: str) -> str:
     return _create_token(
         user_id, "access", timedelta(minutes=settings.access_token_minutes), role=role
+    )
+
+
+def create_client_token(acces_id: str, mandat_id: str) -> str:
+    """Le jeton d'un promoteur, portant le mandat auquel il donne accès.
+
+    Le mandat figure dans le jeton pour que le périmètre soit lisible dès le
+    décodage ; il est malgré tout revérifié en base à chaque requête, un accès
+    pouvant être révoqué au milieu d'une session.
+    """
+    return _create_token(
+        acces_id,
+        "client",
+        timedelta(minutes=max(settings.access_token_minutes, 120)),
+        mandat=mandat_id,
     )
 
 
