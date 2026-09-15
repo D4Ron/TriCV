@@ -971,7 +971,13 @@ async def _config_boite(db: AsyncSession) -> courriel.ConfigBoite:
         for libelle, valeur in (
             ("le serveur", reglages.imap_host),
             ("l'adresse", reglages.imap_user),
-            ("le mot de passe", reglages.imap_password),
+            # Un mot de passe *ou* un accès OAuth. Une boîte Microsoft n'a pas
+            # de mot de passe qui fonctionne : l'exiger la rendrait à jamais
+            # « incomplète ».
+            (
+                "le mot de passe ou l'accès Microsoft",
+                reglages.imap_password or (reglages.oauth_utilisable and "oauth"),
+            ),
         )
         if not valeur
     ]
@@ -987,6 +993,7 @@ async def _config_boite(db: AsyncSession) -> courriel.ConfigBoite:
         utilisateur=reglages.imap_user,
         mot_de_passe=reglages.imap_password,
         dossier=reglages.imap_folder,
+        oauth=reglages.config_oauth if reglages.oauth_utilisable else None,
     )
 
 

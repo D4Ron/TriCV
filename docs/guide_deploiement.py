@@ -25,6 +25,7 @@ from reportlab.platypus import (
     HRFlowable,
     ListFlowable,
     ListItem,
+    PageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -406,21 +407,41 @@ def contenu() -> list:
     h.append(
         para(
             "TriCV lit une boîte pour y récupérer les candidatures, et en écrit une pour "
-            "les convocations et les accès clients. Les deux se règlent depuis "
-            "l'application — <b>Paramètres</b> — et non dans le fichier de "
-            "configuration : l'adresse de recrutement change avec les campagnes, et un "
-            "mot de passe d'application se révoque sans prévenir. Demander un accès au "
-            "serveur à chaque fois condamnerait la fonction à ne pas servir."
+            "les convocations et les accès clients."
+        )
+    )
+    h.append(
+        para(
+            "<b>Posez-les au déploiement</b>, dans <font face='Courier'>.env</font>, avec "
+            "le reste de la configuration serveur — c'est le moment où l'on a déjà les "
+            "identifiants en main et un accès à la machine. L'écran <b>Paramètres</b> "
+            "reste disponible pour les corriger ensuite sans rouvrir cet accès : une "
+            "adresse de recrutement peut changer avec les campagnes, et un mot de passe "
+            "peut être révoqué. Ce qui est enregistré dans l'application <b>prime</b> sur "
+            "le fichier, qui ne sert alors plus qu'à amorcer une installation neuve."
         )
     )
 
     h.append(para("3.1 — Réception (IMAP)", "etape"))
     h.append(
         para(
-            "Le paramétrage complet, avec les pièges de Gmail et la façon de vérifier "
-            "que le relevé fonctionne, fait l'objet d'un document séparé : "
+            "Le paramétrage complet, fournisseur par fournisseur, et la façon de vérifier "
+            "que le relevé fonctionne, font l'objet d'un document séparé : "
             "<b>Guide-configuration-boite-candidatures.pdf</b>. Suivez-le avant de "
             "revenir ici."
+        )
+    )
+    h.extend(
+        encadre(
+            "Boîte Microsoft : prévoyez un administrateur, et du délai",
+            "Une adresse Outlook ou Microsoft 365 ne s'ouvre plus avec un mot de passe — "
+            "Microsoft a supprimé l'authentification de base sur IMAP, POP et SMTP, y "
+            "compris les « mots de passe d'application ». Il faut déclarer TriCV dans "
+            "Entra ID et lui accorder l'accès à cette boîte, ce qui demande des droits "
+            "d'administrateur. Ce n'est pas long, mais cela dépend de quelqu'un d'autre : "
+            "à lancer en début d'installation, pas la veille de la mise en service. Le "
+            "guide de la boîte contient, à l'étape M4, une demande à transmettre telle "
+            "quelle à l'administrateur.",
         )
     )
 
@@ -447,11 +468,13 @@ def contenu() -> list:
                     "validation en deux étapes.",
                 ],
                 [
-                    "Microsoft 365",
+                    "<b>Microsoft 365 / Outlook</b>",
                     "smtp.office365.com",
                     "587",
-                    "Le compte doit avoir l'authentification SMTP autorisée par "
-                    "l'administrateur du tenant ; elle est désactivée par défaut.",
+                    "<b>Aucun mot de passe ne fonctionne</b>, pas même un « mot de passe "
+                    "d'application » : Microsoft a retiré l'authentification de base de "
+                    "SMTP comme d'IMAP. Renseignez l'accès OAuth (tenant, application, "
+                    "secret) — le même que pour la réception.",
                 ],
                 [
                     "Hébergeur du domaine",
@@ -667,9 +690,33 @@ def contenu() -> list:
                     "30 req/min mais <b>100 000 jetons/jour</b>",
                     "~13",
                 ],
-                ["Ollama, sur place", "aucune limite", "illimité"],
+                [
+                    "Ollama, sur place",
+                    "Aucune limite, et rien ne sort des murs. Mais "
+                    "<b>52 s par dossier</b> mesurées avec "
+                    "<font face='Courier'>qwen3:8b</font>, modèle entièrement "
+                    "chargé en carte graphique.",
+                    "Illimité, mais plus de 2 h pour 150",
+                ],
             ],
             [38 * mm, 72 * mm, 55 * mm],
+        )
+    )
+    h.extend(
+        encadre(
+            "Le modèle sur place est un secours, pas un choix de tous les jours",
+            "Mesuré le 15 septembre 2026 sur le corpus du cabinet, "
+            "<font face='Courier'>qwen3:8b</font> lit 13 diplômes sur 14 et 17 "
+            "expériences sur 18, contre 14 et 18 pour Gemini comme pour Mistral. "
+            "Les deux écarts sont la même faute, et ce n'est pas une invention : le "
+            "modèle retient la première date qu'il voit — « depuis mars 2018 » "
+            "devient janvier 2018. Le <i>niveau</i> du diplôme, seul élément que le "
+            "barème note, reste juste.<br/><br/>"
+            "Ce n'est donc pas la lecture qui le disqualifie, c'est l'horloge : "
+            "52 s par dossier, plus de deux heures pour un mandat de 150. "
+            "Gardez-le pour les deux cas où rien d'autre ne répond — les quotas "
+            "épuisés en cours de mandat, ou un client qui refuse que les dossiers "
+            "sortent de chez lui.",
         )
     )
     h.extend(
@@ -735,9 +782,26 @@ def contenu() -> list:
             "configuration où le dossier d'un candidat ne sort pas du bâtiment : ni "
             "clé, ni quota, ni conditions à relire. Le coût est en matériel et en "
             "temps de réponse. Un modèle de 7 à 8 milliards de paramètres en 4 bits "
-            "occupe environ 5 Go et demande autant de mémoire vive graphique pour "
-            "répondre en quelques secondes ; sans carte graphique il tourne sur le "
-            "processeur, ce qui reste utilisable pour un traitement de nuit."
+            "occupe environ 5 Go de mémoire vive graphique ; sans carte, il tourne "
+            "sur le processeur, plusieurs fois plus lentement."
+        )
+    )
+    h.extend(
+        encadre(
+            "Ce qui coûte du temps n'est pas la machine, c'est le modèle",
+            "Mesuré le 15 septembre 2026 : <b>52 s par dossier</b> avec "
+            "<font face='Courier'>qwen3:8b</font> — et le modèle tenait "
+            "<b>entièrement</b> dans la carte graphique d'un portable. Le matériel "
+            "n'est donc pas en cause. "
+            "<font face='Courier'>qwen3</font> est un modèle qui <i>raisonne</i> "
+            "avant de répondre : il rédige son cheminement, que l'application jette "
+            "ensuite. On paie ce cheminement à chaque dossier.<br/><br/>"
+            "Si le modèle sur place doit servir à autre chose qu'un secours, "
+            "essayez-en un qui ne raisonne pas à voix haute — "
+            "<font face='Courier'>llama3.1:8b</font>, "
+            "<font face='Courier'>mistral:7b</font> — et mesurez-le avec "
+            "<font face='Courier'>tools.evaluer_extraction</font> avant de le "
+            "retenir. La vitesse ne vaut rien si la lecture se dégrade.",
         )
     )
     h.extend(
@@ -867,6 +931,8 @@ def contenu() -> list:
         )
     )
 
+    h.extend(_annexe_configuration())
+
     h.append(Spacer(1, 10))
     h.append(HRFlowable(width="100%", thickness=0.6, color=FILET, spaceAfter=8))
     h.append(
@@ -875,6 +941,144 @@ def contenu() -> list:
             "recrutement de Kapi Consult décident. Aucun dossier n'est écarté sur une "
             "donnée qu'une personne n'a pas confirmée.</font>",
             "corps",
+        )
+    )
+    return h
+
+
+# --- annexe : le paramétrage complet ----------------------------------------
+#
+# Le corps du guide dit quoi faire dans l'ordre. Cette annexe dit *tout* ce qui
+# se règle, pour la personne qui reprend une installation existante et doit
+# savoir ce qu'elle a sous les yeux. Rien n'y est implicite : une variable
+# absente du tableau est une variable que l'application ne lit pas.
+#
+# Trois colonnes, et la troisième est la seule qui compte vraiment : ce qu'il
+# faut y mettre *ici*, pas ce que la variable signifie en général.
+
+# Chaque entrée : (nom, effet, à renseigner)
+_ENV_BASE = [
+    ("DATABASE_URL", "L'adresse de la base.", "Fournie par Compose. À ne changer que pour une base externe — le pilote doit être <font face='Courier'>asyncpg</font>."),
+    ("POSTGRES_USER / _PASSWORD / _DB", "Les identifiants que le service de base crée à sa première mise en route.", "À garder cohérents avec DATABASE_URL. Changer le mot de passe après coup demande de refaire le volume."),
+]
+
+_ENV_SECURITE = [
+    ("JWT_SECRET", "Signe les jetons de session. Qui le connaît peut se faire passer pour n'importe qui.", "<b>Obligatoire.</b> Une chaîne aléatoire longue, propre à cette installation. Jamais celle du dépôt."),
+    ("ACCESS_TOKEN_MINUTES", "Durée d'une session avant renouvellement.", "30. À baisser sur un poste partagé."),
+    ("REFRESH_TOKEN_DAYS", "Durée avant reconnexion complète.", "7."),
+    ("SEED_ADMIN_EMAIL / _PASSWORD", "Le premier compte, créé au peuplement initial.", "<b>À changer avant toute mise en service.</b> Le mot de passe du dépôt est public."),
+    ("ALLOW_SELF_REGISTRATION", "Autorise la création de comptes depuis la page de connexion.", "<font face='Courier'>true</font> le temps de créer l'équipe, puis <font face='Courier'>false</font>. Un compte recruteur lit tous les dossiers."),
+    ("SIGNUP_CODE", "Code exigé à l'inscription libre.", "Une chaîne connue de l'équipe seule, tant que l'inscription est ouverte."),
+    ("SIGNUP_RATE_LIMIT_PER_HOUR", "Inscriptions par heure et par adresse IP.", "10."),
+]
+
+_ENV_MODELE = [
+    ("LLM_PROVIDER", "Qui lit les dossiers : <font face='Courier'>gemini</font>, <font face='Courier'>anthropic</font>, <font face='Courier'>ollama</font>, <font face='Courier'>openai</font>.", "Voir la section 6 bis. <font face='Courier'>openai</font> désigne une adresse, pas une marque."),
+    ("LLM_MODEL", "Le modèle du fournisseur principal.", "Obligatoire pour <font face='Courier'>openai</font>, qui n'a pas de défaut. Ex. <font face='Courier'>ministral-14b-latest</font>."),
+    ("LLM_BASE_URL", "L'adresse du fournisseur, avec <font face='Courier'>openai</font>.", "<font face='Courier'>https://api.mistral.ai/v1</font> pour Mistral."),
+    ("LLM_API_KEY", "Sa clé.", "Créée chez le fournisseur. Jamais dans un dépôt."),
+    ("GEMINI_API_KEY / ANTHROPIC_API_KEY", "Les clés de ces deux fournisseurs.", "Selon celui qu'on emploie, principal ou secours."),
+    ("OLLAMA_BASE_URL", "L'adresse du serveur local.", "<font face='Courier'>http://ollama:11434</font> sous Compose."),
+    ("GEMINI_MODEL, OPENAI_MODEL,<br/>ANTHROPIC_MODEL, OLLAMA_MODEL", "Le modèle propre à chaque fournisseur.", "<b>Nécessaire dès qu'une chaîne existe</b> : LLM_MODEL ne nomme que le modèle du principal, et « ministral-14b-latest » n'a aucun sens pour Google."),
+    ("LLM_FALLBACK", "Le secours, quand le principal ne peut pas servir — quota épuisé ou panne.", "Ex. <font face='Courier'>gemini</font>. Vide : aucun secours. Lire la réserve de confidentialité en 6 bis."),
+    ("LLM_PROSE_PROVIDER", "Qui <b>rédige</b> les rapports, quand ce n'est pas qui dépouille.", "Le plus sobre en invention : un rapport part au client sous la signature du cabinet."),
+    ("LLM_MAX_CONCURRENCY", "Appels simultanés au fournisseur.", "<b>1</b> sur une offre limitée à une requête par seconde."),
+    ("LLM_TIMEOUT_SECONDS", "Délai avant d'abandonner un appel.", "120. Un modèle local lent peut demander davantage."),
+    ("LLM_LOG_PAYLOAD", "Écrit dans le journal le texte envoyé au modèle.", "<font face='Courier'>true</font> pour vérifier l'expurgation une fois, <b>puis false</b> : le journal contient sinon des parcours réels."),
+]
+
+_ENV_CONFIDENTIALITE = [
+    ("PII_REDACTION", "Extrait le texte sur place et retire nom, adresse, téléphone, courriel et date de naissance avant tout envoi.", "<b>true.</b> Le passer à false envoie le fichier d'origine tel quel : une décision à documenter."),
+    ("REDACT_DEMOGRAPHICS", "Retire âge, sexe et nationalité du contenu servant à noter. Ces données restent visibles des RH et servent aux conditions.", "<b>true.</b> Noter sur ces attributs est discriminatoire dans la plupart des droits applicables."),
+]
+
+_ENV_STOCKAGE = [
+    ("STORAGE_BACKEND", "<font face='Courier'>local</font> ou <font face='Courier'>s3</font>.", "<font face='Courier'>local</font> sauf besoin contraire."),
+    ("STORAGE_PATH", "Le répertoire des pièces déposées.", "Doit être sur un volume sauvegardé. Les perdre, c'est perdre les dossiers."),
+    ("S3_BUCKET, S3_ENDPOINT_URL,<br/>S3_REGION, S3_ACCESS_KEY,<br/>S3_SECRET_KEY", "Lus seulement si STORAGE_BACKEND=s3.", "Tout hébergeur compatible S3 convient."),
+]
+
+_ENV_RESEAU = [
+    ("CORS_ORIGINS", "Les origines autorisées à appeler l'API.", "La liste exacte des adresses par lesquelles l'application est jointe. Pas d'astérisque."),
+    ("PUBLIC_RATE_LIMIT_PER_HOUR", "Dépôts publics par heure et par IP.", "20. À relever pour une campagne à gros volume."),
+    ("VITE_API_URL", "L'adresse de l'API, inscrite dans l'interface à la construction.", "L'adresse <b>publique</b>, pas localhost, dès que le serveur n'est pas le poste de travail."),
+    ("URL_PUBLIQUE", "Sert à bâtir les liens envoyés par courriel.", "Sans elle, les messages partent sans lien plutôt qu'avec un lien vers « localhost »."),
+]
+
+_ENV_COURRIEL = [
+    ("IMAP_HOST, IMAP_PORT,<br/>IMAP_USER, IMAP_PASSWORD,<br/>IMAP_FOLDER", "La boîte relevée.", "<b>Amorçage seulement.</b> Le réglage courant vit en base et se change dans Paramètres. Éditer ce fichier après le premier démarrage n'a plus d'effet."),
+    ("SMTP_HOST, SMTP_PORT,<br/>SMTP_USER, SMTP_PASSWORD,<br/>SMTP_TLS, SMTP_EXPEDITEUR", "L'envoi.", "Même remarque. Chez Microsoft, laisser SMTP_PASSWORD vide : aucun mot de passe n'y est accepté."),
+    ("OAUTH_TENANT,<br/>OAUTH_CLIENT_ID,<br/>OAUTH_CLIENT_SECRET", "L'accès à une boîte Microsoft — réception <i>et</i> envoi. Microsoft a supprimé le mot de passe d'IMAP et de SMTP : sans ces valeurs, une boîte Outlook ne s'ouvre pas.", "<b>À poser au déploiement</b>, contrairement aux deux lignes ci-dessus : ces valeurs ne se révoquent pas d'elles-mêmes. Fournies par l'administrateur Entra — guide de la boîte, étape M4. L'écran Paramètres reste là pour les corriger, et ce qui y est saisi prime."),
+    ("OAUTH_REFRESH_TOKEN", "Le même accès, pour une adresse <font face='Courier'>outlook.com</font> personnelle.", "Seulement dans ce cas : Microsoft n'y autorise pas le flux application. Inutile avec une adresse Microsoft 365, où le secret suffit."),
+]
+
+# Les réglages de l'écran Paramètres. Ils priment sur le fichier.
+_PARAMETRES = [
+    ("Expurger les données démographiques", "Retire âge, sexe et nationalité du contenu noté.", "Coché."),
+    ("Inscription libre / Code", "Création de comptes depuis la page de connexion.", "Décoché une fois l'équipe créée."),
+    ("Candidatures spontanées", "Ouvre le dépôt hors avis, qui alimente le vivier.", "Au choix du cabinet."),
+    ("Relever la boîte", "Active le relevé et fait apparaître les boutons sur les postes.", "Coché une fois la boîte réglée."),
+    ("Adresse, serveur, port, dossier", "Les coordonnées IMAP.", "<font face='Courier'>outlook.office365.com</font> : 993, INBOX."),
+    ("Mot de passe (IMAP)", "Le secret de la boîte.", "<b>Vide pour une boîte Microsoft</b>, qui n'en accepte aucun. Un mot de passe d'application chez Google."),
+    ("Tenant, ID d'application, Secret", "L'accès OAuth Microsoft, pour la réception <i>et</i> l'envoi.", "Normalement déjà posés dans <font face='Courier'>.env</font> au déploiement (A.7). À ne remplir ici que pour corriger, sans rouvrir un accès à la machine."),
+    ("Envoi : serveur, port, compte,<br/>mot de passe, TLS, expéditeur", "La session d'envoi et l'adresse « De : ».", "L'adresse d'expédition est celle que les candidats voient et à laquelle ils répondront."),
+    ("Adresse publique de l'application", "Bâtit les liens des courriels.", "L'adresse par laquelle un candidat joint l'application depuis l'extérieur."),
+]
+
+
+def _bloc(titre: str, entrees: list[tuple[str, str, str]]) -> list:
+    return [
+        para(titre, "etape"),
+        tableau(
+            ["Réglage", "Ce qu'il fait", "Ce qu'il faut y mettre"],
+            [list(e) for e in entrees],
+            [44 * mm, 52 * mm, 69 * mm],
+        ),
+        Spacer(1, 6),
+    ]
+
+
+def _annexe_configuration() -> list:
+    h: list = [PageBreak(), para("Annexe — Tout ce qui se règle", "section")]
+    h.append(
+        para(
+            "Le corps du guide dit quoi faire, dans l'ordre. Cette annexe dit <i>tout</i> ce "
+            "qui existe, pour qui reprend une installation et doit savoir ce qu'il a sous "
+            "les yeux. Une variable absente de ces tableaux est une variable que "
+            "l'application ne lit pas."
+        )
+    )
+    h.extend(
+        encadre(
+            "Deux endroits, et le second l'emporte",
+            "Le fichier <font face='Courier'>.env</font> porte ce qui tient au serveur : "
+            "base, secrets, stockage, modèle. L'écran <b>Paramètres</b> porte ce qui change "
+            "en cours d'exploitation : la boîte de candidatures, l'envoi, l'ouverture des "
+            "inscriptions. Pour ces réglages-là, <b>ce qui est enregistré dans "
+            "l'application prime sur le fichier</b>, qui ne sert plus qu'à amorcer une "
+            "installation neuve. Modifier <font face='Courier'>.env</font> après le premier "
+            "démarrage n'a aucun effet sur eux — c'est la confusion la plus coûteuse.",
+        )
+    )
+    h.extend(_bloc("A.1 — Base de données", _ENV_BASE))
+    h.extend(_bloc("A.2 — Sécurité et comptes", _ENV_SECURITE))
+    h.append(PageBreak())
+    h.extend(_bloc("A.3 — Le modèle", _ENV_MODELE))
+    h.append(PageBreak())
+    h.extend(_bloc("A.4 — Confidentialité", _ENV_CONFIDENTIALITE))
+    h.extend(_bloc("A.5 — Stockage des pièces", _ENV_STOCKAGE))
+    h.extend(_bloc("A.6 — Réseau et adresses", _ENV_RESEAU))
+    h.extend(_bloc("A.7 — Courriel (amorçage seulement)", _ENV_COURRIEL))
+    h.append(PageBreak())
+    h.extend(_bloc("B — L'écran Paramètres, dans l'application", _PARAMETRES))
+    h.extend(
+        encadre(
+            "Les secrets ne se réaffichent jamais",
+            "Mot de passe IMAP, mot de passe d'envoi, secret Microsoft, jeton de "
+            "rafraîchissement : une fois enregistrés, ils ne ressortent plus du serveur. Le "
+            "champ reste vide et indique « déjà défini ». Laisser un champ de secret vide "
+            "veut donc dire « inchangé », et non « effacé » — sans quoi ouvrir puis "
+            "enregistrer l'écran des paramètres déconnecterait la boîte.",
         )
     )
     return h

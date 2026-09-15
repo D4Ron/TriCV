@@ -17,6 +17,9 @@ import hashlib
 import imaplib
 import logging
 import re
+
+from app.services import oauth_microsoft
+from app.services.oauth_microsoft import ConfigOAuth
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.header import decode_header, make_header
@@ -141,6 +144,28 @@ class ConfigBoite:
     utilisateur: str = ""
     mot_de_passe: str = ""
     dossier: str = "INBOX"
+    # L'accès Microsoft, quand la boîte en est une. Microsoft a supprimé
+    # l'authentification par mot de passe sur IMAP : sans jeton, une boîte
+    # Outlook ne se relève pas du tout. Voir `app.services.oauth_microsoft`.
+    oauth: ConfigOAuth | None = None
+
+    @property
+    def par_jeton(self) -> bool:
+        return self.oauth is not None and self.oauth.utilisable
+
+
+def _est_microsoft(hote: str) -> bool:
+    """Reconnaît un serveur Microsoft à son nom.
+
+    Sert uniquement au diagnostic : dire « votre mot de passe est refusé » à
+    quelqu'un dont le fournisseur n'accepte plus aucun mot de passe l'enverrait
+    en chercher un meilleur pendant une heure.
+    """
+    reduit = (hote or "").lower()
+    return any(
+        marque in reduit
+        for marque in ("outlook", "office365", "hotmail", "live.com", "microsoft")
+    )
 
 
 def _diagnostiquer(exc: Exception, config: ConfigBoite) -> ErreurBoite:
@@ -153,12 +178,30 @@ def _diagnostiquer(exc: Exception, config: ConfigBoite) -> ErreurBoite:
     message = str(exc)
     hote = config.hote
     if "AUTHENTICATIONFAILED" in message.upper() or "Invalid credentials" in message:
+        if _est_microsoft(hote) and not config.par_jeton:
+            # Le cas où un message générique ferait perdre le plus de temps :
+            # il n'existe aucun mot de passe qui marcherait, pas même un « mot
+            # de passe d'application ». Microsoft les a supprimés avec
+            # l'authentification de base.
+            return ErreurBoite(
+                f"{hote} a refusé la connexion : Microsoft n'accepte plus aucun mot de "
+                "passe en IMAP, et les « mots de passe d'application » ne fonctionnent "
+                "plus non plus. Cette boîte demande un accès OAuth : renseignez "
+                "l'identifiant d'application, le tenant et le secret dans Paramètres › "
+                "Boîte de candidatures. Voir le guide de configuration."
+            )
         if "gmail" in hote.lower():
             return ErreurBoite(
                 f"Gmail a refusé la connexion pour {config.utilisateur}. Gmail n'accepte "
                 "plus le mot de passe du compte en IMAP : activez la validation en deux "
                 "étapes, puis créez un « mot de passe d'application » et collez-le dans "
                 "le champ « Mot de passe » des paramètres."
+            )
+        if config.par_jeton:
+            return ErreurBoite(
+                f"{hote} a refusé le jeton pour {config.utilisateur}. Vérifiez que le "
+                "principal de service est autorisé sur cette boîte et que la permission "
+                "« IMAP.AccessAsApp » a bien été accordée par un administrateur."
             )
         return ErreurBoite(f"Identifiants refusés par {hote} pour {config.utilisateur}.")
     if "NONEXISTENT" in message.upper() or "does not exist" in message.lower():
@@ -201,8 +244,20 @@ class BoiteImap:
             return self._connexion
         try:
             connexion = imaplib.IMAP4_SSL(self.host, self.port)
-            connexion.login(self.utilisateur, self.mot_de_passe)
+            if self.config.par_jeton:
+                # Microsoft n'accepte plus que ceci sur IMAP. `authenticate`
+                # réclame un octet brut : la chaîne porte des 0x01 comme
+                # séparateurs, elle n'est pas du texte.
+                acces = oauth_microsoft.jeton(self.config.oauth, self.utilisateur)
+                chaine = oauth_microsoft.chaine_xoauth2(self.utilisateur, acces)
+                connexion.authenticate("XOAUTH2", lambda _: chaine.encode())
+            else:
+                connexion.login(self.utilisateur, self.mot_de_passe)
             connexion.select(self.dossier)
+        except oauth_microsoft.ErreurOAuth as exc:
+            # Le refus vient de Microsoft, pas du serveur IMAP : le message est
+            # déjà écrit pour être lu par les RH, on ne le retraduit pas.
+            raise ErreurBoite(str(exc)) from exc
         except (imaplib.IMAP4.error, OSError) as exc:
             raise _diagnostiquer(exc, self.config) from exc
         self._connexion = connexion

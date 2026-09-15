@@ -221,8 +221,9 @@ def contenu() -> list:
                 "recrutement@kapiconsult.tg. Pas la boîte personnelle d'un collaborateur : "
                 "l'application marque les messages comme lus et les traite, ce qui n'a pas sa "
                 "place dans une messagerie privée.",
-                "<b>Le mot de passe de ce compte Google</b>, pour y activer la validation en "
-                "deux étapes.",
+                "<b>De quoi ouvrir la boîte</b> — et cela dépend du fournisseur : un mot de "
+                "passe d'application chez Google, un accès OAuth chez Microsoft. La section "
+                "suivante dit lequel vous concerne.",
                 "<b>Un compte administrateur TriCV.</b> Pour le vérifier : ouvrez "
                 "« Paramètres ». Si les champs sont grisés et que la page indique « Réservé "
                 "aux administrateurs », votre compte est un compte recruteur.",
@@ -232,8 +233,189 @@ def contenu() -> list:
         )
     )
 
-    # --- partie A -----------------------------------------------------------
-    h.append(para("Partie A — Préparer le compte Google", "section"))
+    # --- quel fournisseur ----------------------------------------------------
+    h.append(para("Quel est votre fournisseur ? La suite en dépend", "section"))
+    h.append(
+        para(
+            "Les deux grands fournisseurs ne se configurent plus de la même façon, et la "
+            "différence n'est pas un détail de réglage : <b>chez Microsoft, aucun mot de "
+            "passe ne fonctionne</b>. Repérez votre cas avant d'aller plus loin."
+        )
+    )
+    h.append(
+        tableau(
+            ["Votre adresse", "Ce qu'il faut", "Où aller"],
+            [
+                [
+                    "…@outlook.com, @hotmail.com, @live.com, ou une adresse de votre domaine "
+                    "hébergée chez <b>Microsoft 365</b>",
+                    "Un <b>accès OAuth</b> : identifiant d'application, tenant, secret. "
+                    "Aucun mot de passe, pas même un « mot de passe d'application ».",
+                    "Partie A-Microsoft",
+                ],
+                [
+                    "…@gmail.com, ou une adresse de votre domaine hébergée chez "
+                    "<b>Google Workspace</b>",
+                    "Un <b>mot de passe d'application</b> Google.",
+                    "Partie A-Google",
+                ],
+                [
+                    "Une adresse hébergée ailleurs (serveur du cabinet, hébergeur local)",
+                    "Le mot de passe de la boîte, en général.",
+                    "Partie B directement",
+                ],
+            ],
+            [52 * mm, 68 * mm, 38 * mm],
+        )
+    )
+    h.extend(
+        encadre(
+            "Microsoft a supprimé les mots de passe sur IMAP",
+            "Ce n'est pas un réglage à trouver ni une option à activer. La documentation de "
+            "Microsoft est explicite : « Basic authentication is now disabled in all "
+            "tenants », et personne — pas même le support Microsoft — ne peut la "
+            "réactiver. Les « mots de passe d'application » reposaient dessus et ont "
+            "disparu avec elle. Pour les adresses personnelles (outlook.com, hotmail.com, "
+            "live.com), la bascule a eu lieu le 16 septembre 2024. Chercher un mot de "
+            "passe qui marcherait est une heure perdue : il n'y en a pas.",
+        )
+    )
+
+    # --- partie A Microsoft --------------------------------------------------
+    h.append(para("Partie A-Microsoft — Déclarer TriCV auprès de Microsoft", "section"))
+    h.append(
+        para(
+            "Le principe : on déclare TriCV comme une application auprès de Microsoft, on lui "
+            "donne le droit de lire <i>cette</i> boîte, et l'application obtient ensuite "
+            "toute seule un jeton d'accès à durée limitée. C'est plus long à mettre en place "
+            "qu'un mot de passe, et cela ne se refait jamais."
+        )
+    )
+    h.append(
+        para(
+            "<b>Deux cas, et il faut trancher avant de commencer.</b> Une adresse "
+            "professionnelle (Microsoft 365, votre domaine, un administrateur) permet le "
+            "flux dit « application » : TriCV s'authentifie seul, sans qu'aucun humain ne se "
+            "connecte, et cela ne s'interrompt jamais. Une adresse personnelle outlook.com "
+            "n'y a pas droit : Microsoft y exige un consentement humain, une fois, qui "
+            "produit un jeton de rafraîchissement. Cela marche, mais ce jeton peut être "
+            "révoqué — changement de mot de passe, expiration — et il faut alors "
+            "recommencer. <b>Pour une boîte de recrutement qui doit tourner sans "
+            "surveillance, une adresse professionnelle est nettement préférable.</b>"
+        )
+    )
+
+    h.append(para("Étape M1 — Créer l'inscription d'application", "etape"))
+    h.append(
+        puces(
+            [
+                "Ouvrez <b>portal.azure.com</b> → <b>Microsoft Entra ID</b> → "
+                "<b>Inscriptions d'applications</b> → <b>Nouvelle inscription</b>.",
+                "Nom : <font face='Courier'>TriCV — boîte de candidatures</font>. "
+                "Le nom n'a d'importance que pour vous y retrouver.",
+                "Types de comptes : <b>ce répertoire organisationnel uniquement</b> pour une "
+                "adresse professionnelle ; <b>comptes Microsoft personnels</b> pour une "
+                "adresse outlook.com.",
+                "Après création, relevez <b>ID d'application (client)</b> et <b>ID "
+                "d'annuaire (tenant)</b> sur la page « Vue d'ensemble ». Ce sont deux des "
+                "trois valeurs à saisir dans TriCV.",
+            ]
+        )
+    )
+
+    h.append(para("Étape M2 — Créer le secret", "etape"))
+    h.append(
+        puces(
+            [
+                "Dans l'application → <b>Certificats et secrets</b> → <b>Nouveau secret "
+                "client</b>. Choisissez la durée la plus longue proposée.",
+                "<b>Copiez la « Valeur » immédiatement.</b> Elle ne se réaffiche jamais "
+                "après avoir quitté la page ; il faudrait en créer un autre.",
+                "Ne confondez pas la <b>Valeur</b> et l'<b>ID du secret</b>, affichés côte à "
+                "côte. C'est la valeur qu'attend TriCV — l'erreur la plus fréquente.",
+            ]
+        )
+    )
+
+    h.append(para("Étape M3 — Autoriser l'accès à la boîte", "etape"))
+    h.append(
+        para(
+            "Pour une adresse <b>professionnelle</b>, un administrateur Microsoft 365 doit "
+            "faire les deux gestes suivants. Sans le second, le jeton est délivré mais la "
+            "boîte reste fermée."
+        )
+    )
+    h.append(
+        puces(
+            [
+                "Dans l'application → <b>API autorisées</b> → <b>Ajouter une autorisation</b> "
+                "→ <b>API utilisées par mon organisation</b> → <b>Office 365 Exchange "
+                "Online</b> → <b>Autorisations d'application</b> → cochez "
+                "<font face='Courier'>IMAP.AccessAsApp</font> (et "
+                "<font face='Courier'>SMTP.SendAsApp</font> si TriCV doit aussi écrire aux "
+                "candidats) → <b>Accorder le consentement administrateur</b>.",
+                "Puis, en PowerShell Exchange Online, autoriser le principal de service sur "
+                "la boîte précise. Cette commande limite l'accès à cette boîte-là : "
+                "l'application ne peut pas lire les autres.",
+            ]
+        )
+    )
+    h.append(
+        para(
+            "<font face='Courier' size='8'>"
+            "New-ServicePrincipal -AppId &lt;ID application&gt; "
+            "-ServiceId &lt;ID objet du principal&gt;<br/>"
+            "Add-MailboxPermission -Identity recrutement@kapiconsult.tg "
+            "-User &lt;ID objet du principal&gt; -AccessRights FullAccess"
+            "</font>",
+            "corps",
+        )
+    )
+    h.append(
+        para(
+            "Pour une adresse <b>personnelle</b> outlook.com, il n'y a pas d'administrateur : "
+            "la permission se demande au titulaire de la boîte par un consentement dans le "
+            "navigateur, qui renvoie un <b>jeton de rafraîchissement</b>. C'est ce jeton, et "
+            "non un secret, qui se colle dans TriCV. La personne qui installe l'application "
+            "doit être devant l'écran pour ce geste."
+        )
+    )
+
+    h.append(para("Étape M4 — Ce qu'il faut demander à l'administrateur", "etape"))
+    h.append(
+        para(
+            "Les étapes M1 à M3 se font dans Entra ID et demandent des droits "
+            "d'administrateur. Vous n'avez pas à les comprendre : il suffit de les faire "
+            "faire, et de récupérer <b>trois valeurs</b>. Le texte ci-dessous peut être "
+            "transmis tel quel à la personne qui administre Entra."
+        )
+    )
+    h.extend(
+        encadre(
+            "À transmettre à l'administrateur Entra ID",
+            "Bonjour,<br/><br/>"
+            "Nous mettons en service une application interne (TriCV) qui doit <b>lire</b> la "
+            "boîte de recrutement <font face='Courier'>recrutement@kapiconsult.tg</font> en "
+            "IMAP, pour y récupérer les candidatures reçues. Microsoft n'acceptant plus "
+            "l'authentification par mot de passe, il lui faut un accès applicatif. "
+            "Pourriez-vous :<br/><br/>"
+            "1. créer une inscription d'application nommée « TriCV — boîte de "
+            "candidatures » (ce répertoire organisationnel uniquement) ;<br/>"
+            "2. lui créer un secret client, de la durée la plus longue possible ;<br/>"
+            "3. lui accorder la permission d'application "
+            "<font face='Courier'>IMAP.AccessAsApp</font> sur Office 365 Exchange Online "
+            "— et <font face='Courier'>SMTP.SendAsApp</font> si nous devons aussi écrire "
+            "aux candidats — puis donner le consentement administrateur ;<br/>"
+            "4. autoriser le principal de service <b>sur cette seule boîte</b> "
+            "(New-ServicePrincipal puis Add-MailboxPermission).<br/><br/>"
+            "Merci de nous transmettre <b>l'ID d'annuaire (tenant)</b>, <b>l'ID "
+            "d'application (client)</b> et <b>la valeur du secret</b> — et non son ID. "
+            "L'accès restera limité à cette boîte.",
+        )
+    )
+
+    # --- partie A Google -----------------------------------------------------
+    h.append(para("Partie A-Google — Préparer le compte Google", "section"))
     h.append(
         para(
             "Gmail n'accepte plus le mot de passe habituel d'un compte pour ce type de "
@@ -338,15 +520,55 @@ def contenu() -> list:
                 ],
                 [
                     "Mot de passe",
-                    "les 16 lettres de l'étape 2",
-                    "Le mot de passe d'application, jamais celui du compte.",
+                    "les 16 lettres de l'étape 2 — <b>Google seulement</b>",
+                    "Le mot de passe d'application, jamais celui du compte. "
+                    "<b>À laisser vide pour une boîte Microsoft</b>, qui n'en accepte aucun.",
                 ],
-                ["Serveur IMAP", "imap.gmail.com", "Pour Gmail et Google Workspace."],
+                [
+                    "Serveur IMAP",
+                    "<font face='Courier'>outlook.office365.com</font> (Microsoft)<br/>"
+                    "<font face='Courier'>imap.gmail.com</font> (Google)",
+                    "Le même serveur pour une adresse Microsoft 365 et pour une adresse "
+                    "outlook.com personnelle.",
+                ],
                 ["Port", "993", "Valeur par défaut, à ne changer que sur consigne."],
                 [
                     "Dossier à relever",
                     "INBOX",
                     "La boîte de réception. Un libellé Gmail s'écrit tel quel, à la lettre.",
+                ],
+            ],
+            [46 * mm, 52 * mm, 67 * mm],
+        )
+    )
+    h.append(Spacer(1, 8))
+    h.append(
+        para(
+            "<b>Pour une boîte Microsoft uniquement</b>, trois champs de plus, relevés en "
+            "partie A-Microsoft. Ils remplacent le mot de passe ; ils ne s'y ajoutent pas.",
+            "corps",
+        )
+    )
+    h.append(
+        tableau(
+            ["Champ", "Valeur", "Remarque"],
+            [
+                [
+                    "Tenant",
+                    "l'ID d'annuaire (étape M1)",
+                    "Pour une adresse outlook.com personnelle, écrivez "
+                    "<font face='Courier'>consumers</font>.",
+                ],
+                [
+                    "ID d'application",
+                    "l'ID d'application (étape M1)",
+                    "Visible en permanence sur la page « Vue d'ensemble ».",
+                ],
+                [
+                    "Secret",
+                    "la <b>valeur</b> du secret (étape M2)",
+                    "Pas l'« ID du secret », affiché juste à côté. Pour une adresse "
+                    "personnelle, c'est le jeton de rafraîchissement qui se colle ici.",
                 ],
             ],
             [46 * mm, 52 * mm, 67 * mm],
@@ -481,10 +703,41 @@ def contenu() -> list:
             ["Message affiché", "Cause et correction"],
             [
                 [
+                    "« … n'accepte plus aucun mot de passe en IMAP »",
+                    "Boîte Microsoft configurée avec un mot de passe. Il n'en existe aucun "
+                    "qui fonctionnerait : renseignez le tenant, l'ID d'application et le "
+                    "secret (partie A-Microsoft) et laissez le mot de passe vide.",
+                ],
+                [
+                    "« Le secret de l'application est refusé »",
+                    "C'est l'<b>ID</b> du secret qui a été collé au lieu de sa "
+                    "<b>valeur</b> — Entra affiche les deux côte à côte. La valeur ne se "
+                    "réaffiche pas : créez-en un nouveau et copiez-le tout de suite.",
+                ],
+                [
+                    "« … refusé le jeton … IMAP.AccessAsApp »",
+                    "Le jeton est délivré mais la boîte reste fermée : il manque l'étape M3. "
+                    "L'administrateur doit accorder la permission <i>et</i> autoriser le "
+                    "principal de service sur cette boîte précise.",
+                ],
+                [
+                    "« Une adresse outlook.com personnelle n'accepte pas le flux "
+                    "application »",
+                    "Microsoft réserve ce flux aux comptes professionnels. Il faut le "
+                    "consentement humain et le jeton de rafraîchissement (fin de la partie "
+                    "A-Microsoft), ou passer sur une adresse professionnelle.",
+                ],
+                [
+                    "« Le consentement a expiré ou a été révoqué »",
+                    "Adresse personnelle : le jeton de rafraîchissement ne vaut plus — mot "
+                    "de passe changé, ou trop de temps écoulé. Refaites le consentement. "
+                    "C'est la faiblesse de ce flux, et la raison de préférer une adresse "
+                    "professionnelle.",
+                ],
+                [
                     "« Gmail a refusé la connexion… »",
                     "Le mot de passe saisi est celui du compte, et non un mot de passe "
-                    "d'application. Reprenez les étapes 1 et 2. C'est de loin la cause la "
-                    "plus fréquente.",
+                    "d'application. Reprenez les étapes 1 et 2.",
                 ],
                 [
                     "« Identifiants refusés par… »",

@@ -22,6 +22,7 @@ Trois précautions structurent ce module :
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 import smtplib
 import ssl
@@ -289,10 +290,33 @@ def _expedier(message: Message, reglages: Reglages, nom_expediteur: str) -> None
         with serveur:
             if reglages.smtp_port != 465 and reglages.smtp_tls:
                 serveur.starttls(context=contexte)
-            if reglages.smtp_user:
+            if reglages.oauth_utilisable:
+                # Microsoft a retiré l'authentification par mot de passe sur
+                # SMTP AUTH comme sur IMAP. Le jeton se présente en base64,
+                # après la commande AUTH XOAUTH2.
+                acces = oauth_microsoft.jeton(reglages.config_oauth, reglages.smtp_user)
+                chaine = oauth_microsoft.chaine_xoauth2(reglages.smtp_user, acces)
+                code, reponse = serveur.docmd(
+                    "AUTH", "XOAUTH2 " + base64.b64encode(chaine.encode()).decode()
+                )
+                if code != 235:
+                    raise ErreurEnvoi(
+                        f"Le serveur d'envoi a refusé le jeton Microsoft "
+                        f"(code {code}) : {reponse.decode(errors='replace')[:200]}"
+                    )
+            elif reglages.smtp_user:
                 serveur.login(reglages.smtp_user, reglages.smtp_password)
             serveur.send_message(courriel)
+    except oauth_microsoft.ErreurOAuth as exc:
+        raise ErreurEnvoi(str(exc)) from exc
     except smtplib.SMTPAuthenticationError as exc:
+        if _est_microsoft(reglages.smtp_host):
+            raise ErreurEnvoi(
+                "Le serveur d'envoi a refusé les identifiants. Microsoft n'accepte "
+                "plus de mot de passe sur SMTP, ni de « mot de passe "
+                "d'application » : cette boîte demande un accès OAuth, à régler "
+                "dans Paramètres › Boîte de candidatures."
+            ) from exc
         raise ErreurEnvoi(
             "Le serveur d'envoi a refusé les identifiants. Sur Gmail, un mot de "
             "passe d'application est nécessaire : le mot de passe du compte ne "

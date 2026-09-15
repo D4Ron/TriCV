@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.config import settings
 from app.db import Base
+from app.services.oauth_microsoft import ConfigOAuth
 
 
 class Parametre(Base):
@@ -79,13 +80,37 @@ SMTP_MOT_DE_PASSE = "smtp_password"
 SMTP_TLS = "smtp_tls"
 SMTP_EXPEDITEUR = "smtp_expediteur"
 
+# Accès Microsoft. Une boîte Outlook — professionnelle ou personnelle — ne se
+# relève plus avec un mot de passe : Microsoft a supprimé l'authentification de
+# base sur IMAP, POP et SMTP, y compris les « mots de passe d'application ».
+# Ces quatre réglages portent de quoi obtenir un jeton à la place.
+#
+# Un seul jeu sert à la réception et à l'envoi : c'est la même boîte et la même
+# application déclarée, et en demander deux fois inviterait à les désaccorder.
+OAUTH_TENANT = "oauth_tenant"
+OAUTH_CLIENT_ID = "oauth_client_id"
+OAUTH_CLIENT_SECRET = "oauth_client_secret"
+# Flux délégué seulement (adresse outlook.com personnelle) : le jeton obtenu au
+# consentement initial, que l'application échange ensuite contre des accès.
+OAUTH_REFRESH_TOKEN = "oauth_refresh_token"
+
 # L'adresse à laquelle l'application est jointe depuis l'extérieur. Elle sert à
 # construire les liens envoyés par courriel ; elle n'est pas devinable depuis le
 # serveur, qui ne connaît que sa propre adresse d'écoute.
 URL_PUBLIQUE = "url_publique"
 
 # Ce que l'API ne renvoie jamais en clair.
-SECRETS = frozenset({IMAP_MOT_DE_PASSE, SMTP_MOT_DE_PASSE})
+SECRETS = frozenset(
+    {
+        IMAP_MOT_DE_PASSE,
+        SMTP_MOT_DE_PASSE,
+        # Jamais réaffichés au formulaire, donc « vide » y veut dire
+        # « inchangé » : sans cela, ouvrir puis enregistrer l'écran des
+        # paramètres déconnecterait la boîte.
+        OAUTH_CLIENT_SECRET,
+        OAUTH_REFRESH_TOKEN,
+    }
+)
 
 
 @dataclass(slots=True)
@@ -107,12 +132,37 @@ class Reglages:
     smtp_tls: bool
     smtp_expediteur: str
     url_publique: str
+    oauth_tenant: str = ""
+    oauth_client_id: str = ""
+    oauth_client_secret: str = ""
+    oauth_refresh_token: str = ""
+
+    @property
+    def config_oauth(self) -> ConfigOAuth:
+        return ConfigOAuth(
+            tenant=self.oauth_tenant or "consumers",
+            client_id=self.oauth_client_id,
+            client_secret=self.oauth_client_secret,
+            refresh_token=self.oauth_refresh_token,
+        )
+
+    @property
+    def oauth_utilisable(self) -> bool:
+        return self.config_oauth.utilisable
 
     @property
     def courriel_utilisable(self) -> bool:
-        """Relevable : activé, et avec de quoi ouvrir une session."""
+        """Relevable : activé, et avec de quoi ouvrir une session.
+
+        « De quoi » veut dire un mot de passe *ou* un accès OAuth : une boîte
+        Microsoft n'a pas de mot de passe qui fonctionne, et exiger les deux
+        rendrait la fonction inatteignable pour elle.
+        """
         return bool(
-            self.courriel_actif and self.imap_host and self.imap_user and self.imap_password
+            self.courriel_actif
+            and self.imap_host
+            and self.imap_user
+            and (self.imap_password or self.oauth_utilisable)
         )
 
     @property
@@ -149,6 +199,13 @@ def _defauts() -> Reglages:
         smtp_tls=settings.smtp_tls,
         smtp_expediteur=settings.smtp_expediteur,
         url_publique=settings.url_publique,
+        # L'accès Microsoft se pose au déploiement, comme le reste de la
+        # configuration serveur. L'écran Paramètres peut le corriger ensuite
+        # sans rouvrir un accès à la machine, et ce qu'il enregistre prime.
+        oauth_tenant=settings.oauth_tenant,
+        oauth_client_id=settings.oauth_client_id,
+        oauth_client_secret=settings.oauth_client_secret,
+        oauth_refresh_token=settings.oauth_refresh_token,
     )
 
 
@@ -202,6 +259,16 @@ async def lire(db: AsyncSession) -> Reglages:
                 reglages.smtp_expediteur = valeur.strip()
             elif cle == URL_PUBLIQUE:
                 reglages.url_publique = valeur.strip().rstrip("/")
+            elif cle == OAUTH_TENANT:
+                reglages.oauth_tenant = valeur.strip()
+            elif cle == OAUTH_CLIENT_ID:
+                reglages.oauth_client_id = valeur.strip()
+            elif cle == OAUTH_CLIENT_SECRET:
+                # Entra affiche le secret une seule fois, et il se recopie
+                # souvent avec un espace en tête ou en queue.
+                reglages.oauth_client_secret = valeur.strip()
+            elif cle == OAUTH_REFRESH_TOKEN:
+                reglages.oauth_refresh_token = valeur.strip()
         except (TypeError, ValueError):
             # Une valeur illisible en base ne doit pas empêcher l'application
             # de démarrer : on retombe sur le défaut du fichier.

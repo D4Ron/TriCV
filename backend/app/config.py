@@ -126,6 +126,23 @@ class Settings(BaseSettings):
     imap_password: str = ""
     imap_folder: str = "INBOX"
 
+    # Accès Microsoft, pour la réception comme pour l'envoi. Microsoft a
+    # supprimé l'authentification par mot de passe sur IMAP, POP et SMTP : une
+    # boîte Outlook ne s'ouvre qu'avec un jeton, et ces trois valeurs servent à
+    # l'obtenir.
+    #
+    # Elles se posent au déploiement, avec le reste de la configuration
+    # serveur : contrairement à un mot de passe d'application, elles ne se
+    # révoquent pas toutes seules et n'ont pas à être changées en cours
+    # d'exploitation. L'écran Paramètres permet malgré tout de les corriger
+    # sans rouvrir un accès à la machine — et ce qui y est enregistré prime.
+    oauth_tenant: str = ""
+    oauth_client_id: str = ""
+    oauth_client_secret: str = ""
+    # Comptes personnels outlook.com seulement : Microsoft n'y autorise pas le
+    # flux application. Inutile avec une adresse Microsoft 365.
+    oauth_refresh_token: str = ""
+
     # Envoi. Même logique d'amorçage que la réception : le réglage courant vit
     # en base. Vide par défaut, et un envoi sans configuration échoue de façon
     # explicite plutôt que d'être silencieusement perdu.
