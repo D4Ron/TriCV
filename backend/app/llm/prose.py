@@ -63,6 +63,20 @@ _FILET = re.compile(r"^\s*(?:[-*_]\s*){3,}\s*$", re.MULTILINE)
 _LIGNES_VIDES = re.compile(r"\n{3,}")
 _ESPACES_FIN = re.compile(r"[ \t]+$", re.MULTILINE)
 
+# Une ligne de tableau Markdown : « | Nom | Note | » ou son filet « |---|---| ».
+#
+# Les tableaux du rapport sont produits par le code, à partir des notes
+# réellement inscrites, et insérés sous la prose. Le modèle n'a donc aucun
+# tableau à écrire — et la consigne le lui dit. Il en écrit quand même
+# lorsqu'une section en annonce un : sommé de commenter un classement qui
+# n'existe pas encore, un modèle a rendu dix lignes de candidats « [Nom 1] » à
+# « [Nom 10] » avec des notes d'entretien inventées de bout en bout, sous un
+# tableau vide produit par le code juste au-dessus.
+#
+# Le remède tient en deux temps : la consigne l'interdit, et ceci l'efface. Un
+# tableau inventé n'a pas de version acceptable à récupérer.
+_LIGNE_TABLEAU = re.compile(r"^[ \t]*\|.*\|[ \t]*$", re.MULTILINE)
+
 # Une réponse qui ne portait aucun texte. Le modèle a rendu la coquille vide
 # que le mode JSON l'obligeait à produire.
 _VIDE = {"", "{}", "[]", "null", "none", '""', "{ }", "[ ]"}
@@ -114,6 +128,7 @@ def _deballer(texte: str) -> str:
 
 
 def _sans_balisage(texte: str) -> str:
+    texte = _LIGNE_TABLEAU.sub("", texte)
     texte = _FILET.sub("", texte)
     texte = _TITRE_MD.sub("", texte)
     texte = _GRAS.sub(lambda m: m.group(1) or m.group(2) or "", texte)

@@ -32,6 +32,42 @@ Comparaison de fournisseurs, 11 septembre 2026, même corpus :
 Égalité sur ce qui décide d'une note. Le choix s'est fait sur le quota — 30
 requêtes/minute contre 250 par jour — et non sur la lecture.
 
+Modèle local, 15 septembre 2026, même corpus :
+
+    qwen3:8b (ollama)      diplômes 13/14   expériences 17/18   certifs 6/6
+
+Les deux écarts sont la **même faute**, et ce n'est pas une invention : le
+modèle retient la première date qu'il voit au lieu de la bonne.
+
+    « Depuis mars 2018 »                          lu 2018-01
+    « 2006 - 2008 : Master … (BAC+5) »            lu 2006
+
+Rien n'est inventé et rien n'est perdu : les trois diplômes et les trois
+expériences du cas « dense » sont là, et le *niveau* du Master — le seul
+élément que le barème note — est juste. Le compteur le sanctionne parce qu'il
+compare aussi l'année. Ce que cela coûte en pratique : deux mois d'expérience
+générale en trop, une année de diplôme erronée dans le parcours affiché — que
+les RH confirment avant qu'elle ne compte, puisqu'un `EXTRAIT_IA` non confirmé
+force `A_VERIFIER`.
+
+Reste la durée, et c'est elle qui tranche. Un fil, trois dossiers chronométrés :
+**52 s en moyenne** (30 s, 89 s, 37 s), soit **plus de deux heures pour cent
+cinquante dossiers**.
+
+Ce n'est pas la machine : `ollama ps` annonce le modèle à **100 % sur la carte
+graphique**. C'est le modèle. `qwen3` *raisonne* avant de répondre — il rédige
+son cheminement entre balises `<think>`, que `app/llm/prose.py` jette ensuite.
+Ce cheminement se paie à chaque dossier.
+
+D'où l'emploi : `ollama` n'est pas le fournisseur d'un mandat courant, c'est
+celui qui permet de continuer quand les deux quotas sont épuisés ou qu'un
+client refuse que les dossiers sortent de ses murs. À garder en secours, pas en
+principal.
+
+Si l'on veut lui en demander davantage, essayer un modèle qui ne raisonne pas à
+voix haute — `llama3.1:8b`, `mistral:7b` — et le mesurer ici avant de le
+retenir : la vitesse ne vaut rien si la lecture se dégrade.
+
 À noter : `mistral-small-latest` et `mistral-medium-latest` sont à **zéro**
 requête/minute sur l'offre gratuite de Mistral. Seule la famille `ministral`
 y est allouée. Un 429 immédiat sur une clé neuve vient de là, pas du compte.

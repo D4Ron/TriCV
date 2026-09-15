@@ -36,6 +36,7 @@ from app.models import (
 from app.models.base import utcnow
 from app.services import audit, modeles, rapports, uploads
 from app.services.exports import cv as export_cv
+from app.services.exports import frontispice
 from app.services.exports import rapport as export_rapport
 from app.services.preselection import charger_candidature
 
@@ -49,6 +50,11 @@ class SectionOut(BaseModel):
     code: str
     titre: str
     contenu: str
+    # Le commentaire des chiffres, qui se lit **sous** le tableau. Le document
+    # du cabinet ne met pas ses tableaux en fin de section : une phrase les
+    # annonce, le tableau suit, un commentaire vient après. `None` quand la
+    # section n'a rien à dire après son tableau — ou n'en a pas.
+    contenu_apres: str | None = None
     origine: str
     # Les tableaux d'une section calculée, en structure : colonnes, lignes, et
     # le genre de chaque ligne (rubrique, sous-critère, total). C'est ce que
@@ -107,6 +113,9 @@ class SectionIn(BaseModel):
     code: str
     titre: str = Field(min_length=1, max_length=255)
     contenu: str = ""
+    # Absent : le bloc sous le tableau reste tel qu'il était. Un client qui
+    # ignore ce champ ne doit pas effacer du texte qu'il ne sait pas afficher.
+    contenu_apres: str | None = None
 
 
 class MiseAJourIn(BaseModel):
@@ -148,6 +157,9 @@ def _vers_sortie(rapport: Rapport) -> RapportOut:
                 code=str(s.get("code") or ""),
                 titre=str(s.get("titre") or ""),
                 contenu=str(s.get("contenu") or ""),
+                contenu_apres=(
+                    str(s["contenu_apres"]) if s.get("contenu_apres") is not None else None
+                ),
                 origine=str(s.get("origine") or rapports.ORIGINE_REDIGEE),
                 tableaux=[t for t in (s.get("tableaux") or ()) if isinstance(t, dict)],
                 niveau=int(s.get("niveau") or 1),
@@ -297,7 +309,15 @@ async def modifier(
         nouvelles = []
         for section in donnees.sections:
             ancienne = anciennes.get(section.code, {})
-            inchangee = str(ancienne.get("contenu") or "") == section.contenu
+            # Le bloc sous le tableau compte autant que celui du dessus : une
+            # correction portée là est une relecture humaine, et une absence
+            # dans la requête veut dire « inchangé », jamais « effacé ».
+            apres_ancien = ancienne.get("contenu_apres")
+            apres = section.contenu_apres if section.contenu_apres is not None else apres_ancien
+            inchangee = (
+                str(ancienne.get("contenu") or "") == section.contenu
+                and str(apres_ancien or "") == str(apres or "")
+            )
             origine = str(ancienne.get("origine") or rapports.ORIGINE_REDIGEE)
             nouvelle = {
                 "code": section.code,
@@ -305,6 +325,8 @@ async def modifier(
                 "contenu": section.contenu,
                 "origine": origine if inchangee else rapports.ORIGINE_REDIGEE,
             }
+            if apres is not None:
+                nouvelle["contenu_apres"] = apres
             # Les tableaux d'une section calculée survivent à l'enregistrement
             # — sans quoi le premier « Enregistrer » ramenait le rapport à des
             # colonnes alignées à l'espace.
@@ -403,8 +425,20 @@ async def exporter(
     rapport = await _get_rapport(db, rapport_id)
     mandat = await db.get(Mandat, rapport.mandat_id)
 
-    sous_titre = (rapport.donnees or {}).get("mandat", {}).get("client") or (
-        mandat.intitule if mandat else ""
+    infos = (rapport.donnees or {}).get("mandat") or {}
+    sous_titre = infos.get("client") or (mandat.intitule if mandat else "")
+    etabli_le = rapport.valide_le or rapport.created_at or utcnow()
+
+    # La page de garde du cabinet. Elle vient de `donnees`, figé à la
+    # génération, et non du mandat tel qu'il est aujourd'hui : un rapport
+    # réexporté six mois plus tard doit rendre la même première page que celle
+    # qui a été remise.
+    couverture = frontispice.Couverture(
+        titre=rapport.titre,
+        objet=str(infos.get("intitule") or (mandat.intitule if mandat else "")),
+        client=str(infos.get("client") or ""),
+        reference=str(infos.get("reference") or ""),
+        mois=frontispice.mois_de(etabli_le),
     )
     try:
         octets, mime, extension = export_rapport.rendre(
@@ -412,7 +446,8 @@ async def exporter(
             rapport.titre,
             sous_titre,
             list(rapport.sections or ()),
-            rapport.valide_le or rapport.created_at or utcnow(),
+            etabli_le,
+            couverture,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc

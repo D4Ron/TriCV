@@ -9,6 +9,13 @@ Les sections arrivent déjà rédigées et relues. Ce module ne décide de rien 
 met en page. C'est délibéré : le fond et la forme se sont séparés au moment où
 un client a demandé sa propre trame, et les mélanger de nouveau obligerait à
 réécrire la génération pour chaque format imposé.
+
+Le document remis ne se limite pas au corps. Il s'ouvre sur une page de garde à
+l'en-tête du cabinet, puis sur un sommaire, et ses titres sont numérotés — voir
+`frontispice`, qui tient ce qui est commun aux quatre formats. Chacun le dessine
+ici avec ses propres moyens : un champ TOC pour Word, un `text:table-of-content`
+pour LibreOffice, une table des matières calculée en deux passes pour le PDF,
+une liste simple pour le texte brut.
 """
 
 from __future__ import annotations
@@ -19,16 +26,19 @@ from datetime import datetime
 from xml.sax.saxutils import escape
 
 from docx import Document
+from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt, RGBColor
+from docx.shared import Cm, Pt, RGBColor
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (
+    HRFlowable,
+    Image,
     KeepTogether,
     PageBreak,
     Paragraph,
@@ -37,6 +47,10 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+from reportlab.platypus.tableofcontents import TableOfContents
+
+from app.services.exports import frontispice
+from app.services.exports.frontispice import Couverture
 
 # Charte Kapi Consult : bleu de la marque, or des filets, gris du texte
 # secondaire. Les mêmes valeurs que l'interface, pour qu'un rapport imprimé et
@@ -59,13 +73,7 @@ GENRE_RUBRIQUE = "rubrique"
 GENRE_DETAIL = "detail"
 GENRE_TOTAL = "total"
 
-
-def _entete(titre: str, sous_titre: str, genere_le: datetime) -> list[str]:
-    return [
-        titre,
-        sous_titre,
-        f"Kapi Consult — {genere_le.strftime('%d/%m/%Y')}",
-    ]
+TITRE_SOMMAIRE = "Sommaire"
 
 
 # --- lecture des tableaux structurés ----------------------------------------
@@ -114,9 +122,63 @@ def _a_rendre(section: dict) -> bool:
     """
     return bool(
         str(section.get("contenu") or "").strip()
+        or str(section.get("contenu_apres") or "").strip()
         or _tableaux_de(section)
         or section.get("porteur")
     )
+
+
+def preparer(
+    titre: str,
+    sous_titre: str,
+    sections: list[dict],
+    genere_le: datetime,
+    couverture: Couverture | None,
+) -> tuple[list[dict], list[frontispice.Entree], Couverture]:
+    """Les sections effectivement rendues, leurs numéros, et la page de garde.
+
+    Le filtrage précède la numérotation : une section laissée vide ne paraît
+    pas, elle ne doit donc pas consommer un numéro et laisser un trou à la
+    place du II.
+    """
+    rendues = [s for s in sections if _a_rendre(s)]
+    entrees = frontispice.numeroter(rendues)
+    garde = couverture or frontispice.couverture_par_defaut(titre, sous_titre, genere_le)
+    return rendues, entrees, garde
+
+
+# Les marques dont la rédaction préfixe un élément d'énumération. Le modèle
+# écrit « - Formation académique (7 points) : … » ; le document remis, lui,
+# porte une vraie liste à puces, avec le retrait et l'alignement que Word et
+# LibreOffice savent tenir. Rendre le tiret tel quel donnait une suite de
+# paragraphes ordinaires commençant par un signe moins, que le lecteur
+# reconstitue en liste de lui-même — et qui se replient sans retrait dès
+# qu'un élément dépasse la ligne.
+_PUCES = ("- ", "– ", "— ", "• ", "* ")
+
+
+def paragraphes_de(section: dict, cle: str = "contenu") -> list[tuple[str, bool]]:
+    """La prose d'une section, découpée en (texte, est-une-puce).
+
+    Partagée par les quatre formats : un même contenu doit produire la même
+    liste dans le DOCX, le PDF, l'ODT et l'aperçu. La reconnaissance vit ici
+    pour qu'aucun format ne puisse en diverger.
+
+    `cle` vaut « contenu » — la prose qui précède les tableaux — ou
+    « contenu_apres », le commentaire des chiffres, qui se lit après eux.
+    """
+    sortie: list[tuple[str, bool]] = []
+    for ligne in str(section.get(cle) or "").split("\n"):
+        texte = ligne.strip()
+        if not texte:
+            continue
+        for puce in _PUCES:
+            if texte.startswith(puce):
+                sortie.append((texte[len(puce):].strip(), True))
+                break
+        else:
+            sortie.append((texte, False))
+    return sortie
 
 
 # La mention qui clôt le rapport du cabinet, sous le tableau des résultats.
@@ -158,6 +220,34 @@ def _ecrire_cellule(
     run.font.bold = gras
 
 
+def _ajuster_a_la_page(table) -> None:
+    """« Ajuster à la fenêtre » plutôt qu'« ajuster au contenu ».
+
+    python-docx pose `tblW type="auto"`, que Word lit comme « ajuster au
+    contenu » : la table s'élargit autant qu'il le faut. Le tableau des
+    préqualifiés porte huit colonnes — nom, âge, diplôme, pays, note, rang,
+    téléphone, courriel — et débordait donc de la colonne de texte, une moitié
+    hors de la page imprimée.
+
+    Une largeur de 100 % le ramène dans les marges et laisse Word replier le
+    contenu des cellules, ce qui est le comportement voulu : un courriel long
+    passe à la ligne, il ne pousse pas la page.
+    """
+    proprietes = table._tbl.tblPr
+    for ancien in proprietes.findall(qn("w:tblW")):
+        proprietes.remove(ancien)
+    largeur = OxmlElement("w:tblW")
+    largeur.set(qn("w:type"), "pct")
+    largeur.set(qn("w:w"), "5000")  # 5000 cinquantièmes de pour cent = 100 %
+    # `w:tblW` suit `w:tblStyle` et précède `w:jc` dans la séquence du schéma.
+    proprietes.insert_element_before(
+        largeur,
+        "w:jc", "w:tblCellSpacing", "w:tblInd", "w:tblBorders", "w:shd",
+        "w:tblLayout", "w:tblCellMar", "w:tblLook", "w:tblCaption",
+        "w:tblDescription", "w:tblPrChange",
+    )
+
+
 def _table_docx(document, tableau: dict) -> None:
     colonnes = _colonnes(tableau)
     lignes = _lignes(tableau)
@@ -170,6 +260,7 @@ def _table_docx(document, tableau: dict) -> None:
     # `autofit` laisse Word répartir les colonnes sur le contenu réel, ce qui
     # évite d'imposer des largeurs qui coupent un intitulé long.
     table.autofit = True
+    _ajuster_a_la_page(table)
 
     for index, colonne in enumerate(table.rows[0].cells):
         _ombrer(colonne, FOND_ENTETE)
@@ -205,9 +296,8 @@ def _section_docx(document, section: dict) -> None:
     Dans cet ordre, parce que c'est celui du document remis : une phrase
     annonce le tableau, le tableau suit.
     """
-    for paragraphe in str(section.get("contenu") or "").split("\n"):
-        if paragraphe.strip():
-            document.add_paragraph(paragraphe.strip())
+    for paragraphe, puce in paragraphes_de(section):
+        document.add_paragraph(paragraphe, style="List Bullet" if puce else None)
 
     for tableau in _tableaux_de(section):
         legende = str(tableau.get("titre") or "").strip()
@@ -221,6 +311,10 @@ def _section_docx(document, section: dict) -> None:
         _table_docx(document, tableau)
         document.add_paragraph()
 
+    # Le commentaire des chiffres, après les chiffres.
+    for paragraphe, puce in paragraphes_de(section, "contenu_apres"):
+        document.add_paragraph(paragraphe, style="List Bullet" if puce else None)
+
     note = _note_de_fin(section)
     if note:
         paragraphe = document.add_paragraph()
@@ -230,12 +324,248 @@ def _section_docx(document, section: dict) -> None:
         run.font.color.rgb = GRIS
 
 
+# --- DOCX : page de garde, sommaire, pied de page ---------------------------
+#
+# Word ne sait pas numéroter une page ni dresser une table des matières depuis
+# un contenu figé : il le fait au moment où le document s'ouvre, à partir de
+# *champs*. Un champ est une suite de runs encadrée par deux marques —
+# `begin`…`separate`…`end` — dont python-docx n'expose rien. On pose le XML.
+#
+# Entre `separate` et `end` vit le *résultat mis en cache* : ce qu'affichent
+# les lecteurs qui n'actualisent pas. On y écrit les titres numérotés, sans
+# numéro de page. Un sommaire sans pagination reste un sommaire ; un champ vide
+# ressemble à un document abîmé.
+
+
+def _marque_de_champ(genre: str, sale: bool = False):
+    marque = OxmlElement("w:fldChar")
+    marque.set(qn("w:fldCharType"), genre)
+    if sale:
+        # « dirty » demande au lecteur d'actualiser ce champ à l'ouverture.
+        marque.set(qn("w:dirty"), "true")
+    return marque
+
+
+def _instruction(texte: str):
+    instruction = OxmlElement("w:instrText")
+    instruction.set(qn("xml:space"), "preserve")
+    instruction.text = texte
+    return instruction
+
+
+def _champ_simple(paragraphe, instruction: str, cache: str = "") -> None:
+    """Un champ qui tient dans un paragraphe — un numéro de page, par exemple."""
+    debut = paragraphe.add_run()
+    debut._r.append(_marque_de_champ("begin"))
+    milieu = paragraphe.add_run()
+    milieu._r.append(_instruction(instruction))
+    separation = paragraphe.add_run()
+    separation._r.append(_marque_de_champ("separate"))
+    paragraphe.add_run(cache)
+    fin = paragraphe.add_run()
+    fin._r.append(_marque_de_champ("end"))
+
+
+# Les éléments de `word/settings.xml` qui, dans le schéma OOXML, viennent après
+# `w:updateFields`. Le schéma décrit une *séquence* : un élément posé hors de
+# son rang fait ouvrir le fichier sur « contenu illisible », même si le XML est
+# bien formé. Ajouter à la fin — le réflexe — le posait justement après tous
+# ceux-ci.
+_APRES_UPDATE_FIELDS = (
+    "w:compat",
+    "w:docVars",
+    "w:rsids",
+    "w:mathPr",
+    "w:themeFontLang",
+    "w:clrSchemeMapping",
+    "w:doNotAutoCompressPictures",
+    "w:shapeDefaults",
+    "w:decimalSymbol",
+    "w:listSeparator",
+)
+
+
+def _actualiser_les_champs(document) -> None:
+    """Demande au lecteur d'actualiser la table des matières à l'ouverture.
+
+    Sans cela, Word affiche le contenu mis en cache jusqu'à ce que quelqu'un
+    pense à faire un clic droit dessus — et le rapport part au client avec un
+    sommaire sans pages.
+    """
+    reglages = document.settings.element
+    drapeau = OxmlElement("w:updateFields")
+    drapeau.set(qn("w:val"), "true")
+
+    for nom in _APRES_UPDATE_FIELDS:
+        suivant = reglages.find(qn(nom))
+        if suivant is not None:
+            suivant.addprevious(drapeau)
+            return
+    reglages.append(drapeau)
+
+
+# Ce qui, dans le schéma OOXML, suit `w:pBdr` à l'intérieur de `w:pPr`.
+#
+# `w:pPr` n'est pas un sac d'attributs : c'est une *séquence*. Un enfant posé
+# hors de son rang fait ouvrir le document sur « Word a détecté un problème…
+# contenu illisible », alors même que le XML est bien formé et que tous les
+# lecteurs plus tolérants l'affichent correctement. python-docx range de
+# lui-même ce qu'il sait poser ; `w:pBdr`, qu'il ne connaît pas, se retrouvait
+# ajouté à la fin — donc après le `w:spacing` et le `w:jc` posés juste avant.
+_APRES_PBDR = (
+    "w:shd", "w:tabs", "w:suppressAutoHyphens", "w:kinsoku", "w:wordWrap",
+    "w:overflowPunct", "w:topLinePunct", "w:autoSpaceDE", "w:autoSpaceDN",
+    "w:bidi", "w:adjustRightInd", "w:snapToGrid", "w:spacing", "w:ind",
+    "w:contextualSpacing", "w:mirrorIndents", "w:suppressOverlap", "w:jc",
+    "w:textDirection", "w:textAlignment", "w:textboxTightWrap", "w:outlineLvl",
+    "w:divId", "w:cnfStyle", "w:rPr", "w:sectPr", "w:pPrChange",
+)
+
+
+def _filet(paragraphe, couleur: str, epaisseur: int = 12) -> None:
+    """Le filet or sous la marque. Une bordure basse de paragraphe."""
+    proprietes = paragraphe._p.get_or_add_pPr()
+    bordures = OxmlElement("w:pBdr")
+    bas = OxmlElement("w:bottom")
+    bas.set(qn("w:val"), "single")
+    bas.set(qn("w:sz"), str(epaisseur))
+    bas.set(qn("w:space"), "4")
+    bas.set(qn("w:color"), couleur)
+    bordures.append(bas)
+    proprietes.insert_element_before(bordures, *_APRES_PBDR)
+
+
+def _ligne(document, texte: str, *, taille: float, gras=False, couleur=None,
+           centre=True, avant=0, apres=4, majuscules=False):
+    paragraphe = document.add_paragraph()
+    if centre:
+        paragraphe.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraphe.paragraph_format.space_before = Pt(avant)
+    paragraphe.paragraph_format.space_after = Pt(apres)
+    if texte:
+        run = paragraphe.add_run(texte.upper() if majuscules else texte)
+        run.font.size = Pt(taille)
+        run.font.bold = gras
+        if couleur is not None:
+            run.font.color.rgb = couleur
+    return paragraphe
+
+
+def _page_de_garde_docx(document, garde: Couverture) -> None:
+    """La première page : la marque, l'objet, le titre, le mois.
+
+    Le pied — coordonnées du cabinet et mention de confidentialité — est porté
+    par le pied de page de première page, et non par des paragraphes : c'est ce
+    qui le tient en bas de la feuille quel que soit l'objet du mandat, qui fait
+    deux lignes chez l'un et six chez l'autre.
+    """
+    marque = document.add_paragraph()
+    marque.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    marque.paragraph_format.space_after = Pt(2)
+    logo = marque.add_run()
+    logo.add_picture(io.BytesIO(frontispice.logo_png()), width=Cm(2.2))
+
+    nom = _ligne(
+        document,
+        frontispice.NOM_CABINET,
+        taille=16,
+        gras=True,
+        couleur=OR,
+        avant=4,
+        apres=10,
+    )
+    _filet(nom, OR_HEX.lstrip("#"))
+
+    if garde.objet_affiche:
+        _ligne(
+            document,
+            garde.objet_affiche,
+            taille=13,
+            gras=True,
+            couleur=BLEU,
+            avant=80,
+            apres=24,
+        )
+    else:
+        _ligne(document, "", taille=11, avant=80, apres=24)
+
+    _ligne(document, garde.titre_document, taille=22, gras=True, couleur=BLEU, apres=10)
+    if garde.client:
+        _ligne(document, garde.client, taille=13, couleur=GRIS, apres=2)
+    if garde.reference:
+        _ligne(document, f"Réf. {garde.reference}", taille=10, couleur=GRIS, apres=2)
+    if garde.mois:
+        _ligne(document, garde.mois, taille=12, gras=True, couleur=GRIS, avant=30)
+
+
+def _sommaire_docx(document, entrees: list[frontispice.Entree]) -> None:
+    """Le sommaire : un champ TOC, avec les titres en cache.
+
+    Le titre « Sommaire » est un paragraphe ordinaire, non un style de titre.
+    Un titre en bonne et due forme se recenserait lui-même à la première ligne
+    de sa propre table des matières.
+    """
+    _ligne(document, TITRE_SOMMAIRE, taille=16, gras=True, couleur=BLEU, apres=12)
+
+    ouverture = document.add_paragraph()
+    debut = ouverture.add_run()
+    debut._r.append(_marque_de_champ("begin", sale=True))
+    milieu = ouverture.add_run()
+    milieu._r.append(_instruction(' TOC \\o "1-2" \\h \\z \\u '))
+    separation = ouverture.add_run()
+    separation._r.append(_marque_de_champ("separate"))
+
+    for entree in entrees:
+        cache = document.add_paragraph()
+        cache.paragraph_format.space_after = Pt(3)
+        if entree.niveau == 2:
+            cache.paragraph_format.left_indent = Pt(18)
+        run = cache.add_run(entree.titre_complet)
+        run.font.size = Pt(10.5)
+        run.font.bold = entree.niveau == 1
+
+    fermeture = document.add_paragraph()
+    fin = fermeture.add_run()
+    fin._r.append(_marque_de_champ("end"))
+
+
+def _pieds_de_page_docx(document, garde: Couverture) -> None:
+    """Le mois sous la page de garde, la pagination sous les autres."""
+    section = document.sections[0]
+    section.different_first_page_header_footer = True
+
+    premiere = section.first_page_footer.paragraphs[0]
+    premiere.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for ligne in frontispice.ADRESSE:
+        run = premiere.add_run(ligne + "\n")
+        run.font.size = Pt(7.5)
+        run.font.color.rgb = GRIS
+    mention = premiere.add_run(frontispice.MENTION_CONFIDENTIEL)
+    mention.font.size = Pt(8)
+    mention.font.bold = True
+    mention.font.color.rgb = GRIS
+
+    courant = section.footer.paragraphs[0]
+    courant.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    debut = courant.add_run(f"{frontispice.MENTION_CONFIDENTIEL}   —   page ")
+    debut.font.size = Pt(8)
+    debut.font.color.rgb = GRIS
+    _champ_simple(courant, " PAGE ")
+    for run in courant.runs:
+        run.font.size = Pt(8)
+        run.font.color.rgb = GRIS
+
+
 def rendre_docx(
     titre: str,
     sous_titre: str,
     sections: list[dict],
     genere_le: datetime,
+    couverture: Couverture | None = None,
 ) -> bytes:
+    rendues, entrees, garde = preparer(
+        titre, sous_titre, sections, genere_le, couverture
+    )
     document = Document()
 
     normal = document.styles["Normal"]
@@ -243,43 +573,36 @@ def rendre_docx(
     normal.font.size = Pt(11)
     normal.paragraph_format.space_after = Pt(8)
 
-    # Heading 1 = le titre du rapport ; 2 = une section ; 3 = une sous-section.
-    for nom, taille in (("Heading 1", 18), ("Heading 2", 13), ("Heading 3", 11.5)):
+    # Le titre du rapport vit désormais sur la page de garde : « Heading 1 » est
+    # libre pour les sections, ce qui est aussi ce que le champ TOC recense
+    # (`\o "1-2"`). Une hiérarchie décalée d'un cran laissait la table des
+    # matières vide.
+    for nom, taille in (("Heading 1", 14), ("Heading 2", 12), ("Heading 3", 11)):
         style = document.styles[nom]
         style.font.name = "Calibri"
         style.font.size = Pt(taille)
         style.font.color.rgb = BLEU
         style.font.bold = True
 
-    entete = document.add_paragraph()
-    entete.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    marque = entete.add_run("KAPI CONSULT")
-    marque.font.size = Pt(12)
-    marque.font.bold = True
-    marque.font.color.rgb = OR
+    _pieds_de_page_docx(document, garde)
+    _page_de_garde_docx(document, garde)
 
-    document.add_heading(titre, level=1)
-    if sous_titre:
-        ligne = document.add_paragraph()
-        run = ligne.add_run(sous_titre)
-        run.font.size = Pt(12)
-        run.font.color.rgb = GRIS
+    # Une section Word neuve pour que la page de garde garde son pied à elle —
+    # les coordonnées du cabinet — sans l'imposer au reste du document.
+    # `add_section` recopie les réglages de la précédente, dont le pied de
+    # première page : sans cette ligne, le sommaire reprenait l'adresse du
+    # cabinet au lieu de sa pagination.
+    suite = document.add_section(WD_SECTION.NEW_PAGE)
+    suite.different_first_page_header_footer = False
+    _sommaire_docx(document, entrees)
 
-    date = document.add_paragraph()
-    run = date.add_run(f"Établi le {genere_le.strftime('%d/%m/%Y')}")
-    run.font.size = Pt(9)
-    run.font.color.rgb = GRIS
+    document.paragraphs[-1].add_run().add_break(WD_BREAK.PAGE)
 
-    for section in sections:
-        # Une section vide n'est pas rendue : mieux vaut un rapport plus court
-        # qu'un titre suivi de blanc, qui se lit comme un oubli. Sauf un titre
-        # porteur, dont les sous-sections dépendent.
-        if not _a_rendre(section):
-            continue
-        document.add_heading(
-            str(section.get("titre") or ""), level=1 + _niveau(section)
-        )
+    for section, entree in zip(rendues, entrees):
+        document.add_heading(entree.titre_complet, level=entree.niveau)
         _section_docx(document, section)
+
+    _actualiser_les_champs(document)
 
     tampon = io.BytesIO()
     document.save(tampon)
@@ -290,7 +613,8 @@ def rendre_docx(
 
 
 # A4 moins les marges posées sur le SimpleDocTemplate plus bas.
-LARGEUR_UTILE = A4[0] - 40 * mm
+MARGE = 20 * mm
+LARGEUR_UTILE = A4[0] - 2 * MARGE
 
 
 def _largeurs(tableau: dict, largeur_totale: float) -> list[float]:
@@ -386,41 +710,133 @@ def _table_pdf(tableau: dict, styles: dict, largeur_totale: float) -> list:
     return [KeepTogether(elements)] if len(donnees) <= 12 else elements
 
 
-def rendre_pdf(
-    titre: str,
-    sous_titre: str,
-    sections: list[dict],
-    genere_le: datetime,
-) -> bytes:
+class _DocumentRapport(SimpleDocTemplate):
+    """Un document qui signale ses titres à la table des matières.
+
+    Le PDF est le seul des quatre formats où la pagination du sommaire est
+    calculée par nous : Word et LibreOffice la refont à l'ouverture, le texte
+    brut n'en a pas. Elle demande deux passes — une pour savoir sur quelle page
+    tombe chaque titre, une pour écrire le sommaire avec — ce que
+    `multiBuild` orchestre à condition qu'on lui dise où sont les titres.
+    """
+
+    _NIVEAUX = {"section": 0, "sous_section": 1}
+
+    def afterFlowable(self, flowable) -> None:  # noqa: N802 — nom imposé
+        if not isinstance(flowable, Paragraph):
+            return
+        niveau = self._NIVEAUX.get(flowable.style.name)
+        if niveau is not None:
+            self.notify("TOCEntry", (niveau, flowable.getPlainText(), self.page))
+
+
+def _dessiner_pied(toile, texte_gauche: str, texte_droite: str) -> None:
+    toile.saveState()
+    toile.setFont("Helvetica", 7.5)
+    toile.setFillColor(colors.HexColor(GRIS_HEX))
+    if texte_gauche:
+        toile.drawString(MARGE, 12 * mm, texte_gauche)
+    if texte_droite:
+        toile.drawRightString(A4[0] - MARGE, 12 * mm, texte_droite)
+    toile.setStrokeColor(colors.HexColor("#DCDFEC"))
+    toile.setLineWidth(0.4)
+    toile.line(MARGE, 15 * mm, A4[0] - MARGE, 15 * mm)
+    toile.restoreState()
+
+
+def _pied_de_garde(garde: Couverture):
+    """Les coordonnées du cabinet, au pied de la première page seulement."""
+
+    def dessiner(toile, _document) -> None:
+        toile.saveState()
+        toile.setStrokeColor(colors.HexColor(OR_HEX))
+        toile.setLineWidth(1.2)
+        toile.line(MARGE, 34 * mm, A4[0] - MARGE, 34 * mm)
+
+        toile.setFont("Helvetica-Bold", 7.5)
+        toile.setFillColor(colors.HexColor(GRIS_HEX))
+        toile.drawString(MARGE, 29 * mm, frontispice.NOM_CABINET)
+        toile.setFont("Helvetica", 7)
+        for rang, ligne in enumerate(frontispice.ADRESSE):
+            toile.drawString(MARGE, 25 * mm - rang * 3.6 * mm, ligne)
+
+        toile.setFont("Helvetica-Bold", 8)
+        toile.drawRightString(
+            A4[0] - MARGE, 29 * mm, frontispice.MENTION_CONFIDENTIEL
+        )
+        toile.restoreState()
+
+    return dessiner
+
+
+def _pied_courant(garde: Couverture):
+    def dessiner(toile, _document) -> None:
+        _dessiner_pied(
+            toile,
+            f"{garde.titre_document} — {frontispice.MENTION_CONFIDENTIEL}",
+            f"page {toile.getPageNumber()}",
+        )
+
+    return dessiner
+
+
+def _styles_pdf() -> dict:
     base = getSampleStyleSheet()
     styles = {
         "marque": ParagraphStyle(
             "marque",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=10,
+            fontSize=15,
             textColor=OR_HEX,
-            spaceAfter=18,
+            alignment=1,
+            spaceBefore=6,
+            spaceAfter=10,
         ),
-        "titre": ParagraphStyle(
-            "titre",
-            parent=base["Title"],
-            fontName="Helvetica-Bold",
-            fontSize=20,
-            leading=24,
-            textColor=BLEU_HEX,
-            alignment=0,
-            spaceAfter=6,
-        ),
-        "sous_titre": ParagraphStyle(
-            "sous_titre",
+        "objet": ParagraphStyle(
+            "objet",
             parent=base["Normal"],
-            fontSize=11,
+            fontName="Helvetica-Bold",
+            fontSize=12,
+            leading=17,
+            textColor=BLEU_HEX,
+            alignment=1,
+            spaceAfter=26,
+        ),
+        "titre_garde": ParagraphStyle(
+            "titre_garde",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=24,
+            leading=29,
+            textColor=BLEU_HEX,
+            alignment=1,
+            spaceAfter=10,
+        ),
+        "client_garde": ParagraphStyle(
+            "client_garde",
+            parent=base["Normal"],
+            fontSize=13,
             textColor=GRIS_HEX,
+            alignment=1,
             spaceAfter=2,
         ),
-        "date": ParagraphStyle(
-            "date", parent=base["Normal"], fontSize=8.5, textColor=GRIS_HEX, spaceAfter=20
+        "mois": ParagraphStyle(
+            "mois",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            textColor=GRIS_HEX,
+            alignment=1,
+            spaceBefore=28,
+        ),
+        "titre_sommaire": ParagraphStyle(
+            "titre_sommaire",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=17,
+            textColor=BLEU_HEX,
+            spaceAfter=14,
         ),
         "section": ParagraphStyle(
             "section",
@@ -433,6 +849,18 @@ def rendre_pdf(
         ),
         "corps": ParagraphStyle(
             "corps", parent=base["BodyText"], fontSize=10.5, leading=15, spaceAfter=6
+        ),
+        # Un élément d'énumération : retrait de bloc, puce détachée. Ce qui
+        # importe est `leftIndent` — sans lui, la deuxième ligne d'un élément
+        # long revenait à la marge et l'énumération se perdait.
+        "puce": ParagraphStyle(
+            "puce",
+            parent=base["BodyText"],
+            fontSize=10.5,
+            leading=15,
+            leftIndent=16,
+            bulletIndent=4,
+            spaceAfter=3,
         ),
         "sous_section": ParagraphStyle(
             "sous_section",
@@ -488,66 +916,152 @@ def rendre_pdf(
     styles["entete_droite"] = ParagraphStyle(
         "entete_droite", parent=styles["entete"], alignment=2
     )
+    return styles
 
+
+def _page_de_garde_pdf(garde: Couverture, styles: dict) -> list:
+    logo = Image(io.BytesIO(frontispice.logo_png()), width=22 * mm, height=22 * mm)
+    logo.hAlign = "CENTER"
     elements: list = [
-        Paragraph("KAPI CONSULT", styles["marque"]),
-        Paragraph(escape(titre), styles["titre"]),
+        Spacer(1, 6 * mm),
+        logo,
+        Paragraph(escape(frontispice.NOM_CABINET), styles["marque"]),
+        # Le filet or de la charte, sous la marque : le même trait que porte le
+        # papier à en-tête du cabinet.
+        HRFlowable(
+            width="55%",
+            thickness=1.2,
+            color=colors.HexColor(OR_HEX),
+            hAlign="CENTER",
+            spaceAfter=2,
+        ),
+        Spacer(1, 32 * mm),
     ]
-    if sous_titre:
-        elements.append(Paragraph(escape(sous_titre), styles["sous_titre"]))
-    elements.append(
-        Paragraph(f"Établi le {genere_le.strftime('%d/%m/%Y')}", styles["date"])
-    )
+    if garde.objet_affiche:
+        elements.append(Paragraph(escape(garde.objet_affiche), styles["objet"]))
+    elements.append(Paragraph(escape(garde.titre_document), styles["titre_garde"]))
+    if garde.client:
+        elements.append(Paragraph(escape(garde.client), styles["client_garde"]))
+    if garde.reference:
+        elements.append(
+            Paragraph(escape(f"Réf. {garde.reference}"), styles["client_garde"])
+        )
+    if garde.mois:
+        elements.append(Paragraph(escape(garde.mois), styles["mois"]))
+    elements.append(PageBreak())
+    return elements
 
-    for section in sections:
-        if not _a_rendre(section):
-            continue
+
+def _sommaire_pdf(styles: dict) -> list:
+    sommaire = TableOfContents()
+    # Les points de conduite dès le premier niveau. Par défaut reportlab les
+    # réserve aux sous-titres, et l'œil perd la ligne entre un titre court et
+    # sa page, à l'autre bout de la feuille.
+    sommaire.dotsMinLevel = 0
+    sommaire.levelStyles = [
+        ParagraphStyle(
+            "somm1",
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            leading=17,
+            textColor=BLEU_HEX,
+        ),
+        ParagraphStyle(
+            "somm2",
+            fontName="Helvetica",
+            fontSize=10,
+            leading=15,
+            leftIndent=16,
+            firstLineIndent=-2,
+        ),
+    ]
+    return [
+        Paragraph(TITRE_SOMMAIRE, styles["titre_sommaire"]),
+        sommaire,
+        PageBreak(),
+    ]
+
+
+def rendre_pdf(
+    titre: str,
+    sous_titre: str,
+    sections: list[dict],
+    genere_le: datetime,
+    couverture: Couverture | None = None,
+) -> bytes:
+    rendues, entrees, garde = preparer(
+        titre, sous_titre, sections, genere_le, couverture
+    )
+    styles = _styles_pdf()
+
+    elements: list = _page_de_garde_pdf(garde, styles)
+    elements += _sommaire_pdf(styles)
+
+    def prose(section: dict, cle: str) -> list:
+        return [
+            Paragraph(
+                f"<bullet>&bull;</bullet>{escape(texte)}" if puce else escape(texte),
+                styles["puce" if puce else "corps"],
+            )
+            for texte, puce in paragraphes_de(section, cle)
+        ]
+
+    for section, entree in zip(rendues, entrees):
         elements.append(
             Paragraph(
-                escape(str(section.get("titre") or "")),
-                styles["sous_section" if _niveau(section) == 2 else "section"],
+                escape(entree.titre_complet),
+                styles["sous_section" if entree.niveau == 2 else "section"],
             )
         )
 
-        for paragraphe in str(section.get("contenu") or "").split("\n"):
-            if paragraphe.strip():
-                elements.append(Paragraph(escape(paragraphe.strip()), styles["corps"]))
+        elements.extend(prose(section, "contenu"))
 
         for tableau in _tableaux_de(section):
             elements.extend(_table_pdf(tableau, styles, LARGEUR_UTILE))
+
+        elements.extend(prose(section, "contenu_apres"))
 
         note = _note_de_fin(section)
         if note:
             elements.append(Paragraph(escape(note), styles["note"]))
 
     tampon = io.BytesIO()
-    document = SimpleDocTemplate(
+    document = _DocumentRapport(
         tampon,
         pagesize=A4,
-        leftMargin=20 * mm,
-        rightMargin=20 * mm,
+        leftMargin=MARGE,
+        rightMargin=MARGE,
         topMargin=18 * mm,
-        bottomMargin=18 * mm,
+        # De la place pour le pied de page, et davantage sous la page de garde.
+        bottomMargin=22 * mm,
         title=titre,
         author="Kapi Consult",
     )
-    document.build(elements or [Spacer(1, 1)])
+    document.multiBuild(
+        elements or [Spacer(1, 1)],
+        onFirstPage=_pied_de_garde(garde),
+        onLaterPages=_pied_courant(garde),
+    )
     return tampon.getvalue()
 
 
 # --- ODT --------------------------------------------------------------------
 #
 # Écrit à la main plutôt qu'avec une bibliothèque. Un ODT est un zip contenant
-# quelques fichiers XML ; le rapport n'a besoin que de titres et de paragraphes,
-# ce qui tient en une soixantaine de lignes. Ajouter une dépendance pour cela
-# reviendrait à faire porter au déploiement le coût d'un besoin marginal — et
-# l'ODT n'est demandé que par certaines administrations.
+# quelques fichiers XML ; le rapport n'a besoin que de titres, de paragraphes et
+# de tables, ce qui tient en quelques dizaines de lignes. Ajouter une dépendance
+# pour cela reviendrait à faire porter au déploiement le coût d'un besoin
+# marginal — et l'ODT n'est demandé que par certaines administrations.
+
+_LOGO_ODT = "Pictures/kapi.png"
 
 _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
 <office:document-styles
   xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
   xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
   xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+  xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
   office:version="1.2">
  <office:styles>
   <style:style style:name="Titre" style:family="paragraph">
@@ -593,7 +1107,85 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
    <style:text-properties fo:font-size="9pt" fo:font-weight="bold" fo:color="#1E2299"/>
    <style:paragraph-properties fo:text-align="end"/>
   </style:style>
+  <!-- La page de garde. -->
+  <style:style style:name="GardeMarque" style:family="paragraph">
+   <style:text-properties fo:font-size="16pt" fo:font-weight="bold" fo:color="#B8892A"/>
+   <style:paragraph-properties fo:text-align="center" fo:margin-bottom="0.3cm"
+     fo:border-bottom="0.06cm solid #B8892A" fo:padding-bottom="0.15cm"/>
+  </style:style>
+  <style:style style:name="GardeObjet" style:family="paragraph">
+   <style:text-properties fo:font-size="12pt" fo:font-weight="bold" fo:color="#1E2299"/>
+   <style:paragraph-properties fo:text-align="center" fo:margin-top="4cm"
+     fo:margin-bottom="1cm"/>
+  </style:style>
+  <style:style style:name="GardeTitre" style:family="paragraph">
+   <style:text-properties fo:font-size="24pt" fo:font-weight="bold" fo:color="#1E2299"/>
+   <style:paragraph-properties fo:text-align="center" fo:margin-bottom="0.3cm"/>
+  </style:style>
+  <style:style style:name="GardeClient" style:family="paragraph">
+   <style:text-properties fo:font-size="13pt" fo:color="#6B7080"/>
+   <style:paragraph-properties fo:text-align="center"/>
+  </style:style>
+  <style:style style:name="GardeMois" style:family="paragraph">
+   <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#6B7080"/>
+   <style:paragraph-properties fo:text-align="center" fo:margin-top="1.2cm"/>
+  </style:style>
+  <style:style style:name="GardePied" style:family="paragraph">
+   <style:text-properties fo:font-size="7.5pt" fo:color="#6B7080"/>
+   <style:paragraph-properties fo:text-align="center"/>
+  </style:style>
+  <style:style style:name="Centre" style:family="paragraph">
+   <style:paragraph-properties fo:text-align="center"/>
+  </style:style>
+  <style:style style:name="SautDePage" style:family="paragraph">
+   <style:paragraph-properties fo:break-before="page"/>
+  </style:style>
+  <style:style style:name="TitreSommaire" style:family="paragraph">
+   <style:text-properties fo:font-size="17pt" fo:font-weight="bold" fo:color="#1E2299"/>
+   <style:paragraph-properties fo:margin-bottom="0.5cm"/>
+  </style:style>
+  <style:style style:name="Somm1" style:family="paragraph">
+   <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#1E2299"/>
+   <style:paragraph-properties fo:margin-top="0.15cm"/>
+  </style:style>
+  <style:style style:name="Somm2" style:family="paragraph">
+   <style:text-properties fo:font-size="10pt"/>
+   <style:paragraph-properties fo:margin-left="0.6cm"/>
+  </style:style>
+  <style:style style:name="Pied" style:family="paragraph">
+   <style:text-properties fo:font-size="8pt" fo:color="#6B7080"/>
+   <style:paragraph-properties fo:text-align="center"/>
+  </style:style>
+  <style:style style:name="Puce" style:family="paragraph">
+   <style:paragraph-properties fo:margin-top="0.05cm" fo:margin-bottom="0.05cm"/>
+  </style:style>
+  <!-- Une vraie liste ODF : LibreOffice tient le retrait de la seconde ligne,
+       ce qu'un paragraphe commençant par un tiret ne fait pas. -->
+  <text:list-style style:name="Puces">
+   <text:list-level-style-bullet text:level="1" text:bullet-char="•">
+    <style:list-level-properties text:space-before="0.5cm"
+      text:min-label-width="0.4cm"/>
+   </text:list-level-style-bullet>
+  </text:list-style>
  </office:styles>
+ <office:automatic-styles>
+  <style:page-layout style:name="pm1">
+   <style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm"
+     fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" fo:margin-right="2cm"/>
+   <style:footer-style>
+    <style:header-footer-properties fo:min-height="0.6cm" fo:margin-top="0.4cm"/>
+   </style:footer-style>
+  </style:page-layout>
+ </office:automatic-styles>
+ <office:master-styles>
+  <style:master-page style:name="Standard" style:page-layout-name="pm1">
+   <style:footer>
+    <text:p text:style-name="Pied">__PIED__ &#8212; page
+     <text:page-number text:select-page="current">1</text:page-number>
+    </text:p>
+   </style:footer>
+  </style:master-page>
+ </office:master-styles>
 </office:document-styles>
 """
 
@@ -614,6 +1206,13 @@ _STYLES_CELLULES_ODT = "".join(
     )
 )
 
+_STYLE_LOGO_ODT = (
+    '<style:style style:name="frLogo" style:family="graphic">'
+    '<style:graphic-properties style:vertical-pos="middle" '
+    'style:vertical-rel="text" style:horizontal-pos="center" '
+    'style:horizontal-rel="paragraph"/></style:style>'
+)
+
 _MANIFESTE_ODT = """<?xml version="1.0" encoding="UTF-8"?>
 <manifest:manifest
   xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"
@@ -622,6 +1221,7 @@ _MANIFESTE_ODT = """<?xml version="1.0" encoding="UTF-8"?>
    manifest:media-type="application/vnd.oasis.opendocument.text"/>
  <manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>
  <manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>
+ <manifest:file-entry manifest:full-path="__LOGO__" manifest:media-type="image/png"/>
 </manifest:manifest>
 """
 
@@ -682,37 +1282,120 @@ def _table_odt(tableau: dict, nom: str) -> str:
     return "".join(morceaux)
 
 
+def _page_de_garde_odt(garde: Couverture) -> list[str]:
+    corps = [
+        '<text:p text:style-name="Centre">'
+        '<draw:frame draw:style-name="frLogo" text:anchor-type="as-char" '
+        'svg:width="2.2cm" svg:height="2.2cm" draw:z-index="0">'
+        f'<draw:image xlink:href="{_LOGO_ODT}" xlink:type="simple" '
+        'xlink:show="embed" xlink:actuate="onLoad"/></draw:frame></text:p>',
+        f'<text:p text:style-name="GardeMarque">{escape(frontispice.NOM_CABINET)}</text:p>',
+    ]
+    if garde.objet_affiche:
+        corps.append(
+            f'<text:p text:style-name="GardeObjet">{escape(garde.objet_affiche)}</text:p>'
+        )
+    else:
+        corps.append('<text:p text:style-name="GardeObjet"/>')
+    corps.append(
+        f'<text:p text:style-name="GardeTitre">{escape(garde.titre_document)}</text:p>'
+    )
+    if garde.client:
+        corps.append(
+            f'<text:p text:style-name="GardeClient">{escape(garde.client)}</text:p>'
+        )
+    if garde.reference:
+        corps.append(
+            f'<text:p text:style-name="GardeClient">Réf. {escape(garde.reference)}</text:p>'
+        )
+    if garde.mois:
+        corps.append(f'<text:p text:style-name="GardeMois">{escape(garde.mois)}</text:p>')
+    for ligne in frontispice.ADRESSE:
+        corps.append(f'<text:p text:style-name="GardePied">{escape(ligne)}</text:p>')
+    corps.append(
+        f'<text:p text:style-name="GardePied">{escape(frontispice.MENTION_CONFIDENTIEL)}'
+        "</text:p>"
+    )
+    return corps
+
+
+# Le gabarit d'une ligne de sommaire : le texte du titre, une tabulation à
+# points de conduite, le numéro de page. LibreOffice s'en sert pour refaire la
+# table ; sans lui, une actualisation produirait des lignes nues.
+def _gabarit_sommaire(niveau: int) -> str:
+    return (
+        f'<text:table-of-content-entry-template text:outline-level="{niveau}" '
+        f'text:style-name="Somm{niveau}">'
+        '<text:index-entry-text/>'
+        '<text:index-entry-tab-stop style:type="right" style:leader-char="."/>'
+        '<text:index-entry-page-number/>'
+        "</text:table-of-content-entry-template>"
+    )
+
+
+def _sommaire_odt(entrees: list[frontispice.Entree]) -> str:
+    """Un vrai index ODF, dont LibreOffice refait la pagination à la demande.
+
+    Son corps porte les titres dès l'ouverture : un index vide en attendant
+    que le lecteur pense à l'actualiser se lit comme un document abîmé.
+    """
+    lignes = "".join(
+        f'<text:p text:style-name="Somm{e.niveau}">{escape(e.titre_complet)}</text:p>'
+        for e in entrees
+    )
+    return (
+        '<text:table-of-content text:name="Sommaire" text:protected="true">'
+        '<text:table-of-content-source text:outline-level="2" '
+        'text:use-outline-level="true">'
+        f'<text:index-title-template text:style-name="TitreSommaire">'
+        f"{escape(TITRE_SOMMAIRE)}</text:index-title-template>"
+        + _gabarit_sommaire(1)
+        + _gabarit_sommaire(2)
+        + "</text:table-of-content-source>"
+        '<text:index-body>'
+        '<text:index-title text:name="Sommaire_Titre">'
+        f'<text:p text:style-name="TitreSommaire">{escape(TITRE_SOMMAIRE)}</text:p>'
+        "</text:index-title>"
+        f"{lignes}</text:index-body></text:table-of-content>"
+    )
+
+
 def rendre_odt(
     titre: str,
     sous_titre: str,
     sections: list[dict],
     genere_le: datetime,
+    couverture: Couverture | None = None,
 ) -> bytes:
-    corps: list[str] = [
-        '<text:p text:style-name="Discret">KAPI CONSULT</text:p>',
-        f'<text:h text:outline-level="1" text:style-name="Titre">{escape(titre)}</text:h>',
-    ]
-    if sous_titre:
-        corps.append(f"<text:p>{escape(sous_titre)}</text:p>")
-    corps.append(
-        f'<text:p text:style-name="Discret">Établi le '
-        f"{genere_le.strftime('%d/%m/%Y')}</text:p>"
+    rendues, entrees, garde = preparer(
+        titre, sous_titre, sections, genere_le, couverture
     )
 
-    for index, section in enumerate(sections):
-        if not _a_rendre(section):
-            continue
-        niveau = _niveau(section)
+    corps: list[str] = _page_de_garde_odt(garde)
+    corps.append('<text:p text:style-name="SautDePage"/>')
+    corps.append(_sommaire_odt(entrees))
+    corps.append('<text:p text:style-name="SautDePage"/>')
+
+    for index, (section, entree) in enumerate(zip(rendues, entrees)):
         corps.append(
-            f'<text:h text:outline-level="{1 + niveau}" '
-            f'text:style-name="{"SousSection" if niveau == 2 else "Section"}">'
-            f'{escape(str(section.get("titre") or ""))}</text:h>'
+            f'<text:h text:outline-level="{entree.niveau}" '
+            f'text:style-name="{"SousSection" if entree.niveau == 2 else "Section"}">'
+            f"{escape(entree.titre_complet)}</text:h>"
         )
-        for paragraphe in str(section.get("contenu") or "").split("\n"):
-            if paragraphe.strip():
-                corps.append(f"<text:p>{escape(paragraphe.strip())}</text:p>")
+        def prose(section: dict, cle: str) -> list[str]:
+            return [
+                f'<text:list text:style-name="Puces"><text:list-item>'
+                f'<text:p text:style-name="Puce">{escape(texte)}</text:p>'
+                "</text:list-item></text:list>"
+                if puce
+                else f"<text:p>{escape(texte)}</text:p>"
+                for texte, puce in paragraphes_de(section, cle)
+            ]
+
+        corps.extend(prose(section, "contenu"))
         for rang, tableau in enumerate(_tableaux_de(section)):
             corps.append(_table_odt(tableau, f"t{index}_{rang}"))
+        corps.extend(prose(section, "contenu_apres"))
         note = _note_de_fin(section)
         if note:
             corps.append(f'<text:p text:style-name="Discret">{escape(note)}</text:p>')
@@ -724,9 +1407,15 @@ def rendre_odt(
         ' xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"'
         ' xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"'
         ' xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"'
+        ' xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"'
+        ' xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"'
+        ' xmlns:xlink="http://www.w3.org/1999/xlink"'
         ' xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"'
         ' office:version="1.2">'
-        f"<office:automatic-styles>{_STYLES_CELLULES_ODT}</office:automatic-styles>"
+        "<office:automatic-styles>"
+        + _STYLES_CELLULES_ODT
+        + _STYLE_LOGO_ODT
+        + "</office:automatic-styles>"
         "<office:body><office:text>" + "".join(corps) + "</office:text></office:body>"
         "</office:document-content>"
     )
@@ -741,8 +1430,17 @@ def rendre_odt(
             compress_type=zipfile.ZIP_STORED,
         )
         archive.writestr("content.xml", contenu_xml)
-        archive.writestr("styles.xml", _STYLES_ODT)
-        archive.writestr("META-INF/manifest.xml", _MANIFESTE_ODT)
+        archive.writestr(
+            "styles.xml",
+            _STYLES_ODT.replace(
+                "__PIED__",
+                escape(f"{garde.titre_document} — {frontispice.MENTION_CONFIDENTIEL}"),
+            ),
+        )
+        archive.writestr(_LOGO_ODT, frontispice.logo_png())
+        archive.writestr(
+            "META-INF/manifest.xml", _MANIFESTE_ODT.replace("__LOGO__", _LOGO_ODT)
+        )
     return tampon.getvalue()
 
 
@@ -754,18 +1452,46 @@ def rendre_txt(
     sous_titre: str,
     sections: list[dict],
     genere_le: datetime,
+    couverture: Couverture | None = None,
 ) -> bytes:
-    morceaux = ["KAPI CONSULT", "", titre]
-    if sous_titre:
-        morceaux.append(sous_titre)
-    morceaux += [f"Établi le {genere_le.strftime('%d/%m/%Y')}", ""]
-    for section in sections:
-        if not _a_rendre(section):
-            continue
-        titre_section = str(section.get("titre") or "")
+    rendues, entrees, garde = preparer(
+        titre, sous_titre, sections, genere_le, couverture
+    )
+
+    # La page de garde, telle qu'elle se rend sans mise en page : les mêmes
+    # mentions, dans le même ordre, séparées par des filets.
+    morceaux = ["=" * 72, frontispice.NOM_CABINET, "=" * 72, ""]
+    if garde.objet_affiche:
+        morceaux += [garde.objet_affiche, ""]
+    morceaux.append(garde.titre_document)
+    if garde.client:
+        morceaux.append(garde.client)
+    if garde.reference:
+        morceaux.append(f"Réf. {garde.reference}")
+    if garde.mois:
+        morceaux.append(garde.mois)
+    morceaux += [
+        "",
+        f"Établi le {genere_le.strftime('%d/%m/%Y')}",
+        "",
+        *frontispice.ADRESSE,
+        frontispice.MENTION_CONFIDENTIEL,
+        "",
+        "-" * 72,
+        TITRE_SOMMAIRE.upper(),
+        "-" * 72,
+    ]
+    # Sans pagination : en texte brut il n'y a pas de page à laquelle renvoyer.
+    morceaux += [
+        ("    " if e.niveau == 2 else "") + e.titre_complet for e in entrees
+    ]
+    morceaux += ["", "=" * 72, ""]
+
+    for section, entree in zip(rendues, entrees):
+        titre_section = entree.titre_complet
         # Une sous-section se distingue par un soulignement plus discret : en
         # texte brut, c'est tout ce dont on dispose pour montrer un rang.
-        if _niveau(section) == 2:
+        if entree.niveau == 2:
             morceaux += [titre_section, "-" * len(titre_section)]
         else:
             morceaux += [titre_section.upper(), "=" * len(titre_section)]
@@ -778,6 +1504,9 @@ def rendre_txt(
         aligne = str(section.get("tableaux_texte") or "").strip()
         if aligne and aligne != contenu:
             morceaux += ["", aligne] if contenu else [aligne]
+        apres = str(section.get("contenu_apres") or "").strip()
+        if apres:
+            morceaux += ["", apres]
         note = _note_de_fin(section)
         if note:
             morceaux += ["", note]
@@ -809,6 +1538,7 @@ def rendre(
     sous_titre: str,
     sections: list[dict],
     genere_le: datetime,
+    couverture: Couverture | None = None,
 ) -> tuple[bytes, str, str]:
     """Rend le rapport. Renvoie (octets, type MIME, extension)."""
     cle = format_demande.lower().lstrip(".")
@@ -818,4 +1548,5 @@ def rendre(
             f"{', '.join(sorted(FORMATS))}."
         )
     mime, extension = FORMATS[cle]
-    return _RENDUS[cle](titre, sous_titre, sections, genere_le), mime, extension
+    octets = _RENDUS[cle](titre, sous_titre, sections, genere_le, couverture)
+    return octets, mime, extension

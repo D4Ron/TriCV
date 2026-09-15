@@ -9,6 +9,11 @@ vraies données de candidats et n'a rien à faire dans un dépôt. Sa structure 
 donc recopiée ici, à la main, et c'est elle qui fait foi. Quand le cabinet
 change son modèle, c'est ce fichier qu'on met à jour, et les écarts sautent aux
 yeux au lieu de se découvrir à la remise.
+
+Ce fichier couvre le **corps** : les titres, leur ordre, leurs niveaux, les
+colonnes des tableaux, la mention finale. Ce qui l'entoure dans le document
+remis — page de garde à l'en-tête du cabinet, sommaire, numérotation des
+titres — est relevé de la même façon dans `test_frontispice_rapport.py`.
 """
 
 from __future__ import annotations

@@ -1260,6 +1260,12 @@ export interface SectionRapport {
   code: string
   titre: string
   contenu: string
+  /**
+   * Le commentaire des chiffres, qui se lit **sous** le tableau : le document
+   * du cabinet annonce le tableau, l'insère, puis le commente. Absent quand la
+   * section n'a rien à dire après son tableau — ou n'en a pas.
+   */
+  contenu_apres?: string | null
   /** PROPOSEE = pas encore relue. REDIGEE = écrite ou validée par un humain. */
   origine: 'PROPOSEE' | 'REDIGEE' | 'CALCULEE'
   /**

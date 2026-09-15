@@ -99,34 +99,53 @@ TRAME: tuple[SectionType, ...] = (
         code="INTRODUCTION",
         titre="Introduction",
         consigne=(
-            "Rédigez la section « Introduction » : présentez le commanditaire, "
-            "puis le ou les postes à pourvoir et le motif du recrutement tel "
-            "qu'il ressort des données. Trois à six phrases. N'inventez ni "
-            "l'activité du commanditaire ni son organisation si les données ne "
-            "les donnent pas."
+            "Rédigez la section « Introduction », en trois paragraphes pleins "
+            "d'environ soixante mots chacun.\n"
+            "1. Le commanditaire : qui il est, son secteur, ce que les données "
+            "en disent. N'inventez ni son activité ni son organisation si les "
+            "données ne les donnent pas — dans ce cas, présentez-le par ce "
+            "qu'on sait de lui et passez au poste.\n"
+            "2. Le ou les postes à pourvoir : intitulé, département, nombre de "
+            "postes, ce que le titulaire aura à faire d'après la description et "
+            "les missions, et le motif du recrutement s'il ressort des données.\n"
+            "3. Le mandat confié au cabinet et l'objet du présent document : "
+            "ce dont il rend compte, jusqu'à quelle étape du processus."
         ),
     ),
     SectionType(
         code="DEMARCHE",
         titre="Démarche",
         consigne=(
-            "Rédigez la section « Démarche » : annoncez en une phrase que la "
+            "Rédigez la section « Démarche ». Annoncez en une phrase que la "
             "démarche du cabinet s'est déroulée comme suit, puis énumérez les "
-            "étapes effectivement franchies — élaboration de l'avis, "
-            "publication, réception des dossiers, présélection sur dossier, "
-            "entretiens structurés, sélection finale. N'énumérez que les étapes "
-            "que les données attestent."
+            "étapes effectivement franchies, une par ligne préfixée d'un tiret "
+            "— élaboration de l'avis, publication, réception des dossiers, "
+            "présélection sur dossier, entretiens structurés, sélection "
+            "finale. N'énumérez que les étapes que les données attestent, et "
+            "précisez chacune en une ligne : ce qu'elle a consisté à faire, et "
+            "la date ou le nombre que les données lui attachent quand il y en "
+            "a un. Terminez par un paragraphe d'une quarantaine de mots "
+            "rappelant sur quelle période l'ensemble s'est déroulé, si les "
+            "dates le permettent."
         ),
     ),
     SectionType(
         code="OBJECTIFS",
         titre="Objectifs de la mission",
         consigne=(
-            "Rédigez la section « Objectifs de la mission » : l'objectif "
-            "principal confié au cabinet — identifier et sélectionner les "
-            "candidats répondant au profil — puis les buts généraux : analyser "
-            "les dossiers sur les critères définis, assister le commanditaire "
-            "pendant les entretiens, établir le rapport des résultats."
+            "Rédigez la section « Objectifs de la mission », en deux temps.\n"
+            "1. Un paragraphe d'environ soixante-dix mots sur l'objectif "
+            "principal confié au cabinet : identifier et sélectionner, sur la "
+            "base de critères définis à l'avance, les profils qui répondent le "
+            "mieux à la description du poste ; dites pour quel poste et pour "
+            "quel commanditaire.\n"
+            "2. Une phrase d'annonce — « Le but général est de : » — suivie des "
+            "buts, un par ligne préfixée d'un tiret : analyser chaque dossier "
+            "sur les critères définis et retenir les plus pertinents, assister "
+            "le commanditaire dans la conduite des entretiens structurés, "
+            "établir un rapport faisant ressortir les résultats. Développez "
+            "chacun d'une proposition qui dise ce qu'il implique concrètement "
+            "pour cette mission-ci."
         ),
     ),
     SectionType(
@@ -141,11 +160,21 @@ TRAME: tuple[SectionType, ...] = (
         titre="Présélection",
         niveau=2,
         consigne=(
-            "Rédigez la sous-section « Présélection » de la méthodologie : "
-            "expliquez ce qu'est la présélection sur dossier et à quoi elle "
-            "sert, puis annoncez que le cabinet a conçu une grille conforme au "
-            "profil du poste, dont les rubriques sont celles listées dans les "
-            "données. Décrivez la grille, ne commentez aucun candidat."
+            "Rédigez la sous-section « Présélection » de la méthodologie, en "
+            "trois temps.\n"
+            "1. Un paragraphe d'environ soixante mots : ce qu'est la "
+            "présélection sur dossier, pourquoi elle constitue l'une des "
+            "étapes décisives du processus, et ce qu'elle permet d'identifier "
+            "à partir d'une revue de la consistance de chaque dossier.\n"
+            "2. Un paragraphe annonçant que le cabinet a conçu une grille "
+            "conforme au contenu du poste, et que chaque candidat a été évalué "
+            "selon les rubriques ci-après.\n"
+            "3. Les rubriques de la grille, une par ligne préfixée d'un tiret, "
+            "avec pour chacune son nombre de points et, en une proposition, ce "
+            "qu'elle mesure. Reprenez les intitulés et les points exactement "
+            "tels que les données les donnent.\n"
+            "Décrivez la grille ; ne commentez aucun candidat, et ne citez "
+            "aucune note individuelle."
         ),
         tableaux="GRILLE_PRESELECTION",
     ),
@@ -155,24 +184,48 @@ TRAME: tuple[SectionType, ...] = (
         niveau=2,
         consigne=(
             "Rédigez la sous-section « Critères éliminatoires et Condition de "
-            "Présélection » : énumérez les conditions de base retenues — "
-            "nationalité, formation académique, âge, expérience professionnelle "
-            "— telles que les données les donnent, et précisez que les "
-            "candidats qui ne les remplissaient pas ont été éliminés du "
-            "processus. Indiquez enfin combien de candidats sont proposés au "
-            "commanditaire. N'énumérez aucun nom."
+            "Présélection », en trois temps.\n"
+            "1. Une phrase annonçant les critères éliminatoires retenus pour "
+            "le poste.\n"
+            "2. Les conditions de base, une par ligne préfixée d'un tiret, "
+            "**reprises exactement du bloc CONDITIONS DE BASE des données**. "
+            "N'en ajoutez aucune et n'en retirez aucune. Une condition que les "
+            "données disent « aucune » ou « non posée » se rapporte comme "
+            "telle — « aucune limite d'âge n'a été fixée » — et ne se remplace "
+            "jamais par une valeur plausible : une condition inventée dans ce "
+            "rapport devient opposable au cabinet.\n"
+            "3. Un ou deux paragraphes de conclusion : que les candidats ne "
+            "remplissant pas ces conditions ont été écartés du processus, "
+            "combien l'ont été, et combien de candidats sont proposés au "
+            "commanditaire pour la suite. N'énumérez aucun nom.\n"
+            "Ne dites jamais *pourquoi* un dossier a été retenu ou écarté "
+            "au-delà des conditions listées ci-dessus. N'invoquez aucun "
+            "critère « implicite », « attendu » ou « de cohérence » : il n'en "
+            "existe pas. Si les chiffres surprennent — des dossiers éligibles "
+            "et aucun présélectionné —, rapportez-les tels quels sans les "
+            "expliquer."
         ),
     ),
     SectionType(
         code="RESULTATS_PRESELECTION",
         titre="Résultats de la présélection",
         consigne=(
-            "Rédigez la section « Résultats de la présélection » : annoncez le "
-            "nombre de dossiers reçus par poste, puis introduisez le tableau "
-            "des effectifs par une phrase du type « L'analyse des dossiers de "
-            "candidature a permis d'obtenir les résultats suivants ». Après le "
-            "tableau, rappelez pour chaque poste le nombre de candidatures "
-            "préqualifiées. Reprenez les chiffres sans les modifier."
+            "Rédigez la section « Résultats de la présélection ».\n"
+            "1. Un paragraphe annonçant, poste par poste, le nombre de "
+            "dossiers reçus et soumis à évaluation. Écrivez les nombres en "
+            "toutes lettres suivis du chiffre entre parenthèses — « Soixante-"
+            "quatre (64) dossiers » — comme le fait le cabinet.\n"
+            "2. Une phrase introduisant le tableau : « L'analyse des dossiers "
+            "de candidature a permis d'obtenir les résultats suivants : », "
+            "puis la marque [TABLEAU] sur une ligne seule.\n"
+            "3. Après la marque, le commentaire des chiffres : pour chaque "
+            "poste, le nombre de candidatures préqualifiées et, parmi elles, "
+            "combien sont proposées pour la prochaine étape ; puis la "
+            "répartition des qualifications et l'étendue des notes, si les "
+            "données les donnent. Rapportez ces chiffres sans les modifier et "
+            "n'en calculez aucun autre. **N'expliquez pas** pourquoi un "
+            "dossier a été ou n'a pas été présélectionné : les données ne "
+            "portent pas ce motif, et l'écrire reviendrait à l'inventer."
         ),
         tableaux="SYNTHESE_EFFECTIFS",
     ),
@@ -181,9 +234,13 @@ TRAME: tuple[SectionType, ...] = (
         titre="Liste des candidats présélectionnés",
         niveau=2,
         consigne=(
-            "Rédigez la sous-section « Liste des candidats présélectionnés » : "
-            "une ou deux phrases annonçant que les candidats retenus pour la "
-            "suite du processus figurent ci-après. Ne commentez aucun candidat."
+            "Rédigez la sous-section « Liste des candidats présélectionnés », "
+            "en un paragraphe d'une cinquantaine de mots : annoncez que les "
+            "candidats retenus pour la suite du processus figurent dans le "
+            "tableau ci-après, rappelez sur quelle base ils l'ont été — la "
+            "note de présélection et le rang — et précisez, si les données le "
+            "disent, ce qu'il advient en cas de désistement de l'un d'eux. Ne "
+            "commentez aucun candidat et n'en citez aucun nom."
         ),
         tableaux="TABLEAU_PRESELECTION",
     ),
@@ -199,9 +256,14 @@ TRAME: tuple[SectionType, ...] = (
         niveau=2,
         consigne=(
             "Rédigez la sous-section « Adoption du guide d'interview et la "
-            "grille de notation » : indiquez que le guide d'entretien proposé "
-            "par le cabinet a été soumis au panel de recrutement et validé, "
-            "puis annoncez la grille de notation reproduite ci-après."
+            "grille de notation », en deux paragraphes.\n"
+            "1. Environ cinquante mots : le guide d'entretien proposé par le "
+            "cabinet a été soumis au panel de recrutement et validé par lui ; "
+            "dites à quoi sert un guide structuré — faire passer à chaque "
+            "candidat le même entretien, et rendre les notes comparables.\n"
+            "2. Une annonce de la grille reproduite ci-après, avec les "
+            "rubriques qu'elle comporte et le total sur lequel elle porte, "
+            "repris exactement des données. Ne commentez aucun candidat."
         ),
         tableaux="GRILLE_ENTRETIEN",
     ),
@@ -211,10 +273,13 @@ TRAME: tuple[SectionType, ...] = (
         niveau=2,
         consigne=(
             "Rédigez la sous-section « Validation du jury de sélection et "
-            "conduite des interviews » : composition du jury et déroulement des "
-            "entretiens, tels que les données les donnent. Si les données ne "
-            "précisent ni le nombre de jurés ni les dates, écrivez la section "
-            "sans eux."
+            "conduite des interviews », en un à deux paragraphes d'environ "
+            "soixante mots : la composition du panel, qui a animé les "
+            "entretiens, et le déroulement — combien de candidats ont été "
+            "reçus, sur quelle période, selon quelles modalités — tels que les "
+            "données les donnent. Si les données ne précisent ni le nombre de "
+            "jurés ni les dates, écrivez la section sans eux : n'inventez ni "
+            "un effectif de panel, ni une date, ni un lieu."
         ),
     ),
     SectionType(
@@ -222,10 +287,22 @@ TRAME: tuple[SectionType, ...] = (
         titre="Résultats des entretiens structurés",
         niveau=2,
         consigne=(
-            "Rédigez la sous-section « Résultats des entretiens structurés » : "
-            "une phrase annonçant que la compilation des notes des membres du "
-            "panel a permis d'obtenir les résultats ci-dessous. Ne commentez "
-            "aucun candidat et n'en recommandez aucun."
+            "Rédigez la sous-section « Résultats des entretiens structurés ».\n"
+            "Si les données ne portent aucune note d'entretien, écrivez une "
+            "seule phrase constatant que les entretiens n'ont pas encore eu "
+            "lieu, et rien d'autre : pas de classement, pas de tableau, pas "
+            "d'explication de cette absence.\n"
+            "Sinon :\n"
+            "1. Une phrase annonçant que la compilation des notes des membres "
+            "du panel a permis d'obtenir les résultats ci-dessous. Le tableau "
+            "est inséré automatiquement après votre texte — ne l'écrivez pas, "
+            "et ne reproduisez aucune note individuelle.\n"
+            "2. Un paragraphe d'une quarantaine de mots rappelant comment la "
+            "moyenne sur 100 se compose — la présélection et l'entretien, dans "
+            "les proportions que les données donnent — de sorte qu'un lecteur "
+            "puisse relire le classement sans revenir en arrière. Ne commentez "
+            "aucun candidat, n'en recommandez aucun, et ne désignez pas de "
+            "lauréat : la décision appartient au commanditaire."
         ),
         tableaux="TABLEAU_FINAL",
     ),
@@ -411,6 +488,54 @@ def _grille_preselection(poste: Poste) -> list[dict]:
     ] + [{"code": "TOTAL", "libelle": "Total", "points_max": bareme.total_max}]
 
 
+def _entier(valeur) -> int | None:
+    return None if valeur is None else int(valeur)
+
+
+def _reel(valeur) -> float | None:
+    """Un Numeric de SQLAlchemy revient en Decimal, que le JSON refuse."""
+    return None if valeur is None else float(valeur)
+
+
+def _conditions_eligibilite(poste: Poste) -> dict:
+    """Les conditions de base du poste, telles qu'elles ont servi à écarter.
+
+    Le rapport leur consacre une sous-section entière — « Critères
+    éliminatoires et Condition de Présélection » — et la consigne demande de
+    les énumérer : nationalité, formation, âge, expérience. Or rien de tout
+    cela n'était transmis au modèle, qui devait donc rédiger la liste sans
+    disposer de la liste. Il la comblait : un rapport remis à un client de
+    Lomé annonçait « les candidats devaient être de nationalité togolaise »
+    pour un poste qui n'a jamais porté de condition de nationalité.
+
+    D'où la forme de ce qui suit. Chaque condition est renvoyée **même quand
+    elle est absente**, avec `None` pour valeur : « aucune » est un fait, et
+    un fait écrit se recopie, là où un silence s'interprète.
+    """
+    restriction_nationalites = list(poste.restriction_nationalites or ())
+    # `seuil_preselection` est un Numeric : il revient en `Decimal`, que le
+    # sérialiseur JSON refuse. `donnees` part en base sous forme JSON, et un
+    # rapport ne s'enregistrait plus du tout. Les autres chiffres du bloc sont
+    # des entiers, mais les convertir tous coûte moins cher qu'un oubli.
+    return {
+        "niveau_min": _entier(poste.niveau_min),
+        "domaines_acceptes": list(poste.domaines_acceptes or ()),
+        "annees_experience_min": _entier(poste.annees_experience_min),
+        "annees_experience_specifique_min": _entier(
+            poste.annees_experience_specifique_min
+        ),
+        "domaines_experience": list(poste.domaines_experience or ()),
+        "nationalites": restriction_nationalites or None,
+        "age_min": _entier(poste.restriction_age_min),
+        "age_max": _entier(poste.restriction_age_max),
+        "sexe": poste.restriction_sexe,
+        "justification_restriction": poste.restriction_justification or None,
+        "pieces_requises": list(poste.pieces_requises or ()),
+        "langues_requises": list(poste.langues_requises or ()),
+        "seuil_preselection": _reel(poste.seuil_preselection),
+    }
+
+
 async def _chiffres_poste(db: AsyncSession, poste: Poste) -> dict:
     candidatures = (
         await db.execute(
@@ -527,11 +652,16 @@ async def _chiffres_poste(db: AsyncSession, poste: Poste) -> dict:
     return {
         "id": poste.id,
         "intitule": poste.intitule,
+        "departement": poste.departement,
+        "description": poste.description,
+        "missions": list(poste.missions or ()),
         "nombre_a_pourvoir": poste.nombre_a_pourvoir,
         "nombre_a_retenir": poste.nombre_a_retenir,
         "niveau_min": poste.niveau_min,
         "annees_experience_min": poste.annees_experience_min,
         "annees_experience_specifique_min": poste.annees_experience_specifique_min,
+        # Les conditions de base, y compris celles que le poste ne pose pas.
+        "conditions": _conditions_eligibilite(poste),
         "avis": {
             "reference": avis.reference if avis else None,
             "type": avis.type_avis.value if avis else None,
@@ -576,6 +706,100 @@ async def _chiffres_poste(db: AsyncSession, poste: Poste) -> dict:
 # --- rédaction --------------------------------------------------------------
 
 
+def _lignes_conditions(poste: dict) -> list[str]:
+    """Les conditions de base, énoncées une par une — absentes comprises.
+
+    « Aucune condition de nationalité n'a été posée » est une phrase que le
+    modèle recopie. Le silence, lui, s'interprète : demander d'énumérer la
+    nationalité sans dire laquelle, c'est demander de l'inventer, et c'est
+    exactement ce qui s'est produit.
+    """
+    conditions = poste.get("conditions") or {}
+    if not conditions:
+        # Un rapport produit avant que ces données ne soient collectées. On
+        # retombe sur ce que le poste porte à la racine, sans rien affirmer
+        # des conditions qu'on ne connaît pas.
+        return [
+            f"  Niveau minimum exigé : BAC+{poste.get('niveau_min')}",
+            f"  Expérience minimale : {poste.get('annees_experience_min')} an(s), "
+            f"dont {poste.get('annees_experience_specifique_min')} an(s) dans le domaine",
+        ]
+
+    lignes = [
+        "  CONDITIONS DE BASE (conditions éliminatoires du poste, à reprendre "
+        "telles quelles ; celles dites « aucune » doivent être présentées comme "
+        "non exigées, jamais remplacées par une valeur) :",
+        f"    - Formation : diplôme de niveau BAC+{conditions['niveau_min']} au minimum",
+    ]
+
+    domaines = conditions.get("domaines_acceptes") or []
+    lignes.append(
+        f"    - Domaines de formation acceptés : {', '.join(domaines)}"
+        if domaines
+        else "    - Domaines de formation acceptés : aucun domaine imposé"
+    )
+
+    generale = conditions.get("annees_experience_min") or 0
+    specifique = conditions.get("annees_experience_specifique_min") or 0
+    lignes.append(
+        f"    - Expérience professionnelle générale : {generale} an(s) au minimum"
+        if generale
+        else "    - Expérience professionnelle générale : aucune durée minimale"
+    )
+    domaines_exp = conditions.get("domaines_experience") or []
+    if specifique:
+        precision = f" dans : {', '.join(domaines_exp)}" if domaines_exp else ""
+        lignes.append(
+            f"    - Expérience spécifique : {specifique} an(s) au minimum{precision}"
+        )
+    else:
+        lignes.append("    - Expérience spécifique : aucune durée minimale")
+
+    nationalites = conditions.get("nationalites")
+    lignes.append(
+        f"    - Nationalité : réservé aux ressortissants de {', '.join(nationalites)}"
+        if nationalites
+        else "    - Nationalité : AUCUNE condition de nationalité n'a été posée ; "
+        "le poste était ouvert sans restriction de nationalité"
+    )
+
+    age_min, age_max = conditions.get("age_min"), conditions.get("age_max")
+    if age_min and age_max:
+        lignes.append(f"    - Âge : entre {age_min} et {age_max} ans")
+    elif age_max:
+        lignes.append(f"    - Âge : {age_max} ans au plus")
+    elif age_min:
+        lignes.append(f"    - Âge : {age_min} ans au moins")
+    else:
+        lignes.append("    - Âge : AUCUNE limite d'âge n'a été posée")
+
+    if conditions.get("sexe"):
+        lignes.append(f"    - Sexe : {conditions['sexe']}")
+        if conditions.get("justification_restriction"):
+            lignes.append(
+                f"    - Justification de la restriction : "
+                f"{conditions['justification_restriction']}"
+            )
+
+    pieces = conditions.get("pieces_requises") or []
+    if pieces:
+        lignes.append(f"    - Pièces exigées au dossier : {', '.join(pieces)}")
+    langues = conditions.get("langues_requises") or []
+    if langues:
+        lignes.append(f"    - Langues exigées : {', '.join(langues)}")
+    # Énoncé même à zéro. Le laisser tomber quand il vaut zéro laissait le
+    # modèle déduire un seuil de ce qu'il voyait : « aucun dossier
+    # présélectionné, notes de 17 à 28 » lui a fait écrire « faute de candidat
+    # atteignant le seuil minimal de 17 points », qui n'existe pas.
+    seuil = conditions.get("seuil_preselection")
+    lignes.append(
+        f"    - Seuil de présélection retenu : {seuil:g} point(s)"
+        if seuil
+        else "    - Seuil de présélection : AUCUN seuil de note n'a été fixé"
+    )
+    return lignes
+
+
 def _contexte_textuel(donnees: dict, section: SectionType) -> str:
     """Ce qu'on donne à lire au modèle : des chiffres, pas des dossiers.
 
@@ -592,18 +816,29 @@ def _contexte_textuel(donnees: dict, section: SectionType) -> str:
     if mandat.get("reference"):
         lignes.append(f"Référence : {mandat['reference']}")
     if mandat.get("secteur"):
-        lignes.append(f"Secteur : {mandat['secteur']}")
+        lignes.append(f"Secteur du commanditaire : {mandat['secteur']}")
+    if mandat.get("date_attribution"):
+        lignes.append(f"Mandat attribué le : {mandat['date_attribution']}")
 
     for poste in donnees.get("postes", []):
         lignes.append("")
         lignes.append(f"Poste : {poste['intitule']}")
+        if poste.get("departement"):
+            lignes.append(f"  Département : {poste['departement']}")
+        if poste.get("description"):
+            lignes.append(f"  Description du poste : {poste['description']}")
+        for mission in poste.get("missions") or ():
+            lignes.append(f"  Mission confiée au titulaire : {mission}")
         lignes.append(f"  Postes à pourvoir : {poste['nombre_a_pourvoir']}")
-        lignes.append(f"  Niveau minimum exigé : BAC+{poste['niveau_min']}")
-        lignes.append(
-            f"  Expérience minimale : {poste['annees_experience_min']} an(s), "
-            f"dont {poste['annees_experience_specifique_min']} an(s) dans le domaine"
-        )
+        if poste.get("nombre_a_retenir"):
+            lignes.append(
+                f"  Candidats à proposer au commanditaire à l'issue de la "
+                f"présélection : {poste['nombre_a_retenir']}"
+            )
+        lignes.extend(_lignes_conditions(poste))
         avis = poste.get("avis", {})
+        if avis.get("reference"):
+            lignes.append(f"  Référence de l'avis : {avis['reference']}")
         if avis.get("publie_le"):
             lignes.append(f"  Avis publié le : {avis['publie_le']}")
         if avis.get("cloture_le"):
@@ -613,6 +848,19 @@ def _contexte_textuel(donnees: dict, section: SectionType) -> str:
         lignes.append(f"  Candidatures reçues : {poste['candidatures_recues']}")
         lignes.append(f"  Dossiers écartés à l'éligibilité : {poste['eliminees']}")
         lignes.append(f"  Dossiers présélectionnés : {poste['preselectionnees']}")
+        qualifications = {
+            code: nombre
+            for code, nombre in (poste.get("qualifications") or {}).items()
+            if nombre
+        }
+        if qualifications:
+            lignes.append(
+                "  Répartition des qualifications : "
+                + ", ".join(
+                    f"{_libelle_qualification(code)} : {nombre}"
+                    for code, nombre in qualifications.items()
+                )
+            )
         # La grille de présélection manquait. La section « Présélection »
         # demande pourtant d'en rappeler les rubriques et leur pondération : le
         # modèle, honnête, répondait « les rubriques ne sont pas spécifiées dans
@@ -1044,6 +1292,39 @@ def tableau_final(donnees: dict) -> list[Tableau]:
     return tableaux
 
 
+# La marque que la rédaction pose là où le tableau doit paraître.
+#
+# Le document du cabinet ne met pas ses tableaux en fin de section : une phrase
+# les annonce, le tableau suit, et un commentaire des chiffres vient après —
+# « Trente-trois (33) candidatures préqualifiées pour le poste de DAF, dont
+# cinq (5) proposés pour la prochaine étape ». Tout rendre avant le tableau
+# plaçait ce commentaire au-dessus des chiffres qu'il commente, juste après la
+# phrase qui annonçait « les résultats suivants ».
+#
+# Le modèle pose donc cette ligne à l'endroit voulu, et la section garde deux
+# blocs de prose. S'il l'oublie — ce qui arrive —, tout reste avant le
+# tableau : c'est l'ancien comportement, correct quoique moins fidèle. Une
+# marque oubliée ne doit jamais faire perdre du texte.
+MARQUE_TABLEAU = "[TABLEAU]"
+
+
+def decouper_autour_du_tableau(contenu: str) -> tuple[str, str]:
+    """Sépare la prose qui précède le tableau de celle qui le suit."""
+    if not contenu:
+        return "", ""
+    lignes = contenu.split("\n")
+    for rang, ligne in enumerate(lignes):
+        if ligne.strip().strip("*_ ").upper() == MARQUE_TABLEAU:
+            avant = "\n".join(lignes[:rang]).strip()
+            apres = "\n".join(lignes[rang + 1 :]).strip()
+            return avant, apres
+    # La marque au fil d'une phrase plutôt que sur sa ligne : on la retire sans
+    # découper, plutôt que de l'imprimer dans le document remis.
+    if MARQUE_TABLEAU in contenu:
+        return contenu.replace(MARQUE_TABLEAU, "").strip(), ""
+    return contenu.strip(), ""
+
+
 def _libelle_qualification(code: str | None) -> str:
     return {
         Qualification.FORTEMENT.value: "fortement qualifié",
@@ -1110,13 +1391,16 @@ async def rediger_sections(
                         "rédaction assistée indisponible pour %s", modele.code
                     )
 
+        avant, apres = decouper_autour_du_tableau(contenu)
         section = {
             "code": modele.code,
             "titre": modele.titre,
-            "contenu": contenu,
+            "contenu": avant,
             "origine": origine,
             "niveau": modele.niveau,
         }
+        if apres:
+            section["contenu_apres"] = apres
         if tableaux:
             # Trois champs, trois rôles, et il a fallu s'y reprendre :
             #

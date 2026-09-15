@@ -275,25 +275,57 @@ levels, table columns and closing note. `backend/tests/test_conformite_document.
 structure as literal expected values, so a drift fails a test instead of being noticed by a client.
 
 ```
+(page de garde)     logo et marque du cabinet, objet du mandat en capitales,
+                    titre, commanditaire, référence, mois — et au pied les
+                    coordonnées du cabinet avec la mention « Confidentiel »
+(sommaire)          paginé
+
 Introduction
-Démarche
-Objectifs de la mission
-Méthodologie
-    Présélection                            → grille de présélection
-    Critères éliminatoires et Condition de Présélection
-Résultats de la présélection                → effectifs par poste
-    Liste des candidats présélectionnés     → candidatures préqualifiées
-Entretiens structurés
-    Adoption du guide d'interview et la grille de notation   → grille de notation
-    Validation du jury de sélection et conduite des interviews
-    Résultats des entretiens structurés     → classement + NB d'annexe
+I.   Démarche
+II.  Objectifs de la mission
+III. Méthodologie
+     3.1. Présélection                      → grille de présélection
+     3.2. Critères éliminatoires et Condition de Présélection
+IV.  Résultats de la présélection           → effectifs par poste
+     4.1. Liste des candidats présélectionnés → candidatures préqualifiées
+V.   Entretiens structurés
+     5.1. Adoption du guide d'interview et la grille de notation → grille de notation
+     5.2. Validation du jury de sélection et conduite des interviews
+     5.3. Résultats des entretiens structurés → classement + NB d'annexe
 ```
 
-Three things follow from that, and each was a deliberate correction:
+**The front matter is part of the document, not decoration.** A file that opens on *Introduction*
+is not the one the client expects. `backend/app/services/exports/frontispice.py` holds what the four
+formats share — the firm's coordinates, the mark, the numbering rule, the summary entries — and each
+format draws it with its own means: a real `TOC` field for Word, a `text:table-of-content` for
+LibreOffice, a table of contents computed in two passes for the PDF, a plain list for text. Word and
+LibreOffice repaginate their summary on open; the PDF's page numbers are computed here, which is why
+it builds twice.
+
+Three notes on the numbering. It is **Roman for sections, decimal beneath them**, and *Introduction*
+carries none — the rule read off the delivered document. It is computed on the sections **actually
+rendered**, so a section left empty does not consume a number and leave a hole where II should be.
+And the **preview shows the numbered sections but not the cover or the summary**: there is nothing to
+proofread on those two pages — their content comes from the mandate and from the titles, not from the
+writing — and showing them only pushes the sentence you just typed further down the screen.
+
+The mark is a 3×3 grid of blue squares inside a gold rule, the same one `Marque.tsx` draws in CSS.
+The documents need an image, so `frontispice.logo_png` writes the PNG pixel by pixel with `zlib` —
+thirty lines, no dependency, and a mark the next maintainer can change by reading those thirty lines
+instead of a binary nobody could regenerate.
+
+Three things follow from the section structure, and each was a deliberate correction:
 
 - **A table has no heading of its own.** It follows the sentence that announces it, inside the
   section that announces it. Giving each one its own intertitle invented headings — *Effectifs par
   poste* — that appear nowhere in the firm's document.
+- **A table sits inside the prose, not at the end of its section.** A sentence announces it, the
+  table follows, and a comment on the figures comes after — *Trente-trois (33) candidatures
+  préqualifiées pour le poste de DAF, dont cinq (5) proposés pour la prochaine étape*. The drafting
+  marks the spot with a `[TABLEAU]` line and the section keeps two blocks of prose, `contenu` and
+  `contenu_apres`. Rendering everything first put that comment above the figures it comments on,
+  right after the sentence promising *les résultats suivants*. A forgotten marker costs nothing:
+  everything stays before the table, which is the older behaviour.
 - **There is no conclusion.** The document ends on the results table and *NB : Le détail des notes
   obtenues par chaque candidat est annexé au présent rapport*. A conclusion added by default had to
   be deleted by hand before every send.
@@ -415,6 +447,25 @@ overlapping NER guess. Both behaviours are covered by tests.
 Google's free Gemini tier may train on what you send. For real CVs, use a **paid** key, or
 `LLM_PROVIDER=ollama`, where nothing leaves the building. The pre-flight check says so too.
 
+**Measured, `qwen3:8b` on the extraction corpus (15 September 2026):** degrees 13/14, experience
+17/18, against 14/14 · 18/18 for both `gemini-2.5-flash` and `ministral-14b-latest`. The two misses
+are the same fault and neither is an invention — it takes the first date it sees rather than the
+right one (*Depuis mars 2018* read as `2018-01`; *2006 - 2008 : Master … (BAC+5)* dated 2006). The
+Master's **level** — the only part the barème scores — was correct. What it costs in practice is two
+extra months of general experience and a wrong year on a degree, both of which HR confirms before
+they count, since an unconfirmed `EXTRAIT_IA` forces `À VÉRIFIER`.
+
+So the reading is fine. What rules it out as a daily driver is the clock: **52 s per dossier**
+single-threaded, over two hours for a 150-dossier mandate. That is not a hardware problem — `ollama
+ps` reports the model **100% on GPU** on a laptop RTX 4070. It is the model: `qwen3` *reasons*
+before answering, emitting a `<think>` block the app then throws away (see `app/llm/prose.py`), and
+that reasoning is paid for on every dossier.
+
+Keep it for the two cases it is the only answer to — both quotas exhausted mid-mandate, or a client
+who will not let dossiers leave their walls. If a local model is ever to do more than that, try one
+that does not think out loud (`llama3.1:8b`, `mistral:7b`) and measure it with
+`tools.evaluer_extraction` before adopting it: speed is worthless if the reading degrades.
+
 Whatever the provider, it never sees a name, an e-mail, a phone number or a date of birth: those
 are found and removed locally before the text is sent. What travels is a career history.
 
@@ -500,7 +551,7 @@ opposite: a few hundred tokens each, six to ten per report.
 | Gemini 2.5 Flash-Lite | 15 RPM, 1,000 RPD | ~1,000 | No daily token ceiling. Weakest of the three at reasoning |
 | Gemini 2.5 Flash *(current)* | 10 RPM, 250 RPD | ~250 | No daily token ceiling |
 | Groq `llama-3.3-70b` | 30 RPM, 1,000 RPD, **100K tokens/day** | **~13** | Fastest by far, and useless here: 14 CVs exhausts the day |
-| Ollama, local | none | Unlimited | Nothing leaves the building. Needs a machine that can hold the model |
+| Ollama, local | none | Unlimited | Nothing leaves the building — and ~52 s per dossier with `qwen3:8b` fully on GPU, so over two hours for 150. A fallback, not a daily driver |
 
 Groq tops every "best free LLM API" list and is the worst fit for this application, for that one
 reason. It is a fine choice for the *report* half of the work, which is token-light.
@@ -579,6 +630,24 @@ Measured on the seven written sections of one report: `ministral-14b-latest` inv
 it returned an entirely **empty** section once, which is its own failure mode. Neither is reliable
 unread — which is why every section still arrives marked *proposée* and blocks validation until a
 human has been through it.
+
+##### What a model invents, and what stops it
+
+Three inventions were observed in real reports, and each was fixed at its cause rather than by
+asking the model to try harder:
+
+| observed | cause | fix |
+|---|---|---|
+| *les candidats devaient être de nationalité togolaise* — on a post with no nationality condition | the consigne said to enumerate nationality, age and experience; the context never carried them | the context now states **every** condition, absent ones included: *AUCUNE condition de nationalité n'a été posée*. A stated fact gets copied; a silence gets filled |
+| a ten-row table of `[Nom 1]`…`[Nom 10]` with invented interview scores, above the empty table the code had just produced | the section was asked to comment a ranking that did not exist yet | the prompt forbids writing tables at all (the code inserts them), and `prose.nettoyer` strips any Markdown table row that survives |
+| *aucun n'atteignait les critères implicites de cohérence* | a surprising figure — ten eligible dossiers, none preselected — invites an explanation | the prompt forbids invoking any *implicit*, *expected* or *coherence* criterion, and says a surprising figure is reported without being justified |
+
+The general rule behind all three: **a model fills a silence, so say the thing out loud**. The
+system prompt used to end on *mieux vaut une section courte* — which kept the prose honest and also
+kept it thin, at roughly the length of a set of meeting notes. It now asks the model to develop
+what the data supports and to stop where the data stops: if a stage has not happened, it says so in
+one sentence and writes nothing else. On the ten-CV bench that took a report from 884 to about 1 600
+words while the two stages that never ran stayed at two sentences each.
 
 The writer keeps the extraction chain behind it as fallback: losing the writer must not lose the
 report.

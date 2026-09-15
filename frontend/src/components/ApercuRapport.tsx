@@ -10,9 +10,14 @@ import type { SectionRapport, TableauRapport } from '@/lib/api'
  * de nouveau — et à laisser un fichier de plus dans le dossier des
  * téléchargements à chaque tour.
  *
- * L'aperçu rend la même chose que l'export : même en-tête, même ordre, mêmes
- * sections, et **une section vide n'est pas rendue**, exactement comme dans le
- * DOCX et le PDF. Ce qui se voit ici est ce qui sera remis.
+ * L'aperçu rend le **contenu** : même ordre, mêmes sections, mêmes numéros de
+ * titre, mêmes tableaux, et **une section vide n'est pas rendue**, exactement
+ * comme dans le DOCX et le PDF.
+ *
+ * Il ne rend pas la page de garde ni le sommaire, que l'export ajoute. Ce sont
+ * deux pages sur lesquelles il n'y a rien à relire : leur contenu vient du
+ * mandat et des titres, pas de la rédaction. Les montrer ici n'aurait fait
+ * qu'éloigner du bas de l'écran la première phrase qu'on vient d'écrire.
  *
  * Il porte aussi les corrections en cours, non enregistrées : c'est le point de
  * l'affaire — relire avant d'enregistrer, pas après avoir exporté.
@@ -95,21 +100,84 @@ function TableauTexte({ contenu }: { contenu: string }) {
 }
 
 /**
+ * La numérotation des titres, telle que les exports la calculent.
+ *
+ * Le document remis numérote ses sections en chiffres romains et ses
+ * sous-sections sous leur section — « III. Méthodologie », puis « 3.1.
+ * Présélection ». L'introduction fait exception.
+ *
+ * Elle se calcule sur les sections **rendues** : une section laissée vide ne
+ * paraît pas dans le document, elle ne doit donc pas consommer un numéro et
+ * laisser un trou à la place du II. C'est la règle de `frontispice.numeroter`
+ * côté serveur ; la répéter ici est ce qui permet à l'aperçu de montrer les
+ * mêmes numéros que le fichier, corrections en cours comprises — et l'aperçu
+ * ne peut pas les demander au serveur pour du texte qui n'y est pas encore.
+ */
+const SANS_NUMERO = new Set(['INTRODUCTION'])
+
+const ROMAINS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
+
+function romain(n: number): string {
+  return ROMAINS[n] ?? String(n)
+}
+
+function numeroter(sections: SectionRapport[]): string[] {
+  let section = 0
+  let sousSection = 0
+  return sections.map((s) => {
+    if (s.niveau === 2) {
+      sousSection += 1
+      return section ? `${section}.${sousSection}.` : `${sousSection}.`
+    }
+    if (SANS_NUMERO.has((s.code || '').toUpperCase())) {
+      sousSection = 0
+      return ''
+    }
+    section += 1
+    sousSection = 0
+    return `${romain(section)}.`
+  })
+}
+
+/**
  * Le rendu de la prose suit celui des exports : une ligne, un paragraphe.
  * Reproduire ici un découpage différent donnerait un aperçu qui ment.
  */
+const PUCES = ['- ', '– ', '— ', '• ', '* ']
+
 function Prose({ contenu }: { contenu: string }) {
+  // Les mêmes marques que `paragraphes_de` côté serveur : un élément
+  // d'énumération devient une puce avec retrait, dans l'aperçu comme dans le
+  // fichier. Le rendre tel quel donnait ici une ligne commençant par un signe
+  // moins, là une vraie liste — un aperçu qui ne montre pas le document.
+  const lignes = contenu
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const puce = PUCES.find((p) => l.startsWith(p))
+      return { texte: puce ? l.slice(puce.length).trim() : l, puce: Boolean(puce) }
+    })
+
   return (
     <div className="mt-2 space-y-2">
-      {contenu
-        .split('\n')
-        .map((ligne) => ligne.trim())
-        .filter(Boolean)
-        .map((ligne, index) => (
-          <p key={index} className="text-[13px] leading-relaxed text-ink-800">
-            {ligne}
+      {lignes.map((ligne, index) =>
+        ligne.puce ? (
+          <p
+            key={index}
+            className="flex gap-2 pl-3 text-[13px] leading-relaxed text-ink-800"
+          >
+            <span aria-hidden="true" className="text-ink-400">
+              •
+            </span>
+            <span>{ligne.texte}</span>
           </p>
-        ))}
+        ) : (
+          <p key={index} className="text-[13px] leading-relaxed text-ink-800">
+            {ligne.texte}
+          </p>
+        ),
+      )}
     </div>
   )
 }
@@ -129,15 +197,19 @@ export default function ApercuRapport({
   // oubli, donc une section sans contenu ne paraît pas — sauf un titre
   // porteur, dont les sous-sections dépendent.
   const rendues = sections.filter(
-    (s) => s.contenu.trim() || s.tableaux?.length || s.porteur,
+    (s) => s.contenu.trim() || s.contenu_apres?.trim() || s.tableaux?.length || s.porteur,
   )
   const vides = sections.length - rendues.length
+  const numeros = numeroter(rendues)
   const date = etabliLe ? new Date(etabliLe) : new Date()
 
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-ink-500">
-        <span>Le document tel qu&apos;il sera exporté, corrections en cours comprises.</span>
+        <span>
+          Le contenu tel qu&apos;il sera exporté, corrections en cours comprises. Le fichier
+          y ajoute la page de garde du cabinet et le sommaire.
+        </span>
         {vides > 0 && (
           <span className="badge bg-amber-100 text-amber-800">
             {vides} section(s) vide(s) — non rendue(s)
@@ -167,12 +239,16 @@ export default function ApercuRapport({
           </p>
         ) : (
           <div className="mt-8 space-y-6">
-            {rendues.map((section) => (
+            {rendues.map((section, rang) => (
               <section key={section.code} className={section.niveau === 2 ? 'pl-4' : ''}>
                 {section.niveau === 2 ? (
-                  <h3 className="text-[13px] font-bold text-[#1E2299]">{section.titre}</h3>
+                  <h3 className="text-[13px] font-bold text-[#1E2299]">
+                    {[numeros[rang], section.titre].filter(Boolean).join(' ')}
+                  </h3>
                 ) : (
-                  <h2 className="text-[15px] font-bold text-[#1E2299]">{section.titre}</h2>
+                  <h2 className="text-[15px] font-bold text-[#1E2299]">
+                    {[numeros[rang], section.titre].filter(Boolean).join(' ')}
+                  </h2>
                 )}
                 {/* La prose d'abord, les tableaux ensuite : c'est la phrase
                     qui annonce le tableau, comme dans le document remis. */}
@@ -185,6 +261,8 @@ export default function ApercuRapport({
                 {section.tableaux?.map((tableau, index) => (
                   <Tableau key={index} tableau={tableau} />
                 ))}
+                {/* Le commentaire des chiffres, après les chiffres. */}
+                {section.contenu_apres?.trim() && <Prose contenu={section.contenu_apres} />}
               </section>
             ))}
           </div>

@@ -144,6 +144,46 @@ def test_le_preambule_de_politesse_est_retire():
     assert prose.nettoyer(brut) == "Le mandat a été attribué en mars 2026."
 
 
+# --- les tableaux inventés ---------------------------------------------------
+#
+# Les tableaux du rapport sont calculés à partir des notes réellement inscrites,
+# puis insérés sous la prose. Sommé de commenter un classement qui n'existait
+# pas encore, un modèle a rendu dix lignes de candidats « [Nom 1] » à
+# « [Nom 10] », avec des notes d'entretien inventées de bout en bout — juste
+# au-dessus du tableau vide que le code venait de produire. Dans un document
+# signé du cabinet, ces notes deviennent opposables.
+#
+# La consigne l'interdit désormais ; ceci est la seconde ligne, parce qu'aucune
+# consigne ne tient à tous les coups.
+
+
+def test_un_tableau_invente_par_le_modele_est_retire():
+    brut = (
+        "La compilation des notes du panel donne les résultats ci-dessous.\n"
+        "\n"
+        "| Candidat | Note | Rang |\n"
+        "|----------|------|------|\n"
+        "| [Nom 1]  | 85.0 | 1er  |\n"
+        "| [Nom 2]  | 78.0 | 2e   |\n"
+        "\n"
+        "La moyenne se compose de la présélection et de l'entretien."
+    )
+    nettoye = prose.nettoyer(brut)
+
+    assert "|" not in nettoye
+    assert "[Nom 1]" not in nettoye
+    assert "85.0" not in nettoye
+    # La prose qui encadrait le tableau, elle, est du texte à garder.
+    assert nettoye.startswith("La compilation des notes")
+    assert nettoye.endswith("de l'entretien.")
+
+
+def test_une_barre_verticale_au_fil_du_texte_ne_declenche_rien():
+    """Seule une ligne entièrement délimitée est un tableau."""
+    texte = "Le barème distingue deux volets : dossier | entretien, 30 et 70 points."
+    assert prose.nettoyer(texte) == texte
+
+
 def test_le_texte_deja_propre_traverse_intact():
     texte = (
         "Le cabinet a publié l'avis le 3 mars 2026.\n\n"

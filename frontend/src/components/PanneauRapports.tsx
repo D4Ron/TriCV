@@ -68,7 +68,12 @@ function Editeur({ rapportId, onFerme }: { rapportId: string; onFerme: () => voi
     mutationFn: () =>
       rapportsApi.modifier(rapportId, {
         titre,
-        sections: sections.map((s) => ({ code: s.code, titre: s.titre, contenu: s.contenu })),
+        sections: sections.map((s) => ({
+          code: s.code,
+          titre: s.titre,
+          contenu: s.contenu,
+          contenu_apres: s.contenu_apres,
+        })),
       }),
     onSuccess: () => {
       setErreur(null)
@@ -207,6 +212,39 @@ function Editeur({ rapportId, onFerme }: { rapportId: string; onFerme: () => voi
                 )
               }
             />
+            {/* Le commentaire des chiffres, qui se lit *sous* le tableau — le
+                document du cabinet le place là. Deux zones plutôt qu'une,
+                parce qu'entre les deux s'insère une table que l'écran de
+                relecture ne montre pas : les fondre ferait relire un
+                commentaire au-dessus des chiffres qu'il commente. */}
+            {/* Seulement là où il y a un tableau sous lequel écrire — ou du
+                texte déjà écrit là. L'API renvoie le champ sur toutes les
+                sections, `null` compris : le tester sur sa présence faisait
+                paraître une seconde zone sous chacune des douze. */}
+            {(Boolean(section.tableaux?.length) || Boolean(section.contenu_apres)) && (
+              <>
+                <label
+                  className="mt-2 block text-[11px] font-medium text-ink-500"
+                  htmlFor={`apres-${section.code}`}
+                >
+                  Sous le tableau
+                </label>
+                <textarea
+                  id={`apres-${section.code}`}
+                  className="input mt-1 font-mono text-xs"
+                  rows={4}
+                  value={section.contenu_apres ?? ''}
+                  disabled={verrouille}
+                  onChange={(e) =>
+                    setSections((tous) =>
+                      tous.map((s, i) =>
+                        i === index ? { ...s, contenu_apres: e.target.value } : s,
+                      ),
+                    )
+                  }
+                />
+              </>
+            )}
           </div>
         ))}
       </div>
