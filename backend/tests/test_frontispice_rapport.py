@@ -334,6 +334,47 @@ def test_le_docx_se_relit_et_porte_tout_le_texte():
         assert s["contenu"] in rendu or not s["contenu"]
 
 
+def test_l_odt_range_ses_proprietes_dans_l_ordre_du_schema_odf():
+    """`style:paragraph-properties` avant `style:text-properties`.
+
+    ODF décrit une séquence, et l'ordre inverse coûte cher parce qu'il ne casse
+    rien de visible : un lecteur qui applique le schéma jette ce qui tient au
+    paragraphe et garde ce qui tient au texte. La page de garde sortait donc
+    ferrée à gauche et tassée en haut, avec la bonne police et les bonnes
+    couleurs — aucun style ne manquait à l'appel, ils étaient tous à moitié
+    appliqués.
+    """
+    with zipfile.ZipFile(io.BytesIO(rendre(export.rendre_odt))) as archive:
+        styles = archive.read("styles.xml").decode()
+
+    fautifs = []
+    for bloc in re.finditer(r"<style:style\b.*?</style:style>", styles, re.S):
+        texte = bloc.group(0)
+        nom = re.search(r'style:name="([^"]+)"', texte)
+        pos_p = texte.find("<style:paragraph-properties")
+        pos_t = texte.find("<style:text-properties")
+        if pos_p != -1 and pos_t != -1 and pos_p > pos_t:
+            fautifs.append(nom.group(1) if nom else "?")
+
+    assert not fautifs, (
+        "styles ODF dont les propriétés de paragraphe suivent celles de texte : "
+        + ", ".join(fautifs)
+    )
+
+
+def test_la_page_de_garde_odt_est_bien_centree():
+    """Le centrage est ce que l'inversion faisait perdre en premier."""
+    with zipfile.ZipFile(io.BytesIO(rendre(export.rendre_odt))) as archive:
+        styles = archive.read("styles.xml").decode()
+
+    for nom in ("GardeMarque", "GardeObjet", "GardeTitre", "GardeClient", "GardeMois"):
+        bloc = re.search(
+            rf'<style:style style:name="{nom}".*?</style:style>', styles, re.S
+        )
+        assert bloc, f"style {nom} absent"
+        assert 'fo:text-align="center"' in bloc.group(0), f"{nom} n'est pas centré"
+
+
 # --- les énumérations --------------------------------------------------------
 
 

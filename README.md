@@ -319,6 +319,13 @@ Three things follow from the section structure, and each was a deliberate correc
 - **A table has no heading of its own.** It follows the sentence that announces it, inside the
   section that announces it. Giving each one its own intertitle invented headings — *Effectifs par
   poste* — that appear nowhere in the firm's document.
+- **In ODF, `style:paragraph-properties` comes *before* `style:text-properties`.** They were written
+  the other way round, and the cost is invisible in a way that matters: a reader applying the schema
+  keeps what belongs to the text and drops what belongs to the paragraph. The cover page came out
+  left-aligned and crammed to the top of the sheet, in the right font and the right colours, with
+  every style present and each one half-applied. Found by opening the ODT in Word, which reads ODF —
+  there is no LibreOffice on the dev machine. `test_l_odt_range_ses_proprietes_dans_l_ordre_du_schema_odf`
+  holds the order.
 - **The DOCX is schema-conformant, which is not the same as "Word refused it".** `w:pBdr` and
   `w:updateFields` were being appended to the end of their parent instead of at their place in the
   OOXML sequence. This was first reported here as the cause of an unopenable report; that was an

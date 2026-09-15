@@ -1068,75 +1068,94 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
   xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
   office:version="1.2">
  <office:styles>
+  <!--
+    ATTENTION À L'ORDRE. Dans un `style:style`, ODF décrit une *séquence* :
+    `style:paragraph-properties` vient AVANT `style:text-properties`. Ces
+    styles étaient écrits dans l'ordre inverse, et un lecteur qui applique le
+    schéma jetait silencieusement tout ce qui tenait au paragraphe — le
+    centrage de la page de garde, les marges, les retraits. Le texte gardait
+    sa taille et sa couleur, ce qui rendait la panne difficile à voir : la
+    garde s'affichait ferrée à gauche, tassée en haut de la page, sans qu'un
+    seul style manque à l'appel.
+  -->
   <style:style style:name="Titre" style:family="paragraph">
    <style:text-properties fo:font-size="20pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="Section" style:family="paragraph">
-   <style:text-properties fo:font-size="13pt" fo:font-weight="bold" fo:color="#1E2299"/>
    <style:paragraph-properties fo:margin-top="0.5cm"/>
+   <style:text-properties fo:font-size="13pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="Discret" style:family="paragraph">
    <style:text-properties fo:font-size="9pt" fo:color="#6B7080"/>
   </style:style>
   <style:style style:name="SousSection" style:family="paragraph">
-   <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#1E2299"/>
    <style:paragraph-properties fo:margin-top="0.35cm" fo:margin-left="0.3cm"/>
+   <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="Legende" style:family="paragraph">
-   <style:text-properties fo:font-size="10pt" fo:font-weight="bold"/>
    <style:paragraph-properties fo:margin-top="0.3cm" fo:margin-bottom="0.1cm"/>
+   <style:text-properties fo:font-size="10pt" fo:font-weight="bold"/>
   </style:style>
   <style:style style:name="Cellule" style:family="paragraph">
    <style:text-properties fo:font-size="9pt"/>
   </style:style>
   <style:style style:name="CelluleD" style:family="paragraph">
-   <style:text-properties fo:font-size="9pt"/>
    <style:paragraph-properties fo:text-align="end"/>
+   <style:text-properties fo:font-size="9pt"/>
   </style:style>
   <style:style style:name="CelluleG" style:family="paragraph">
    <style:text-properties fo:font-size="9pt" fo:font-weight="bold"/>
   </style:style>
   <style:style style:name="CelluleGD" style:family="paragraph">
-   <style:text-properties fo:font-size="9pt" fo:font-weight="bold"/>
    <style:paragraph-properties fo:text-align="end"/>
+   <style:text-properties fo:font-size="9pt" fo:font-weight="bold"/>
   </style:style>
   <style:style style:name="CelluleR" style:family="paragraph">
-   <style:text-properties fo:font-size="9pt"/>
    <style:paragraph-properties fo:margin-left="0.4cm"/>
+   <style:text-properties fo:font-size="9pt"/>
   </style:style>
   <style:style style:name="Entete" style:family="paragraph">
    <style:text-properties fo:font-size="9pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="EnteteD" style:family="paragraph">
-   <style:text-properties fo:font-size="9pt" fo:font-weight="bold" fo:color="#1E2299"/>
    <style:paragraph-properties fo:text-align="end"/>
+   <style:text-properties fo:font-size="9pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <!-- La page de garde. -->
   <style:style style:name="GardeMarque" style:family="paragraph">
-   <style:text-properties fo:font-size="16pt" fo:font-weight="bold" fo:color="#B8892A"/>
    <style:paragraph-properties fo:text-align="center" fo:margin-bottom="0.3cm"
      fo:border-bottom="0.06cm solid #B8892A" fo:padding-bottom="0.15cm"/>
+   <style:text-properties fo:font-size="16pt" fo:font-weight="bold" fo:color="#B8892A"/>
   </style:style>
   <style:style style:name="GardeObjet" style:family="paragraph">
-   <style:text-properties fo:font-size="12pt" fo:font-weight="bold" fo:color="#1E2299"/>
    <style:paragraph-properties fo:text-align="center" fo:margin-top="4cm"
      fo:margin-bottom="1cm"/>
+   <style:text-properties fo:font-size="12pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="GardeTitre" style:family="paragraph">
-   <style:text-properties fo:font-size="24pt" fo:font-weight="bold" fo:color="#1E2299"/>
    <style:paragraph-properties fo:text-align="center" fo:margin-bottom="0.3cm"/>
+   <style:text-properties fo:font-size="24pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="GardeClient" style:family="paragraph">
-   <style:text-properties fo:font-size="13pt" fo:color="#6B7080"/>
    <style:paragraph-properties fo:text-align="center"/>
+   <style:text-properties fo:font-size="13pt" fo:color="#6B7080"/>
   </style:style>
   <style:style style:name="GardeMois" style:family="paragraph">
-   <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#6B7080"/>
    <style:paragraph-properties fo:text-align="center" fo:margin-top="1.2cm"/>
+   <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#6B7080"/>
   </style:style>
   <style:style style:name="GardePied" style:family="paragraph">
-   <style:text-properties fo:font-size="7.5pt" fo:color="#6B7080"/>
    <style:paragraph-properties fo:text-align="center"/>
+   <style:text-properties fo:font-size="7.5pt" fo:color="#6B7080"/>
+  </style:style>
+  <!-- La première ligne des coordonnées, qui creuse l'écart avec le titre.
+       Le PDF et le DOCX posent ce bloc dans le pied de page, où il tient le
+       bas de la feuille ; l'ODT n'a pas cette ressource pour une page isolée
+       et s'en approche avec une marge. -->
+  <style:style style:name="GardePiedDebut" style:family="paragraph">
+   <style:paragraph-properties fo:text-align="center" fo:margin-top="5cm"
+     fo:border-top="0.04cm solid #B8892A" fo:padding-top="0.3cm"/>
+   <style:text-properties fo:font-size="7.5pt" fo:color="#6B7080"/>
   </style:style>
   <style:style style:name="Centre" style:family="paragraph">
    <style:paragraph-properties fo:text-align="center"/>
@@ -1145,20 +1164,20 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
    <style:paragraph-properties fo:break-before="page"/>
   </style:style>
   <style:style style:name="TitreSommaire" style:family="paragraph">
-   <style:text-properties fo:font-size="17pt" fo:font-weight="bold" fo:color="#1E2299"/>
    <style:paragraph-properties fo:margin-bottom="0.5cm"/>
+   <style:text-properties fo:font-size="17pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="Somm1" style:family="paragraph">
-   <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#1E2299"/>
    <style:paragraph-properties fo:margin-top="0.15cm"/>
+   <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="Somm2" style:family="paragraph">
-   <style:text-properties fo:font-size="10pt"/>
    <style:paragraph-properties fo:margin-left="0.6cm"/>
+   <style:text-properties fo:font-size="10pt"/>
   </style:style>
   <style:style style:name="Pied" style:family="paragraph">
-   <style:text-properties fo:font-size="8pt" fo:color="#6B7080"/>
    <style:paragraph-properties fo:text-align="center"/>
+   <style:text-properties fo:font-size="8pt" fo:color="#6B7080"/>
   </style:style>
   <style:style style:name="Puce" style:family="paragraph">
    <style:paragraph-properties fo:margin-top="0.05cm" fo:margin-bottom="0.05cm"/>
@@ -1314,8 +1333,9 @@ def _page_de_garde_odt(garde: Couverture) -> list[str]:
         )
     if garde.mois:
         corps.append(f'<text:p text:style-name="GardeMois">{escape(garde.mois)}</text:p>')
-    for ligne in frontispice.ADRESSE:
-        corps.append(f'<text:p text:style-name="GardePied">{escape(ligne)}</text:p>')
+    for rang, ligne in enumerate(frontispice.ADRESSE):
+        style = "GardePiedDebut" if rang == 0 else "GardePied"
+        corps.append(f'<text:p text:style-name="{style}">{escape(ligne)}</text:p>')
     corps.append(
         f'<text:p text:style-name="GardePied">{escape(frontispice.MENTION_CONFIDENTIEL)}'
         "</text:p>"
