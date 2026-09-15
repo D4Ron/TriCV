@@ -282,6 +282,14 @@ REDACTION_SYSTEM = (
     "- Quand une donnée dit qu'une condition est « aucune » ou n'a pas été "
     "posée, écrivez-le comme tel. Ne la remplacez jamais par une valeur "
     "plausible.\n"
+    # Chaque section part dans un appel distinct : le modèle ne voit pas ce
+    # qu'il a écrit dans la précédente. Deux consignes qui se recouvraient un
+    # peu suffisaient donc à faire écrire trois fois, en trois pages, la même
+    # répartition des qualifications et la même étendue des notes.
+    "- Un chiffre ne s'écrit qu'une fois, dans la section à qui la consigne "
+    "l'attribue. Quand une consigne vous dit qu'une donnée appartient à une "
+    "autre section, ne la donnez pas, même si elle figure dans les données "
+    "ci-dessous et même si elle rendrait votre section plus étoffée.\n"
     "- Rédigez en paragraphes pleins. Une énumération ne se justifie que "
     "lorsque les données elles-mêmes énumèrent — étapes, critères, "
     "conditions ; introduisez-la alors par une phrase et préfixez chaque "

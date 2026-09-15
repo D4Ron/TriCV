@@ -367,10 +367,9 @@ def _champ_simple(paragraphe, instruction: str, cache: str = "") -> None:
 
 
 # Les éléments de `word/settings.xml` qui, dans le schéma OOXML, viennent après
-# `w:updateFields`. Le schéma décrit une *séquence* : un élément posé hors de
-# son rang fait ouvrir le fichier sur « contenu illisible », même si le XML est
-# bien formé. Ajouter à la fin — le réflexe — le posait justement après tous
-# ceux-ci.
+# `w:updateFields`. Même remarque que pour `w:pBdr` plus haut : Word tolère
+# l'ordre inverse, on range par conformité et non pour réparer une panne.
+# Ajouter à la fin — le réflexe — posait l'élément après tous ceux-ci.
 _APRES_UPDATE_FIELDS = (
     "w:compat",
     "w:docVars",
@@ -406,12 +405,17 @@ def _actualiser_les_champs(document) -> None:
 
 # Ce qui, dans le schéma OOXML, suit `w:pBdr` à l'intérieur de `w:pPr`.
 #
-# `w:pPr` n'est pas un sac d'attributs : c'est une *séquence*. Un enfant posé
-# hors de son rang fait ouvrir le document sur « Word a détecté un problème…
-# contenu illisible », alors même que le XML est bien formé et que tous les
-# lecteurs plus tolérants l'affichent correctement. python-docx range de
-# lui-même ce qu'il sait poser ; `w:pBdr`, qu'il ne connaît pas, se retrouvait
-# ajouté à la fin — donc après le `w:spacing` et le `w:jc` posés juste avant.
+# `w:pPr` n'est pas un sac d'attributs : le schéma en décrit la *séquence*.
+# python-docx range de lui-même ce qu'il sait poser ; `w:pBdr`, qu'il ne
+# connaît pas, se retrouvait ajouté à la fin — donc après le `w:spacing` et le
+# `w:jc` posés juste avant.
+#
+# Mesuré avant de conclure : Word 16 ouvre le document **sans broncher** dans
+# les deux ordres, même avec la réparation automatique désactivée. Ce n'était
+# donc pas la cause du rapport inexploitable, contrairement à ce qu'on a cru.
+# On range quand même, parce que le document est conforme ou ne l'est pas, et
+# que rien ne garantit la même indulgence chez un validateur, une bibliothèque
+# tierce ou une version future.
 _APRES_PBDR = (
     "w:shd", "w:tabs", "w:suppressAutoHyphens", "w:kinsoku", "w:wordWrap",
     "w:overflowPunct", "w:topLinePunct", "w:autoSpaceDE", "w:autoSpaceDN",

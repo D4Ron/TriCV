@@ -194,10 +194,14 @@ TRAME: tuple[SectionType, ...] = (
             "telle — « aucune limite d'âge n'a été fixée » — et ne se remplace "
             "jamais par une valeur plausible : une condition inventée dans ce "
             "rapport devient opposable au cabinet.\n"
-            "3. Un ou deux paragraphes de conclusion : que les candidats ne "
-            "remplissant pas ces conditions ont été écartés du processus, "
-            "combien l'ont été, et combien de candidats sont proposés au "
-            "commanditaire pour la suite. N'énumérez aucun nom.\n"
+            "3. Un paragraphe de conclusion, court : que les candidats ne "
+            "remplissant pas ces conditions ont été écartés du processus, et "
+            "combien l'ont été à ce titre. N'énumérez aucun nom.\n"
+            "Cette sous-section porte les **conditions**, rien d'autre. La "
+            "répartition des qualifications, l'étendue des notes et le nombre "
+            "de candidats proposés appartiennent à « Résultats de la "
+            "présélection » et y seront écrits : ne les donnez pas ici, le "
+            "lecteur les lirait deux fois en deux pages.\n"
             "Ne dites jamais *pourquoi* un dossier a été retenu ou écarté "
             "au-delà des conditions listées ci-dessus. N'invoquez aucun "
             "critère « implicite », « attendu » ou « de cohérence » : il n'en "
@@ -234,13 +238,16 @@ TRAME: tuple[SectionType, ...] = (
         titre="Liste des candidats présélectionnés",
         niveau=2,
         consigne=(
-            "Rédigez la sous-section « Liste des candidats présélectionnés », "
-            "en un paragraphe d'une cinquantaine de mots : annoncez que les "
-            "candidats retenus pour la suite du processus figurent dans le "
-            "tableau ci-après, rappelez sur quelle base ils l'ont été — la "
-            "note de présélection et le rang — et précisez, si les données le "
-            "disent, ce qu'il advient en cas de désistement de l'un d'eux. Ne "
-            "commentez aucun candidat et n'en citez aucun nom."
+            "Rédigez la sous-section « Liste des candidats présélectionnés ».\n"
+            "Si aucun candidat n'a été présélectionné, écrivez **une seule "
+            "phrase** le constatant, et rien d'autre : ni rappel de la grille, "
+            "ni explication de cette absence, ni ce qui aurait dû se passer.\n"
+            "Sinon, un paragraphe d'une cinquantaine de mots : les candidats "
+            "retenus pour la suite figurent dans le tableau ci-après, sur "
+            "quelle base ils l'ont été — la note de présélection et le rang — "
+            "et, si les données le disent, ce qu'il advient en cas de "
+            "désistement de l'un d'eux. Ne commentez aucun candidat et n'en "
+            "citez aucun nom."
         ),
         tableaux="TABLEAU_PRESELECTION",
     ),

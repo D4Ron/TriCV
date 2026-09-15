@@ -254,18 +254,18 @@ def test_un_rapport_sans_aucune_section_sort_sa_page_de_garde(rendu):
     assert rendu("Rapport", "WAPP", [], QUAND, GARDE)
 
 
-# --- le DOCX doit s'ouvrir dans Word ----------------------------------------
+# --- le DOCX est conforme au schéma OOXML ------------------------------------
 #
 # `w:pPr`, `w:rPr` et `w:tcPr` ne sont pas des sacs d'attributs : le schéma
-# OOXML en décrit la *séquence*. Un enfant posé hors de son rang fait ouvrir le
-# document sur « Word a détecté un problème… contenu illisible », alors même
-# que le XML est bien formé, que python-docx le relit sans broncher et que les
-# lecteurs plus tolérants l'affichent correctement.
+# OOXML en décrit la *séquence*. `w:pBdr` — le filet or sous la marque — était
+# ajouté à la fin des propriétés du paragraphe, donc après le `w:spacing` et le
+# `w:jc` posés juste avant. `w:updateFields` avait le même défaut.
 #
-# C'est arrivé : `w:pBdr` — le filet or sous la marque — était ajouté à la fin
-# des propriétés du paragraphe, donc après le `w:spacing` et le `w:jc` posés
-# juste avant, et le rapport était inouvrable. Rien dans la suite ne l'a vu,
-# parce que rien ne relisait le document avec les yeux de Word.
+# Ce que ce contrôle ne prétend PAS : que Word refuserait le document. On l'a
+# cru, puis mesuré — Word 16 ouvre les deux ordres sans broncher, réparation
+# automatique désactivée. La conformité se tient pour elle-même : rien ne
+# garantit la même indulgence chez un validateur, une bibliothèque tierce ou
+# une version future, et un document conforme ne coûte rien de plus.
 
 _ORDRE_PPR = """pStyle keepNext keepLines pageBreakBefore framePr widowControl
 numPr suppressLineNumbers pBdr shd tabs suppressAutoHyphens kinsoku wordWrap
@@ -311,7 +311,7 @@ def _desordres(xml: str, conteneur: str, ordre: list[str]) -> list[str]:
 
 
 def test_le_docx_respecte_la_sequence_du_schema_ooxml():
-    """Sans quoi Word refuse d'ouvrir le rapport, et rien d'autre ne le dit."""
+    """Conformité au schéma — et rien d'autre dans la suite ne la contrôle."""
     with zipfile.ZipFile(io.BytesIO(rendre(export.rendre_docx))) as archive:
         corps = archive.read("word/document.xml").decode()
         reglages = archive.read("word/settings.xml").decode()

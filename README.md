@@ -319,6 +319,12 @@ Three things follow from the section structure, and each was a deliberate correc
 - **A table has no heading of its own.** It follows the sentence that announces it, inside the
   section that announces it. Giving each one its own intertitle invented headings — *Effectifs par
   poste* — that appear nowhere in the firm's document.
+- **The DOCX is schema-conformant, which is not the same as "Word refused it".** `w:pBdr` and
+  `w:updateFields` were being appended to the end of their parent instead of at their place in the
+  OOXML sequence. This was first reported here as the cause of an unopenable report; that was an
+  inference from ECMA-376, and it does not hold — Word 16 opens the document in either order, with
+  auto-repair disabled. `test_le_docx_respecte_la_sequence_du_schema_ooxml` keeps the ordering
+  because conformance stands on its own, not because it fixes a crash.
 - **A table sits inside the prose, not at the end of its section.** A sentence announces it, the
   table follows, and a comment on the figures comes after — *Trente-trois (33) candidatures
   préqualifiées pour le poste de DAF, dont cinq (5) proposés pour la prochaine étape*. The drafting
