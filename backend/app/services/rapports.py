@@ -145,7 +145,12 @@ TRAME: tuple[SectionType, ...] = (
             "le commanditaire dans la conduite des entretiens structurés, "
             "établir un rapport faisant ressortir les résultats. Développez "
             "chacun d'une proposition qui dise ce qu'il implique concrètement "
-            "pour cette mission-ci."
+            "pour cette mission-ci.\n"
+            "Cette section dit ce que la mission **visait**, jamais ce qu'elle "
+            "a trouvé. N'y écrivez aucun résultat : ni le nombre de dossiers "
+            "reçus ou présélectionnés, ni la répartition des qualifications, "
+            "ni l'étendue des notes. Ils appartiennent aux sections de "
+            "résultats, qui les portent déjà."
         ),
     ),
     SectionType(
@@ -879,13 +884,32 @@ def _contexte_textuel(donnees: dict, section: SectionType) -> str:
                 for ligne in poste["grille_preselection"]
                 if ligne.get("code") != "TOTAL"
             )
-            lignes.append(f"  Grille de présélection : {rubriques}")
+            total = next(
+                (
+                    l["points_max"]
+                    for l in poste["grille_preselection"]
+                    if l.get("code") == "TOTAL"
+                ),
+                None,
+            )
+            # Le total est donné, jamais laissé à déduire. Sans lui le modèle
+            # additionne — et se trompe : la grille d'entretien vaut 70, il a
+            # écrit « 25 points sur 50 » dans un rapport destiné au client.
+            lignes.append(
+                f"  Grille de présélection : {rubriques}"
+                + (f" — total {total:g} points" if total is not None else "")
+            )
         if poste.get("grille_entretien"):
             rubriques = ", ".join(
                 f"{ligne['libelle']} ({ligne['points_max']} pts)"
                 for ligne in poste["grille_entretien"]
             )
-            lignes.append(f"  Grille d'entretien : {rubriques}")
+            total = sum(
+                float(ligne["points_max"] or 0) for ligne in poste["grille_entretien"]
+            )
+            lignes.append(
+                f"  Grille d'entretien : {rubriques} — total {total:g} points"
+            )
         notes = [
             ligne["note_preselection"]
             for ligne in poste.get("classement", [])

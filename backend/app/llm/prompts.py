@@ -286,6 +286,14 @@ REDACTION_SYSTEM = (
     # qu'il a écrit dans la précédente. Deux consignes qui se recouvraient un
     # peu suffisaient donc à faire écrire trois fois, en trois pages, la même
     # répartition des qualifications et la même étendue des notes.
+    # « Compétences techniques (25 points sur 50) » : le barème d'entretien vaut
+    # 70. Le modèle avait additionné de tête, et le total faux partait au client
+    # à côté d'un tableau qui, lui, portait le bon.
+    "- Ne calculez rien. Pas d'addition, pas de total, pas de moyenne, pas de "
+    "pourcentage, pas de différence. Ne citez un total ou un dénominateur que "
+    "si les données l'écrivent — « sur 30 », « sur 100 » ne se déduit pas des "
+    "lignes d'une grille. Un chiffre absent des données est un chiffre à ne "
+    "pas donner.\n"
     "- Un chiffre ne s'écrit qu'une fois, dans la section à qui la consigne "
     "l'attribue. Quand une consigne vous dit qu'une donnée appartient à une "
     "autre section, ne la donnez pas, même si elle figure dans les données "
