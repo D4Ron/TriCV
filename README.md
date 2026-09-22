@@ -309,10 +309,27 @@ And the **preview shows the numbered sections but not the cover or the summary**
 proofread on those two pages — their content comes from the mandate and from the titles, not from the
 writing — and showing them only pushes the sentence you just typed further down the screen.
 
-The mark is a 3×3 grid of blue squares inside a gold rule, the same one `Marque.tsx` draws in CSS.
-The documents need an image, so `frontispice.logo_png` writes the PNG pixel by pixel with `zlib` —
-thirty lines, no dependency, and a mark the next maintainer can change by reading those thirty lines
-instead of a binary nobody could regenerate.
+**The brand pieces are the firm's own, taken from the documents it delivers** — not redrawn.
+`backend/app/services/exports/assets/` holds three files lifted out of `Rapport des entretiens -
+WAPP 2025`:
+
+| | |
+|---|---|
+| `entete_kapi.jpg` | the letterhead, full page. It *is* the first page of the firm's reports — mark, rules, coordinates and the *Confidentiel* mention are already on it, so the cover composes none of them and only lays the objet, title and month on top |
+| `logo_kapi.png` | the logo with its wordmark, for where the letterhead does not reach |
+| `bandeau_kapi.png` | the *Nous développons vos métiers* band that runs along the foot of every page |
+
+The logo had first been redrawn — a 3×3 grid of gradient squares traced from the website, written
+pixel by pixel with `zlib`. The real logo is a 4×4 checkerboard carrying the words *Kapi Consult*, so
+the report was going out under a mark the firm does not use. Approximating an identity is pointless
+when the original is sitting in the reference document.
+
+Two consequences worth knowing. The letterhead is a 210 dpi raster with the address baked in: if the
+firm moves, that file is what gets replaced, not a constant — and the RCCM line is clipped at the
+bottom edge *in the source asset itself*, so the delivered document shows it clipped too. And the
+band carries a partner's mark (Profiles International); if that partnership ends, the file needs
+replacing. `frontispice.pieces_presentes()` guards a checkout without them: the exports fall back to
+a cover composed in text rather than failing.
 
 Three things follow from the section structure, and each was a deliberate correction:
 

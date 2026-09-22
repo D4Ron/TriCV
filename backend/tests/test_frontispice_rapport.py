@@ -141,21 +141,39 @@ def test_le_mois_est_celui_de_la_page_de_garde_du_cabinet():
 # --- la page de garde, dans les quatre formats ------------------------------
 
 
-def test_le_docx_porte_la_page_de_garde_et_les_coordonnees_du_cabinet():
-    document = Document(io.BytesIO(rendre(export.rendre_docx)))
+def test_le_docx_porte_la_page_de_garde_sur_le_papier_a_en_tete():
+    """L'objet, le titre et le mois se posent SUR l'en-tête du cabinet.
+
+    Les coordonnées ne sont plus composées en texte : elles font partie de
+    l'image d'en-tête, comme dans le document que le cabinet remet. Les
+    réécrire les ferait paraître deux fois.
+    """
+    octets = rendre(export.rendre_docx)
+    document = Document(io.BytesIO(octets))
     textes = [p.text for p in document.paragraphs]
 
-    assert frontispice.NOM_CABINET in textes
     assert GARDE.objet_affiche in textes
     assert GARDE.titre in textes
     assert "Réf. WAPP/2025/DRH-07" in textes
     assert "Mai 2025" in textes
 
-    # L'adresse vit dans le pied de première page, ce qui la tient en bas de la
-    # feuille quelle que soit la longueur de l'objet du mandat.
-    pied = document.sections[0].first_page_footer.paragraphs[0].text
-    assert frontispice.ADRESSE[0] in pied
-    assert frontispice.MENTION_CONFIDENTIEL in pied
+    # Le papier à en-tête est posé en fond de première page, ancré à la page
+    # et derrière le texte : en ligne, il resterait au ras du pied.
+    #
+    # Le numéro de la part n'est pas fixé — Word en range deux, le pied
+    # courant et celui de première page — donc on les parcourt toutes plutôt
+    # que de parier sur « footer1 ».
+    with zipfile.ZipFile(io.BytesIO(octets)) as archive:
+        pieds = [
+            archive.read(n).decode()
+            for n in archive.namelist()
+            if n.startswith("word/footer") and n.endswith(".xml")
+        ]
+    flottants = [
+        p for p in pieds if "<wp:anchor" in p and 'behindDoc="1"' in p
+    ]
+    assert flottants, "l'en-tête doit flotter derrière le texte, pas être en ligne"
+    assert 'relativeFrom="page"' in flottants[0]
 
 
 def test_le_docx_dresse_un_vrai_champ_de_table_des_matieres():
@@ -196,10 +214,9 @@ def test_l_odt_porte_la_page_de_garde_le_logo_et_un_index():
     with zipfile.ZipFile(io.BytesIO(octets)) as archive:
         contenu = archive.read("content.xml").decode()
         styles = archive.read("styles.xml").decode()
-        logo = archive.read("Pictures/kapi.png")
+        logo = archive.read("Pictures/logo_kapi.png")
         manifeste = archive.read("META-INF/manifest.xml").decode()
 
-    assert frontispice.NOM_CABINET in contenu
     assert GARDE.objet_affiche in contenu
     assert frontispice.ADRESSE[0] in contenu
 
@@ -211,7 +228,11 @@ def test_l_odt_porte_la_page_de_garde_le_logo_et_un_index():
 
     # Le logo est embarqué et déclaré au manifeste, sans quoi l'ODT est refusé.
     assert logo.startswith(b"\x89PNG\r\n\x1a\n")
-    assert "Pictures/kapi.png" in manifeste
+    assert "Pictures/logo_kapi.png" in manifeste
+    # Le bandeau du cabinet court au pied de chaque page, comme dans le
+    # document remis, et il est déclaré lui aussi.
+    assert "Pictures/bandeau_kapi.png" in manifeste
+    assert "Pictures/bandeau_kapi.png" in styles
     # Le pied de page vit dans la page maîtresse.
     assert "text:page-number" in styles
 
@@ -502,11 +523,32 @@ def test_une_section_qui_n_a_que_du_texte_sous_le_tableau_parait_quand_meme():
     assert len(entrees) == 1
 
 
-# --- la marque --------------------------------------------------------------
+# --- les pièces de marque du cabinet -----------------------------------------
+#
+# Elles ne sont pas redessinées : elles sont extraites des documents que le
+# cabinet remet. Le logo l'avait d'abord été — neuf carrés en dégradé, tracés
+# pixel par pixel d'après le site — quand le vrai en compte seize, en damier,
+# et porte le mot « Kapi Consult » à côté. Le rapport sortait donc sous une
+# marque que le cabinet n'emploie pas.
 
 
-def test_le_logo_est_un_png_carre_produit_sans_dependance():
-    octets = frontispice.logo_png(120)
-    assert octets.startswith(b"\x89PNG\r\n\x1a\n")
-    # Largeur et hauteur, dans l'en-tête IHDR.
-    assert octets[16:24] == (120).to_bytes(4, "big") + (120).to_bytes(4, "big")
+def test_les_trois_pieces_de_marque_accompagnent_le_code():
+    assert frontispice.pieces_presentes()
+    assert frontispice.logo_png().startswith(b"\x89PNG\r\n\x1a\n")
+    assert frontispice.bandeau_png().startswith(b"\x89PNG\r\n\x1a\n")
+    assert frontispice.entete_jpg().startswith(b"\xff\xd8\xff")
+
+
+def test_le_pdf_pose_le_papier_a_en_tete_en_fond():
+    """La première page est celle du cabinet, pas une imitation.
+
+    Un JPEG embarqué se reconnaît à son filtre de décodage : `DCTDecode`
+    n'apparaît que si le PDF porte une image JPEG.
+    """
+    assert b"DCTDecode" in rendre(export.rendre_pdf)
+
+
+def test_le_docx_embarque_l_en_tete_et_le_bandeau():
+    with zipfile.ZipFile(io.BytesIO(rendre(export.rendre_docx))) as archive:
+        medias = [n for n in archive.namelist() if n.startswith("word/media/")]
+    assert len(medias) >= 2, "le papier à en-tête et le bandeau du pied"

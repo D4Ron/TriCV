@@ -26,11 +26,10 @@ en deux passes pour le PDF, une liste simple pour le texte brut.
 
 from __future__ import annotations
 
-import struct
-import zlib
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
+from pathlib import Path
 
 # --- l'identité du cabinet ---------------------------------------------------
 #
@@ -225,74 +224,69 @@ def numeroter(sections: list[dict]) -> list[Entree]:
     return entrees
 
 
-# --- la marque, en image ----------------------------------------------------
+# --- les pièces de marque du cabinet -----------------------------------------
 #
-# Le logo du cabinet est une grille de neuf carrés en dégradé bleu, cerclée
-# d'un filet or. L'interface la redessine en CSS (voir `Marque.tsx`) ; les
-# documents, eux, ont besoin d'une image.
+# Elles ne sont pas redessinées : elles sont **extraites des documents que le
+# cabinet remet réellement**, et servies telles quelles.
 #
-# Elle est produite ici, pixel par pixel, plutôt qu'embarquée en fichier. Un
-# PNG est une suite de lignes compressées par zlib et quelques champs de
-# longueur : trente lignes de code, aucune dépendance, et — surtout — une
-# marque que le prochain à reprendre le projet peut modifier en lisant ces
-# trente lignes, au lieu d'un binaire que personne ne saurait régénérer.
+# Le logo l'avait d'abord été — une grille de neuf carrés en dégradé, tracée
+# pixel par pixel d'après le site. Le vrai logo en compte seize, en damier, et
+# porte le mot « Kapi Consult » à côté : le document sortait donc sous une
+# marque que le cabinet n'emploie pas. Approcher une identité visuelle ne sert
+# à rien quand l'original est disponible.
+#
+# Ce que l'on embarque, et pourquoi :
+#
+#   entete_kapi.jpg    le papier à en-tête, page pleine. C'est la première
+#                      page des rapports du cabinet : marque, filets,
+#                      coordonnées et mention de confidentialité y sont déjà.
+#   logo_kapi.png      le logo seul, avec son mot. Sert là où l'en-tête ne va
+#                      pas — l'ODT, les formats sans image de fond.
+#   bandeau_kapi.png   le bandeau « Nous développons vos métiers », qui court
+#                      au pied de chaque page du document remis.
+#
+# Deux conséquences à connaître. L'en-tête est une image de 210 ppp : elle
+# imprime correctement, sans plus, et l'adresse y est figée — si le cabinet
+# déménage, c'est ce fichier qu'il faut remplacer, pas une constante. Et le
+# bandeau porte la marque d'un partenaire (Profiles International) : si ce
+# partenariat cesse, le fichier est à remplacer aussi.
+
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+ENTETE = ASSETS / "entete_kapi.jpg"
+LOGO = ASSETS / "logo_kapi.png"
+BANDEAU = ASSETS / "bandeau_kapi.png"
+
+# Proportions relevées sur les fichiers, pour dimensionner sans les rouvrir.
+PROPORTION_LOGO = 267 / 881       # hauteur / largeur
+PROPORTION_BANDEAU = 138 / 1191
 
 
-def _degrade(x: float, y: float) -> tuple[int, int, int]:
-    """Le dégradé d'un carré, du clair en haut à gauche au foncé en bas à droite."""
-    t = min(1.0, max(0.0, (x + y) / 2))
-    return tuple(  # type: ignore[return-value]
-        round(clair + (fonce - clair) * t)
-        for clair, fonce in zip(BLEU_CLAIR, BLEU_FONCE)
-    )
+@lru_cache(maxsize=8)
+def _octets(chemin: Path) -> bytes:
+    return chemin.read_bytes()
 
 
-def _png(largeur: int, hauteur: int, pixels: list[list[tuple[int, int, int]]]) -> bytes:
-    brut = b"".join(
-        b"\x00" + b"".join(struct.pack("BBB", *p) for p in ligne) for ligne in pixels
-    )
-
-    def bloc(genre: bytes, donnees: bytes) -> bytes:
-        corps = genre + donnees
-        return struct.pack(">I", len(donnees)) + corps + struct.pack(">I", zlib.crc32(corps))
-
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + bloc(b"IHDR", struct.pack(">IIBBBBB", largeur, hauteur, 8, 2, 0, 0, 0))
-        + bloc(b"IDAT", zlib.compress(brut, 9))
-        + bloc(b"IEND", b"")
-    )
+def logo_png() -> bytes:
+    """Le logo du cabinet, avec son mot."""
+    return _octets(LOGO)
 
 
-@lru_cache(maxsize=1)
-def logo_png(cote: int = 240) -> bytes:
-    """La marque du cabinet, en PNG carré sur fond blanc.
+def entete_jpg() -> bytes:
+    """Le papier à en-tête, page pleine."""
+    return _octets(ENTETE)
 
-    Les proportions viennent du site, comme dans l'interface : filet extérieur,
-    gouttière entre les carrés, et neuf carrés de taille égale.
+
+def bandeau_png() -> bytes:
+    """Le bandeau de pied de page."""
+    return _octets(BANDEAU)
+
+
+def pieces_presentes() -> bool:
+    """Les trois pièces sont-elles là ?
+
+    Un dépôt incomplet ne doit pas faire échouer un export : sans elles, les
+    rendus retombent sur une garde composée en texte, moins fidèle mais
+    lisible. C'est ce que vérifie cette fonction.
     """
-    filet = max(2, cote // 30)
-    marge = max(1, cote // 26)
-    gouttiere = max(1, cote // 40)
-    interieur = cote - 2 * (filet + marge)
-    carre = (interieur - 2 * gouttiere) // 3
-    debut = filet + marge
-
-    blanc = (0xFF, 0xFF, 0xFF)
-    pixels = [[blanc] * cote for _ in range(cote)]
-
-    # Le filet or, sur les quatre bords.
-    for y in range(cote):
-        for x in range(cote):
-            if x < filet or y < filet or x >= cote - filet or y >= cote - filet:
-                pixels[y][x] = OR
-
-    for ligne in range(3):
-        for colonne in range(3):
-            x0 = debut + colonne * (carre + gouttiere)
-            y0 = debut + ligne * (carre + gouttiere)
-            for dy in range(carre):
-                for dx in range(carre):
-                    pixels[y0 + dy][x0 + dx] = _degrade(dx / carre, dy / carre)
-
-    return _png(cote, cote, pixels)
+    return all(c.exists() for c in (ENTETE, LOGO, BANDEAU))

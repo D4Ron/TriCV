@@ -36,6 +36,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
     HRFlowable,
     Image,
@@ -455,44 +456,98 @@ def _ligne(document, texte: str, *, taille: float, gras=False, couleur=None,
     return paragraphe
 
 
-def _page_de_garde_docx(document, garde: Couverture) -> None:
-    """La première page : la marque, l'objet, le titre, le mois.
+def _fond_de_garde_docx(document) -> None:
+    """Pose le papier à en-tête en fond de la première page.
 
-    Le pied — coordonnées du cabinet et mention de confidentialité — est porté
-    par le pied de page de première page, et non par des paragraphes : c'est ce
-    qui le tient en bas de la feuille quel que soit l'objet du mandat, qui fait
-    deux lignes chez l'un et six chez l'autre.
+    Word n'a pas de « fond de page » par section. L'usage, et ce que fait le
+    document du cabinet, est d'ancrer une image en pleine page ; le plus court
+    chemin depuis python-docx est de la poser dans le **pied de page de
+    première page**, dont la distance au bord est ramenée à zéro. Elle se
+    dessine alors sous le texte, d'un bord à l'autre.
     """
-    marque = document.add_paragraph()
-    marque.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    marque.paragraph_format.space_after = Pt(2)
-    logo = marque.add_run()
-    logo.add_picture(io.BytesIO(frontispice.logo_png()), width=Cm(2.2))
+    section = document.sections[0]
+    section.different_first_page_header_footer = True
+    section.footer_distance = 0
+    section.header_distance = 0
 
-    nom = _ligne(
-        document,
-        frontispice.NOM_CABINET,
-        taille=16,
-        gras=True,
-        couleur=OR,
-        avant=4,
-        apres=10,
+    pied = section.first_page_footer.paragraphs[0]
+    pied.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    pied.paragraph_format.space_before = Pt(0)
+    pied.paragraph_format.space_after = Pt(0)
+    run = pied.add_run()
+    run.add_picture(
+        io.BytesIO(frontispice.entete_jpg()),
+        width=section.page_width,
+        height=section.page_height,
     )
-    _filet(nom, OR_HEX.lstrip("#"))
+    # Remonter l'image du bas de page jusqu'au haut de la feuille : sans ce
+    # décalage, elle commence là où commence le pied, c'est-à-dire en bas.
+    _remonter_en_pleine_page(run, section)
+
+
+def _remonter_en_pleine_page(run, section) -> None:
+    """Transforme l'image en objet flottant calé sur le coin de la page.
+
+    python-docx ne pose que des images « en ligne ». Une image en ligne dans
+    un pied de page reste dans le pied ; il faut la convertir en ancrage
+    absolu, relatif à la *page*, pour qu'elle couvre la feuille entière.
+    """
+    dessin = run._r.find(qn("w:drawing"))
+    if dessin is None:
+        return
+    en_ligne = dessin.find(qn("wp:inline"))
+    if en_ligne is None:
+        return
+
+    ancre = OxmlElement("wp:anchor")
+    for cle, valeur in (
+        ("distT", "0"), ("distB", "0"), ("distL", "0"), ("distR", "0"),
+        ("simplePos", "0"), ("relativeHeight", "0"), ("behindDoc", "1"),
+        ("locked", "0"), ("layoutInCell", "1"), ("allowOverlap", "1"),
+    ):
+        ancre.set(cle, valeur)
+
+    pos_simple = OxmlElement("wp:simplePos")
+    pos_simple.set("x", "0")
+    pos_simple.set("y", "0")
+    ancre.append(pos_simple)
+
+    for nom, sens in (("wp:positionH", "page"), ("wp:positionV", "page")):
+        pos = OxmlElement(nom)
+        pos.set("relativeFrom", sens)
+        decalage = OxmlElement("wp:posOffset")
+        decalage.text = "0"
+        pos.append(decalage)
+        ancre.append(pos)
+
+    # `extent`, `docPr` et le graphique se reprennent tels quels.
+    for enfant in list(en_ligne):
+        ancre.append(enfant)
+    enveloppe = OxmlElement("wp:wrapNone")
+    # `wrapNone` se place après `extent`/`effectExtent`, avant `docPr`.
+    ancre.insert(list(ancre).index(ancre.find(qn("wp:docPr"))), enveloppe)
+
+    dessin.remove(en_ligne)
+    dessin.append(ancre)
+
+
+def _page_de_garde_docx(document, garde: Couverture) -> None:
+    """Ce qui se pose SUR le papier à en-tête : l'objet, le titre, le mois.
+
+    Le fond porte déjà la marque, les filets, les coordonnées et la mention de
+    confidentialité : les recomposer ici les ferait paraître deux fois.
+    """
+    _fond_de_garde_docx(document)
+
+    # Descendre jusqu'au panneau clair de l'en-tête, au-dessus de la bande
+    # d'images qui court à mi-hauteur.
+    _ligne(document, "", taille=11, avant=0, apres=0)
+    _ligne(document, "", taille=11, avant=120, apres=0)
 
     if garde.objet_affiche:
         _ligne(
-            document,
-            garde.objet_affiche,
-            taille=13,
-            gras=True,
-            couleur=BLEU,
-            avant=80,
-            apres=24,
+            document, garde.objet_affiche, taille=13, gras=True, couleur=BLEU, apres=24
         )
-    else:
-        _ligne(document, "", taille=11, avant=80, apres=24)
-
     _ligne(document, garde.titre_document, taille=22, gras=True, couleur=BLEU, apres=10)
     if garde.client:
         _ligne(document, garde.client, taille=13, couleur=GRIS, apres=2)
@@ -534,30 +589,38 @@ def _sommaire_docx(document, entrees: list[frontispice.Entree]) -> None:
 
 
 def _pieds_de_page_docx(document, garde: Couverture) -> None:
-    """Le mois sous la page de garde, la pagination sous les autres."""
+    """Le bandeau du cabinet au pied des pages du corps, et la pagination.
+
+    Le pied de **première page** n'est pas touché ici : il porte le papier à
+    en-tête, posé par `_fond_de_garde_docx`.
+    """
     section = document.sections[0]
     section.different_first_page_header_footer = True
-
-    premiere = section.first_page_footer.paragraphs[0]
-    premiere.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for ligne in frontispice.ADRESSE:
-        run = premiere.add_run(ligne + "\n")
-        run.font.size = Pt(7.5)
-        run.font.color.rgb = GRIS
-    mention = premiere.add_run(frontispice.MENTION_CONFIDENTIEL)
-    mention.font.size = Pt(8)
-    mention.font.bold = True
-    mention.font.color.rgb = GRIS
+    # De quoi loger le bandeau et la pagination sans que la dernière ligne du
+    # texte ne vienne mordre dessus.
+    section.bottom_margin = Cm(3.4)
 
     courant = section.footer.paragraphs[0]
     courant.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    debut = courant.add_run(f"{frontispice.MENTION_CONFIDENTIEL}   —   page ")
-    debut.font.size = Pt(8)
-    debut.font.color.rgb = GRIS
+    courant.paragraph_format.space_after = Pt(0)
+    numero = courant.add_run(f"{frontispice.MENTION_CONFIDENTIEL}   —   page ")
+    numero.font.size = Pt(8)
+    numero.font.color.rgb = GRIS
     _champ_simple(courant, " PAGE ")
     for run in courant.runs:
         run.font.size = Pt(8)
         run.font.color.rgb = GRIS
+
+    bandeau = section.footer.add_paragraph()
+    bandeau.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    bandeau.paragraph_format.space_before = Pt(2)
+    bandeau.paragraph_format.space_after = Pt(0)
+    largeur = section.page_width - section.left_margin - section.right_margin
+    bandeau.add_run().add_picture(
+        io.BytesIO(frontispice.bandeau_png()),
+        width=largeur,
+        height=int(largeur * frontispice.PROPORTION_BANDEAU),
+    )
 
 
 def rendre_docx(
@@ -598,6 +661,9 @@ def rendre_docx(
     # cabinet au lieu de sa pagination.
     suite = document.add_section(WD_SECTION.NEW_PAGE)
     suite.different_first_page_header_footer = False
+    # La section neuve recopie les marges de la précédente, sauf si on les
+    # repose : le bandeau du pied a besoin de la même place ici.
+    suite.bottom_margin = Cm(3.4)
     _sommaire_docx(document, entrees)
 
     document.paragraphs[-1].add_run().add_break(WD_BREAK.PAGE)
@@ -749,37 +815,84 @@ def _dessiner_pied(toile, texte_gauche: str, texte_droite: str) -> None:
 
 
 def _pied_de_garde(garde: Couverture):
-    """Les coordonnées du cabinet, au pied de la première page seulement."""
+    """La première page : le papier à en-tête du cabinet, page pleine.
+
+    Ce n'est pas une imitation. C'est l'image que le cabinet pose lui-même en
+    fond de la première page de ses rapports — marque, filets, coordonnées et
+    mention de confidentialité compris. On la dessine sous le texte, d'un bord
+    à l'autre, et la garde n'a donc plus ni adresse ni filet à composer.
+    """
 
     def dessiner(toile, _document) -> None:
         toile.saveState()
-        toile.setStrokeColor(colors.HexColor(OR_HEX))
-        toile.setLineWidth(1.2)
-        toile.line(MARGE, 34 * mm, A4[0] - MARGE, 34 * mm)
-
-        toile.setFont("Helvetica-Bold", 7.5)
-        toile.setFillColor(colors.HexColor(GRIS_HEX))
-        toile.drawString(MARGE, 29 * mm, frontispice.NOM_CABINET)
-        toile.setFont("Helvetica", 7)
-        for rang, ligne in enumerate(frontispice.ADRESSE):
-            toile.drawString(MARGE, 25 * mm - rang * 3.6 * mm, ligne)
-
-        toile.setFont("Helvetica-Bold", 8)
-        toile.drawRightString(
-            A4[0] - MARGE, 29 * mm, frontispice.MENTION_CONFIDENTIEL
-        )
+        if frontispice.pieces_presentes():
+            toile.drawImage(
+                ImageReader(io.BytesIO(frontispice.entete_jpg())),
+                0,
+                0,
+                width=A4[0],
+                height=A4[1],
+                preserveAspectRatio=False,
+                anchor="c",
+            )
+        else:
+            # Dépôt sans les pièces : la garde reste lisible, composée en
+            # texte, plutôt que de sortir blanche.
+            toile.setStrokeColor(colors.HexColor(OR_HEX))
+            toile.setLineWidth(1.2)
+            toile.line(MARGE, 34 * mm, A4[0] - MARGE, 34 * mm)
+            toile.setFont("Helvetica-Bold", 7.5)
+            toile.setFillColor(colors.HexColor(GRIS_HEX))
+            toile.drawString(MARGE, 29 * mm, frontispice.NOM_CABINET)
+            toile.setFont("Helvetica", 7)
+            for rang, ligne in enumerate(frontispice.ADRESSE):
+                toile.drawString(MARGE, 25 * mm - rang * 3.6 * mm, ligne)
+            toile.setFont("Helvetica-Bold", 8)
+            toile.drawRightString(
+                A4[0] - MARGE, 29 * mm, frontispice.MENTION_CONFIDENTIEL
+            )
         toile.restoreState()
 
     return dessiner
 
 
 def _pied_courant(garde: Couverture):
+    """Le bandeau du cabinet au pied de chaque page, et le numéro.
+
+    Le document remis ne met pas une ligne de texte en pied de page : il y met
+    son bandeau « Nous développons vos métiers ». Le numéro de page se pose
+    au-dessus, à droite, là où il ne le recouvre pas.
+    """
+
     def dessiner(toile, _document) -> None:
-        _dessiner_pied(
-            toile,
-            f"{garde.titre_document} — {frontispice.MENTION_CONFIDENTIEL}",
-            f"page {toile.getPageNumber()}",
-        )
+        toile.saveState()
+        if frontispice.pieces_presentes():
+            largeur = A4[0] - 2 * MARGE
+            hauteur = largeur * frontispice.PROPORTION_BANDEAU
+            toile.drawImage(
+                ImageReader(io.BytesIO(frontispice.bandeau_png())),
+                MARGE,
+                11 * mm,
+                width=largeur,
+                height=hauteur,
+                preserveAspectRatio=True,
+                anchor="sw",
+                mask="auto",
+            )
+            toile.setFont("Helvetica", 7.5)
+            toile.setFillColor(colors.HexColor(GRIS_HEX))
+            toile.drawRightString(
+                A4[0] - MARGE,
+                11 * mm + hauteur + 2 * mm,
+                f"{frontispice.MENTION_CONFIDENTIEL} — page {toile.getPageNumber()}",
+            )
+        else:
+            _dessiner_pied(
+                toile,
+                f"{garde.titre_document} — {frontispice.MENTION_CONFIDENTIEL}",
+                f"page {toile.getPageNumber()}",
+            )
+        toile.restoreState()
 
     return dessiner
 
@@ -924,23 +1037,17 @@ def _styles_pdf() -> dict:
 
 
 def _page_de_garde_pdf(garde: Couverture, styles: dict) -> list:
-    logo = Image(io.BytesIO(frontispice.logo_png()), width=22 * mm, height=22 * mm)
-    logo.hAlign = "CENTER"
-    elements: list = [
-        Spacer(1, 6 * mm),
-        logo,
-        Paragraph(escape(frontispice.NOM_CABINET), styles["marque"]),
-        # Le filet or de la charte, sous la marque : le même trait que porte le
-        # papier à en-tête du cabinet.
-        HRFlowable(
-            width="55%",
-            thickness=1.2,
-            color=colors.HexColor(OR_HEX),
-            hAlign="CENTER",
-            spaceAfter=2,
-        ),
-        Spacer(1, 32 * mm),
-    ]
+    """Ce qui se pose SUR le papier à en-tête : l'objet, le titre, le mois.
+
+    Le fond est dessiné par `_pied_de_garde`. Il porte déjà la marque, les
+    filets, les coordonnées et la mention de confidentialité — les recomposer
+    ici les ferait paraître deux fois.
+
+    Le bloc descend jusqu'au panneau clair de l'en-tête, au-dessus de la bande
+    d'images qui court à mi-hauteur : c'est là que le document du cabinet pose
+    son titre.
+    """
+    elements: list = [Spacer(1, 52 * mm)]
     if garde.objet_affiche:
         elements.append(Paragraph(escape(garde.objet_affiche), styles["objet"]))
     elements.append(Paragraph(escape(garde.titre_document), styles["titre_garde"]))
@@ -1036,8 +1143,10 @@ def rendre_pdf(
         leftMargin=MARGE,
         rightMargin=MARGE,
         topMargin=18 * mm,
-        # De la place pour le pied de page, et davantage sous la page de garde.
-        bottomMargin=22 * mm,
+        # De quoi loger le bandeau du cabinet — 11 mm de marge basse, une
+        # vingtaine de millimètres de bandeau, puis le numéro de page — sans
+        # que la dernière ligne du texte ne vienne mordre dessus.
+        bottomMargin=38 * mm,
         title=titre,
         author="Kapi Consult",
     )
@@ -1057,7 +1166,8 @@ def rendre_pdf(
 # pour cela reviendrait à faire porter au déploiement le coût d'un besoin
 # marginal — et l'ODT n'est demandé que par certaines administrations.
 
-_LOGO_ODT = "Pictures/kapi.png"
+_LOGO_ODT = "Pictures/logo_kapi.png"
+_BANDEAU_ODT = "Pictures/bandeau_kapi.png"
 
 _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
 <office:document-styles
@@ -1066,6 +1176,8 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
   xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
   xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
   xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+  xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+  xmlns:xlink="http://www.w3.org/1999/xlink"
   office:version="1.2">
  <!--
    La police du document. Sans cette déclaration l'ODT sortait dans la serif
@@ -1142,6 +1254,11 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
    <style:text-properties fo:font-size="9pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <!-- La page de garde. -->
+  <style:style style:name="GardeFilet" style:family="paragraph">
+   <style:paragraph-properties fo:margin-top="0.2cm" fo:margin-bottom="0cm"
+     fo:border-bottom="0.06cm solid #B8892A" fo:padding-bottom="0.1cm"/>
+   <style:text-properties fo:font-size="2pt"/>
+  </style:style>
   <style:style style:name="GardeMarque" style:family="paragraph">
    <style:paragraph-properties fo:text-align="center" fo:margin-bottom="0.3cm"
      fo:border-bottom="0.06cm solid #B8892A" fo:padding-bottom="0.15cm"/>
@@ -1202,6 +1319,10 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
   <style:style style:name="Puce" style:family="paragraph">
    <style:paragraph-properties fo:margin-top="0.05cm" fo:margin-bottom="0.05cm"/>
   </style:style>
+  <style:style style:name="frBandeau" style:family="graphic">
+   <style:graphic-properties style:vertical-pos="middle" style:vertical-rel="text"
+     style:horizontal-pos="center" style:horizontal-rel="paragraph"/>
+  </style:style>
   <!-- Une vraie liste ODF : LibreOffice tient le retrait de la seconde ligne,
        ce qu'un paragraphe commençant par un tiret ne fait pas. -->
   <text:list-style style:name="Puces">
@@ -1225,6 +1346,13 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
    <style:footer>
     <text:p text:style-name="Pied">__PIED__ &#8212; page
      <text:page-number text:select-page="current">1</text:page-number>
+    </text:p>
+    <text:p text:style-name="Pied">
+     <draw:frame draw:style-name="frBandeau" text:anchor-type="as-char"
+       svg:width="16cm" svg:height="1.85cm" draw:z-index="1">
+      <draw:image xlink:href="__BANDEAU__" xlink:type="simple"
+        xlink:show="embed" xlink:actuate="onLoad"/>
+     </draw:frame>
     </text:p>
    </style:footer>
   </style:master-page>
@@ -1265,6 +1393,7 @@ _MANIFESTE_ODT = """<?xml version="1.0" encoding="UTF-8"?>
  <manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>
  <manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>
  <manifest:file-entry manifest:full-path="__LOGO__" manifest:media-type="image/png"/>
+ <manifest:file-entry manifest:full-path="__BANDEAU__" manifest:media-type="image/png"/>
 </manifest:manifest>
 """
 
@@ -1326,13 +1455,19 @@ def _table_odt(tableau: dict, nom: str) -> str:
 
 
 def _page_de_garde_odt(garde: Couverture) -> list[str]:
+    # Le logo porte déjà le mot « Kapi Consult » : écrire NOM_CABINET dessous
+    # le ferait paraître deux fois. Et ses proportions sont celles du fichier —
+    # il est large, pas carré, et le forcer dans un carré l'écrasait.
+    largeur = 6.0
     corps = [
         '<text:p text:style-name="Centre">'
         '<draw:frame draw:style-name="frLogo" text:anchor-type="as-char" '
-        'svg:width="2.2cm" svg:height="2.2cm" draw:z-index="0">'
+        f'svg:width="{largeur:g}cm" '
+        f'svg:height="{largeur * frontispice.PROPORTION_LOGO:.2f}cm" '
+        'draw:z-index="0">'
         f'<draw:image xlink:href="{_LOGO_ODT}" xlink:type="simple" '
         'xlink:show="embed" xlink:actuate="onLoad"/></draw:frame></text:p>',
-        f'<text:p text:style-name="GardeMarque">{escape(frontispice.NOM_CABINET)}</text:p>',
+        '<text:p text:style-name="GardeFilet"/>',
     ]
     if garde.objet_affiche:
         corps.append(
@@ -1487,11 +1622,15 @@ def rendre_odt(
             _STYLES_ODT.replace(
                 "__PIED__",
                 escape(f"{garde.titre_document} — {frontispice.MENTION_CONFIDENTIEL}"),
-            ),
+            ).replace("__BANDEAU__", _BANDEAU_ODT),
         )
         archive.writestr(_LOGO_ODT, frontispice.logo_png())
+        archive.writestr(_BANDEAU_ODT, frontispice.bandeau_png())
         archive.writestr(
-            "META-INF/manifest.xml", _MANIFESTE_ODT.replace("__LOGO__", _LOGO_ODT)
+            "META-INF/manifest.xml",
+            _MANIFESTE_ODT.replace("__LOGO__", _LOGO_ODT).replace(
+                "__BANDEAU__", _BANDEAU_ODT
+            ),
         )
     return tampon.getvalue()
 
