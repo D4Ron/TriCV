@@ -1067,7 +1067,27 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
   xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
   xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
   office:version="1.2">
+ <!--
+   La police du document. Sans cette déclaration l'ODT sortait dans la serif
+   par défaut du lecteur — Liberation Serif chez LibreOffice — quand le DOCX
+   et le PDF sont en Calibri et en Helvetica. Trois formats du même rapport
+   n'ont pas à se ressembler de loin seulement.
+
+   Carlito est le clone métrique de Calibri livré avec LibreOffice ; il prend
+   le relais là où Calibri n'est pas installé, sans changer la mise en page.
+ -->
+ <office:font-face-decls>
+  <style:font-face style:name="Calibri"
+    svg:font-family="Calibri, Carlito, 'Liberation Sans'"
+    style:font-family-generic="swiss" style:font-pitch="variable"/>
+ </office:font-face-decls>
  <office:styles>
+  <!-- L'interligne entre paragraphes, que le DOCX pose à 8 points. Sans lui,
+       la prose de l'ODT arrivait en un seul bloc compact. -->
+  <style:default-style style:family="paragraph">
+   <style:paragraph-properties fo:margin-bottom="0.28cm"/>
+   <style:text-properties style:font-name="Calibri" fo:font-size="11pt"/>
+  </style:default-style>
   <!--
     ATTENTION À L'ORDRE. Dans un `style:style`, ODF décrit une *séquence* :
     `style:paragraph-properties` vient AVANT `style:text-properties`. Ces
@@ -1137,7 +1157,7 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
    <style:text-properties fo:font-size="24pt" fo:font-weight="bold" fo:color="#1E2299"/>
   </style:style>
   <style:style style:name="GardeClient" style:family="paragraph">
-   <style:paragraph-properties fo:text-align="center"/>
+   <style:paragraph-properties fo:text-align="center" fo:margin-bottom="0cm"/>
    <style:text-properties fo:font-size="13pt" fo:color="#6B7080"/>
   </style:style>
   <style:style style:name="GardeMois" style:family="paragraph">
@@ -1145,7 +1165,7 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
    <style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#6B7080"/>
   </style:style>
   <style:style style:name="GardePied" style:family="paragraph">
-   <style:paragraph-properties fo:text-align="center"/>
+   <style:paragraph-properties fo:text-align="center" fo:margin-bottom="0cm"/>
    <style:text-properties fo:font-size="7.5pt" fo:color="#6B7080"/>
   </style:style>
   <!-- La première ligne des coordonnées, qui creuse l'écart avec le titre.
@@ -1153,7 +1173,7 @@ _STYLES_ODT = """<?xml version="1.0" encoding="UTF-8"?>
        bas de la feuille ; l'ODT n'a pas cette ressource pour une page isolée
        et s'en approche avec une marge. -->
   <style:style style:name="GardePiedDebut" style:family="paragraph">
-   <style:paragraph-properties fo:text-align="center" fo:margin-top="5cm"
+   <style:paragraph-properties fo:text-align="center" fo:margin-top="5cm" fo:margin-bottom="0cm"
      fo:border-top="0.04cm solid #B8892A" fo:padding-top="0.3cm"/>
    <style:text-properties fo:font-size="7.5pt" fo:color="#6B7080"/>
   </style:style>
@@ -1358,10 +1378,18 @@ def _gabarit_sommaire(niveau: int) -> str:
 
 
 def _sommaire_odt(entrees: list[frontispice.Entree]) -> str:
-    """Un vrai index ODF, dont LibreOffice refait la pagination à la demande.
+    """Un vrai index ODF, dont le corps porte les titres dès l'ouverture.
 
-    Son corps porte les titres dès l'ouverture : un index vide en attendant
-    que le lecteur pense à l'actualiser se lit comme un document abîmé.
+    Ce que cet index fait, vérifié sous LibreOffice : il affiche les titres et
+    leur hiérarchie, **sans numéros de page**. ODF n'a pas d'équivalent du
+    `updateFields` de Word : un index ne se pagine qu'une fois actualisé par
+    le lecteur (Outils › Actualiser › Index), et une conversion en PDF ne
+    l'actualise pas davantage.
+
+    On s'en tient donc à des titres justes sans pagination, plutôt qu'à des
+    numéros inventés — nous ne savons pas comment LibreOffice paginera. Le
+    DOCX et le PDF, eux, portent de vrais numéros ; l'ODT reste un format
+    secondaire, demandé par certaines administrations.
     """
     lignes = "".join(
         f'<text:p text:style-name="Somm{e.niveau}">{escape(e.titre_complet)}</text:p>'

@@ -323,9 +323,20 @@ Three things follow from the section structure, and each was a deliberate correc
   the other way round, and the cost is invisible in a way that matters: a reader applying the schema
   keeps what belongs to the text and drops what belongs to the paragraph. The cover page came out
   left-aligned and crammed to the top of the sheet, in the right font and the right colours, with
-  every style present and each one half-applied. Found by opening the ODT in Word, which reads ODF —
-  there is no LibreOffice on the dev machine. `test_l_odt_range_ses_proprietes_dans_l_ordre_du_schema_odf`
-  holds the order.
+  every style present and each one half-applied.
+  `test_l_odt_range_ses_proprietes_dans_l_ordre_du_schema_odf` holds the order.
+- **The ODT's summary has no page numbers, and that is as good as it gets.** Verified in LibreOffice
+  itself (`soffice --headless --convert-to pdf`): the index renders its titles and hierarchy
+  correctly and stops there. ODF has no equivalent of Word's `updateFields` — an index paginates
+  only once the reader runs *Tools › Update › Indexes*, and converting to PDF does not run it
+  either. Correct titles without numbers beat invented numbers: we cannot know how LibreOffice will
+  paginate. The DOCX and the PDF both carry real page numbers, and the ODT stays the secondary
+  format some administrations ask for.
+- **The ODT declares Calibri and its own paragraph spacing.** It declared neither, so LibreOffice
+  rendered it in Liberation Serif with paragraphs run together, while the DOCX was Calibri at 8pt
+  spacing — three formats of one report that only resembled each other from a distance. Carlito,
+  the metric-compatible Calibri clone LibreOffice ships, is named as the fallback so the layout
+  holds where Calibri is absent.
 - **The DOCX is schema-conformant, which is not the same as "Word refused it".** `w:pBdr` and
   `w:updateFields` were being appended to the end of their parent instead of at their place in the
   OOXML sequence. This was first reported here as the cause of an unopenable report; that was an

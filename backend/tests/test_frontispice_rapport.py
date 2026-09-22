@@ -362,6 +362,31 @@ def test_l_odt_range_ses_proprietes_dans_l_ordre_du_schema_odf():
     )
 
 
+def test_l_odt_pose_sa_police_et_son_interligne():
+    """Sans quoi il sort dans la serif par défaut du lecteur, en bloc compact.
+
+    Le DOCX est en Calibri avec 8 points entre paragraphes ; l'ODT n'imposait
+    rien et LibreOffice le rendait en Liberation Serif, paragraphes collés.
+    Trois formats du même rapport n'ont pas à se ressembler de loin seulement.
+    """
+    with zipfile.ZipFile(io.BytesIO(rendre(export.rendre_odt))) as archive:
+        styles = archive.read("styles.xml").decode()
+
+    assert "<office:font-face-decls>" in styles
+    # Carlito prend le relais là où Calibri n'est pas installé, sans changer
+    # la mise en page : c'est son clone métrique.
+    assert "Carlito" in styles
+
+    defaut = re.search(
+        r"<style:default-style style:family=\"paragraph\">.*?</style:default-style>",
+        styles,
+        re.S,
+    )
+    assert defaut, "aucun style de paragraphe par défaut"
+    assert "fo:margin-bottom" in defaut.group(0), "pas d'interligne entre paragraphes"
+    assert 'style:font-name="Calibri"' in defaut.group(0)
+
+
 def test_la_page_de_garde_odt_est_bien_centree():
     """Le centrage est ce que l'inversion faisait perdre en premier."""
     with zipfile.ZipFile(io.BytesIO(rendre(export.rendre_odt))) as archive:
