@@ -441,14 +441,17 @@ def contenu() -> list:
             "d'administrateur. Ce n'est pas long, mais cela dépend de quelqu'un d'autre : "
             "à lancer en début d'installation, pas la veille de la mise en service. Le "
             "guide de la boîte contient, à l'étape M4, une demande à transmettre telle "
-            "quelle à l'administrateur.",
+            "quelle à l'administrateur. Côté application, le chemin se choisit dans "
+            "<b>Paramètres → Courriel → Par où passe le courriel</b> : « Microsoft 365 "
+            "(Graph) » remplace alors les champs IMAP par les trois valeurs de "
+            "l'inscription Entra.",
         )
     )
 
     h.append(para("3.2 — Envoi (SMTP)", "etape"))
     h.append(
         para(
-            "Dans <b>Paramètres › Envoi de courriels</b>, renseignez le serveur, le "
+            "Dans <b>Paramètres → Courriel → Envoi de courriels</b>, renseignez le serveur, le "
             "compte et le mot de passe, puis l'adresse d'expédition — celle que les "
             "candidats verront. Le bouton <b>Tester l'envoi</b> ouvre une session sans "
             "rien expédier : une erreur d'identifiants doit se découvrir là, et non au "
@@ -513,11 +516,14 @@ def contenu() -> list:
             [
                 "Le premier compte administrateur est créé au démarrage à partir de "
                 "<b>SEED_ADMIN_EMAIL</b> et <b>SEED_ADMIN_PASSWORD</b>.",
-                "Les suivants se créent en ligne de commande, ou via l'inscription "
-                "libre si elle est ouverte temporairement.",
-                "L'inscription libre se referme dans <b>Paramètres</b> dès que "
-                "l'équipe a ses comptes. Ouverte sans code, elle laisse quiconque "
-                "atteint la page lire tous les dossiers.",
+                "Les suivants se créent dans <b>Paramètres → Utilisateurs</b> : nom, "
+                "adresse, mot de passe initial, rôle. Le mot de passe est choisi par "
+                "l'administrateur et transmis par lui — l'application ne l'envoie pas.",
+                "L'inscription libre n'est donc plus nécessaire pour monter l'équipe. "
+                "Laissez-la décochée dans <b>Paramètres → Général</b> : ouverte sans "
+                "code, elle laisse quiconque atteint la page lire tous les dossiers.",
+                "La ligne de commande reste pour le dépannage — le jour où plus aucun "
+                "administrateur ne peut se connecter.",
             ]
         )
     )

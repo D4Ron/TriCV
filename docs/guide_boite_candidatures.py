@@ -381,9 +381,9 @@ def contenu() -> list:
             "SMTP AUTH</b> sur le tenant, puis de créer un principal de service et de le "
             "rattacher à la boîte en PowerShell "
             "(<font face='Courier'>New-ServicePrincipal</font>, puis "
-            "<font face='Courier'>Add-MailboxPermission</font>). TriCV sait faire les deux ; "
-            "une installation neuve part sur Graph, et le chemin se règle côté serveur "
-            "tant que l'écran ne l'expose pas.",
+            "<font face='Courier'>Add-MailboxPermission</font>). TriCV sait faire les deux, "
+            "et le choix se fait à l'écran : <b>Paramètres → Courriel → Par où passe le "
+            "courriel</b>. Une installation neuve part sur Graph.",
         )
     )
     h.append(
@@ -535,7 +535,27 @@ def contenu() -> list:
     h.append(
         para(
             "Connectez-vous à TriCV avec un compte administrateur, puis ouvrez "
-            "<b>Paramètres</b> et descendez jusqu'à <b>Boîte de candidatures</b>."
+            "<b>Paramètres</b> et l'onglet <b>Courriel</b>."
+        )
+    )
+    h.append(
+        para(
+            "La première question de l'onglet est <b>par où passe le courriel</b> : "
+            "« IMAP et SMTP » ou « Microsoft 365 (Graph) ». Ce choix commande la suite — "
+            "il fait apparaître les champs qui comptent et disparaître ceux qui ne servent "
+            "à rien chez le fournisseur retenu. Choisissez-le avant de remplir quoi que ce "
+            "soit, sans quoi vous renseignerez un serveur IMAP que personne n'interrogera."
+        )
+    )
+    h.extend(
+        encadre(
+            "Microsoft : les champs IMAP disparaissent, et c'est voulu",
+            "Sous « Microsoft 365 (Graph) », l'écran ne demande plus ni serveur, ni port, "
+            "ni mot de passe : Graph n'en emploie aucun. Restent l'adresse de la boîte, le "
+            "dossier à relever, l'adresse d'expédition, et les trois valeurs de "
+            "l'inscription Entra ID — tenant, ID d'application, secret. Le bouton "
+            "« Les étapes, côté Entra ID » rappelle sur place la marche à suivre décrite "
+            "en partie A.",
         )
     )
 
@@ -813,6 +833,18 @@ def contenu() -> list:
                     "Votre compte TriCV est un compte recruteur. Seul un administrateur "
                     "modifie ces réglages — voir ci-dessous.",
                 ],
+                [
+                    "L'écran ne montre ni serveur ni mot de passe",
+                    "L'onglet Courriel est réglé sur « Microsoft 365 (Graph) », qui n'en "
+                    "emploie pas. Si votre boîte est chez Google ou chez un hébergeur "
+                    "classique, choisissez « IMAP et SMTP » : les champs reviennent.",
+                ],
+                [
+                    "« Tester la connexion » reste grisé",
+                    "Le bouton porte sur les réglages <i>enregistrés</i>, et il attend que "
+                    "la configuration soit complète : boîte cochée, adresse renseignée, et "
+                    "de quoi ouvrir une session. Enregistrez d'abord.",
+                ],
             ],
             [52 * mm, 113 * mm],
         )
@@ -820,7 +852,42 @@ def contenu() -> list:
 
     # --- annexe -------------------------------------------------------------
     h.append(PageBreak())
-    h.append(para("Annexe — Devenir administrateur dans TriCV", "section"))
+    h.append(para("Annexe — Les comptes de l'équipe", "section"))
+    h.append(
+        para(
+            "Un administrateur ouvre, promeut et ferme les comptes depuis "
+            "<b>Paramètres → Utilisateurs</b> : « Ajouter un compte » demande un nom, une "
+            "adresse, un mot de passe initial et un rôle. Le mot de passe est celui que "
+            "<i>vous</i> choisissez, et c'est à vous de le transmettre — l'application ne "
+            "l'envoie à personne, ne le réaffiche jamais et ne l'inscrit pas au journal."
+        )
+    )
+    h.extend(
+        encadre(
+            "Ajouter un collègue ne demande plus d'ouvrir l'inscription libre",
+            "C'était le seul moyen jusqu'ici, et il revient à laisser n'importe qui "
+            "atteignant l'adresse se créer un compte et consulter les dossiers de tous les "
+            "candidats — le temps qu'on repense à refermer. Créez les comptes un à un "
+            "depuis l'onglet Utilisateurs, et laissez « Autoriser la création de compte » "
+            "décochée.",
+        )
+    )
+    h.append(
+        para(
+            "Deux gestes restent impossibles, côté écran comme côté serveur : retirer ses "
+            "propres droits d'administrateur, et retirer les siens au <b>dernier</b> "
+            "administrateur actif. Dans les deux cas plus personne ne pourrait gérer les "
+            "comptes ni les paramètres."
+        )
+    )
+    h.append(
+        para(
+            "Un compte ne se supprime pas ; il se <b>désactive</b>. Son nom figure au "
+            "journal d'audit sur chaque décision qu'il a prise, et l'effacer rendrait ces "
+            "décisions anonymes. La désactivation ferme l'accès et garde la trace."
+        )
+    )
+    h.append(para("Le tout premier administrateur", "etape"))
     h.append(
         para(
             "Un compte créé depuis la page d'inscription est <b>toujours un compte "
@@ -831,9 +898,11 @@ def contenu() -> list:
     )
     h.append(
         para(
-            "La promotion se fait donc depuis la machine qui héberge TriCV — c'est "
-            "précisément cette contrainte qui fait la garantie. Dans un terminal, à la "
-            "racine du dossier de l'application :"
+            "Il faut donc amorcer le premier administrateur depuis la machine qui héberge "
+            "TriCV — c'est précisément cette contrainte qui fait la garantie. Ensuite, "
+            "l'onglet Utilisateurs suffit, et ces commandes ne resservent qu'en dépannage : "
+            "le jour où plus aucun administrateur ne peut se connecter. Dans un terminal, à "
+            "la racine du dossier de l'application :"
         )
     )
     h.append(
@@ -870,7 +939,9 @@ def contenu() -> list:
             "Refermez l'inscription libre une fois l'équipe créée",
             "Tant qu'elle est ouverte, toute personne atteignant la page peut se créer un "
             "compte et consulter les dossiers de tous les candidats. Une fois les comptes de "
-            "l'équipe créés, décochez « Autoriser la création de compte » dans Paramètres.",
+            "l'équipe créés, décochez « Autoriser la création de compte » dans "
+            "<b>Paramètres → Général</b>. Les comptes suivants s'ajoutent un à un depuis "
+            "l'onglet Utilisateurs, sans jamais la rouvrir.",
             ton=DANGER,
             fond=colors.HexColor("#fef2f2"),
         )
