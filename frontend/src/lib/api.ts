@@ -877,8 +877,14 @@ export const fichesApi = {
     )
   },
 
-  /** L'adresse de téléchargement, à ouvrir dans un onglet. */
-  urlTelechargement: (posteId: string) => `${BASE}/postes/${posteId}/fiche`,
+  /**
+   * Rouvre le document tel que le client l'a transmis.
+   *
+   * Passe par `telecharger` et non par un lien : la route exige le jeton, et un
+   * `<a href>` n'en porte pas — il afficherait le corps du 401.
+   */
+  telecharger: (posteId: string, nom?: string | null) =>
+    telecharger(`/postes/${posteId}/fiche`, nom || 'fiche-de-poste'),
 
   retirer: (posteId: string) =>
     request<void>(`/postes/${posteId}/fiche`, { method: 'DELETE' }),

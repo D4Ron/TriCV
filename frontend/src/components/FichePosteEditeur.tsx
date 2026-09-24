@@ -2,9 +2,14 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi } from '@/lib/api'
 import { Callout, Field, Modal, Spinner, Toggle } from '@/components/ui'
-import type { ExperienceSpecifique, Poste } from '@/types'
+import type { ExperienceSpecifique, Poste, PropositionFiche } from '@/types'
 import { NIVEAUX } from '@/lib/niveaux'
 import { enListe } from '@/lib/pieces'
+import PiecesDuDossier, {
+  piecesDepuis,
+  piecesVers,
+  type ChoixPieces,
+} from '@/components/PiecesDuDossier'
 
 /**
  * Modifier la fiche de poste après sa création.
@@ -33,6 +38,13 @@ import { enListe } from '@/lib/pieces'
 
 
 const enTexte = (valeurs: string[]) => valeurs.join(', ')
+
+/** Une ligne, un élément : la forme sous laquelle une fiche les énumère. */
+const enLignes = (valeur: string) =>
+  valeur
+    .split('\n')
+    .map((l) => l.replace(/^[-–—•*]\s*/, '').trim())
+    .filter(Boolean)
 
 function LigneExperience({
   valeur,
@@ -98,16 +110,43 @@ function LigneExperience({
   )
 }
 
+/**
+ * Reprend d'une proposition ce qui est lisible, et laisse le reste au poste.
+ *
+ * Une fiche jointe apres coup propose des valeurs ; elles ne sont pas encore
+ * enregistrees. Le formulaire s'ouvre dessus pour qu'on les relise, champ par
+ * champ, plutot que de les ecrire dans la base sans que personne les ait vues.
+ */
+function fusion(poste: Poste, proposition: PropositionFiche | null | undefined): Poste {
+  if (!proposition) return poste
+  const lues = proposition.valeurs as Partial<Poste>
+  const retenues: Partial<Poste> = {}
+  for (const [cle, valeur] of Object.entries(lues) as Array<[keyof Poste, unknown]>) {
+    if (valeur === null || valeur === undefined) continue
+    if (Array.isArray(valeur) && valeur.length === 0) continue
+    if (typeof valeur === 'string' && !valeur.trim()) continue
+    Object.assign(retenues, { [cle]: valeur })
+  }
+  return { ...poste, ...retenues }
+}
+
 export default function FichePosteEditeur({
-  poste,
+  poste: enregistre,
+  proposition,
   onClose,
   onEnregistre,
 }: {
   poste: Poste
+  /** Ce qu'une fiche jointe propose, a relire avant d'etre enregistre. */
+  proposition?: PropositionFiche | null
   onClose: () => void
   onEnregistre: (compteRendu: string) => void
 }) {
   const queryClient = useQueryClient()
+  // `poste` est le point de depart du formulaire, pas l'etat enregistre : une
+  // proposition s'y substitue champ par champ. `enregistre` reste accessible
+  // pour ce qui se compare a la base — l'origine des valeurs, notamment.
+  const poste = fusion(enregistre, proposition)
 
   const [intitule, setIntitule] = useState(poste.intitule)
   const [niveau, setNiveau] = useState(poste.niveau_min)
@@ -117,6 +156,21 @@ export default function FichePosteEditeur({
     poste.formation_complementaire_souhaitee ?? '',
   )
   const [nombreARetenir, setNombreARetenir] = useState(poste.nombre_a_retenir ?? 0)
+
+  // Ce que la fiche du client décrit sans que cela note personne : le lieu, le
+  // rattachement, les responsabilités, les compétences attendues. Ces champs
+  // arrivaient par la lecture d'une fiche et disparaissaient au premier
+  // enregistrement — le formulaire ne les portait pas, donc il les écrasait.
+  // Une ligne par élément : c'est ainsi qu'on les recopie d'un document.
+  const [localisation, setLocalisation] = useState(poste.localisation ?? '')
+  const [rattachement, setRattachement] = useState(poste.rattachement ?? '')
+  const [responsabilites, setResponsabilites] = useState(poste.responsabilites.join('\n'))
+  const [techniques, setTechniques] = useState(poste.competences_techniques.join('\n'))
+  const [comportementales, setComportementales] = useState(
+    poste.competences_comportementales.join('\n'),
+  )
+
+  const [choixPieces, setChoixPieces] = useState<ChoixPieces>(piecesDepuis(poste))
 
   // La liste part de ce qui est enregistré ; un poste à l'ancienne mode n'a
   // qu'une exigence, décrite par les deux champs scalaires.
@@ -168,6 +222,10 @@ export default function FichePosteEditeur({
     const seule = utiles[0]
 
     return recrutementApi.modifierPoste(poste.id, {
+      // Passer par cet ecran, c'est poser les exigences. Le poste cesse donc
+      // d'etre « a completer » : la marque ne dit pas que la fiche est
+      // parfaite, elle dit que personne ne l'a encore regardee.
+      ...(enregistre.a_completer ? { a_completer: false } : {}),
       intitule: intitule.trim(),
       niveau_min: niveau,
       domaines_acceptes: enListe(domainesAcceptes),
@@ -177,6 +235,12 @@ export default function FichePosteEditeur({
       experiences_specifiques: simple ? [] : utiles,
       formation_complementaire_souhaitee: complementaire.trim() || null,
       nombre_a_retenir: nombreARetenir > 0 ? nombreARetenir : null,
+      localisation: localisation.trim() || null,
+      rattachement: rattachement.trim() || null,
+      responsabilites: enLignes(responsabilites),
+      competences_techniques: enLignes(techniques),
+      competences_comportementales: enLignes(comportementales),
+      ...piecesVers(choixPieces, enregistre.formats_pieces ?? {}),
       restriction: {
         age_min: ageActif && ageMin > 0 ? ageMin : null,
         age_max: ageActif && ageMax > 0 ? ageMax : null,
@@ -206,7 +270,10 @@ export default function FichePosteEditeur({
       void queryClient.invalidateQueries({ queryKey: ['grille', poste.id] })
       void queryClient.invalidateQueries({ queryKey: ['candidatures', poste.id] })
       onEnregistre(
-        'Fiche enregistrée. Les dossiers du poste ont été réévalués sur les nouvelles exigences.',
+        enregistre.a_completer
+          ? 'Fiche enregistrée. Le poste n’est plus « à compléter » : ses exigences sont ' +
+            'désormais celles que vous venez de poser, et ses dossiers ont été réévalués dessus.'
+          : 'Fiche enregistrée. Les dossiers du poste ont été réévalués sur les nouvelles exigences.',
       )
       onClose()
     },
@@ -225,6 +292,22 @@ export default function FichePosteEditeur({
   return (
     <Modal open title="Fiche de poste" onClose={onClose}>
       <div className="space-y-5">
+        {proposition && (
+          <Callout tone={proposition.avertissement ? 'warning' : 'info'}>
+            {proposition.avertissement ??
+              'Les champs ci-dessous sont proposés d’après la fiche jointe. Rien n’est ' +
+                'enregistré tant que vous n’avez pas relu et enregistré : une valeur lue de ' +
+                'travers deviendrait une exigence réelle.'}
+          </Callout>
+        )}
+        {enregistre.a_completer && (
+          <Callout tone="warning">
+            Ce poste a été créé avec son seul intitulé. Les exigences ci-dessous sont des
+            valeurs par défaut, que personne n’a posées — les dossiers déposés entre-temps ont
+            été notés dessus. Enregistrer lève la mention « à compléter » et réévalue tout le
+            poste.
+          </Callout>
+        )}
         <Field label="Intitulé du poste" htmlFor="fiche-intitule">
           <input
             id="fiche-intitule"
@@ -402,6 +485,82 @@ export default function FichePosteEditeur({
             onChange={(e) => setNombreARetenir(Number(e.target.value))}
           />
         </Field>
+
+        <PiecesDuDossier valeur={choixPieces} onChange={setChoixPieces} />
+
+        <div className="space-y-4 rounded-lg border border-ink-200 p-3">
+          <div>
+            <p className="text-sm font-semibold text-ink-900">Ce que la fiche décrit</p>
+            <p className="mt-0.5 text-xs text-ink-500">
+              Rien de tout cela ne note ni n’élimine : ce sont les mots du poste, repris dans
+              l’avis et dans le rapport. Ils viennent de la fiche du client quand il y en a une.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Lieu d’affectation" htmlFor="fiche-localisation">
+              <input
+                id="fiche-localisation"
+                className="input"
+                value={localisation}
+                placeholder="Lomé, Togo"
+                onChange={(e) => setLocalisation(e.target.value)}
+              />
+            </Field>
+            <Field label="Rattachement hiérarchique" htmlFor="fiche-rattachement">
+              <input
+                id="fiche-rattachement"
+                className="input"
+                value={rattachement}
+                placeholder="Directeur Général"
+                onChange={(e) => setRattachement(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <Field
+            label="Responsabilités"
+            htmlFor="fiche-responsabilites"
+            hint="Une par ligne. Les grands domaines de responsabilité, pas le détail des tâches."
+          >
+            <textarea
+              id="fiche-responsabilites"
+              className="input"
+              rows={4}
+              value={responsabilites}
+              onChange={(e) => setResponsabilites(e.target.value)}
+            />
+          </Field>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Compétences techniques"
+              htmlFor="fiche-tech"
+              hint="Une par ligne."
+            >
+              <textarea
+                id="fiche-tech"
+                className="input"
+                rows={3}
+                value={techniques}
+                onChange={(e) => setTechniques(e.target.value)}
+              />
+            </Field>
+            <Field
+              label="Compétences comportementales"
+              htmlFor="fiche-comportementales"
+              hint="Une par ligne."
+            >
+              <textarea
+                id="fiche-comportementales"
+                className="input"
+                rows={3}
+                value={comportementales}
+                onChange={(e) => setComportementales(e.target.value)}
+              />
+            </Field>
+          </div>
+        </div>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
           <Toggle

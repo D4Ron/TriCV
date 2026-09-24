@@ -55,6 +55,8 @@ CHAMPS = (
     "annees_experience_specifique_min",
     "domaines_experience",
     "langues_requises",
+    "pieces_requises",
+    "pieces_facultatives",
 )
 
 _LISTES = frozenset(
@@ -66,8 +68,19 @@ _LISTES = frozenset(
         "domaines_acceptes",
         "domaines_experience",
         "langues_requises",
+        "pieces_requises",
+        "pieces_facultatives",
     }
 )
+# Ce que l'assistance a le droit de proposer : tout sauf les pièces.
+#
+# Le modèle rend des chaînes libres ; les pièces, elles, sont un vocabulaire
+# fermé. « Copie légalisée du diplôme » n'est pas un code, et enregistré comme
+# tel il exigerait un document que le portail ne sait pas demander — le
+# candidat le verrait manquant sans pouvoir le fournir. La trame les lit, ou
+# personne ne les lit.
+_CHAMPS_ASSISTES = tuple(c for c in CHAMPS if not c.startswith("pieces_"))
+
 _ENTIERS = frozenset(
     {
         "nombre_a_pourvoir",
@@ -153,6 +166,18 @@ def _rubrique(titre: str) -> str | None:
         return "profil"
     if "identification" in t or "description du poste" in t:
         return "identification"
+    # Les pièces closent presque toujours la fiche. Non reconnue, la rubrique
+    # ne fermait pas la précédente : « PIÈCES À FOURNIR » et sa liste venaient
+    # grossir les compétences comportementales, qui se retrouvaient à proposer
+    # « Une lettre de motivation » comme savoir-être.
+    if (
+        "piece" in t
+        or "dossier de candidature" in t
+        or "constitution du dossier" in t
+        or "composition du dossier" in t
+        or "document" in t
+    ):
+        return "pieces"
     return None
 
 
@@ -217,6 +242,67 @@ def _elements(lignes: list[str]) -> list[str]:
         if propre and propre not in vus:
             vus.append(propre)
     return vus
+
+
+# Ce qu'une ligne de la rubrique « pièces à fournir » désigne.
+#
+# La correspondance est volontairement fermée : le vocabulaire des pièces est
+# celui du produit (`PieceType`), pas celui de la fiche, et un code inventé
+# n'exigerait rien — il passerait en base pour une pièce que personne ne peut
+# déposer. Une ligne qu'on ne sait pas nommer est donc ignorée, et la relecture
+# du formulaire reste le dernier mot.
+_PIECES_CONNUES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("LETTRE_MOTIVATION", ("lettre de motivation", "lettre de candidature", "demande manuscrite")),
+    ("CV", ("curriculum", "cv detaille", "cv actualise", "cv a jour")),
+    ("COPIE_DIPLOMES", ("diplome", "parchemin")),
+    (
+        "ATTESTATIONS_TRAVAIL",
+        (
+            "attestation de travail",
+            "attestations de travail",
+            "certificat de travail",
+            "certificats de travail",
+            "attestation d'emploi",
+            "attestation de service",
+            "attestations de service",
+        ),
+    ),
+    (
+        "PIECE_IDENTITE",
+        ("carte nationale", "carte d'identite", "piece d'identite", "cnib"),
+    ),
+    ("PASSEPORT", ("passeport",)),
+    ("CERTIFICAT_NATIONALITE", ("certificat de nationalite", "preuve de nationalite")),
+    ("LETTRE_RECOMMANDATION", ("recommandation", "reference professionnelle")),
+)
+
+# « CV » seul, en capitales ou non, mais pas le « cv » d'un autre mot.
+_CV_SEUL = re.compile(r"\bcv\b", re.I)
+# « (facultatif) », « le cas échéant », « optionnel » : la pièce est acceptée,
+# son absence n'élimine pas. La distinction n'est pas cosmétique — elle décide
+# qui reste dans la sélection.
+_FACULTATIF = ("facultat", "optionnel", "le cas echeant", "si disponible", "eventuel")
+
+
+def _pieces(lignes: list[str]) -> dict[str, object]:
+    """Les pièces citées par la fiche, réparties entre exigées et facultatives."""
+    requises: list[str] = []
+    facultatives: list[str] = []
+    for ligne in lignes:
+        cle = _sans_accents(_nettoyer_element(ligne))
+        if not cle:
+            continue
+        ou = facultatives if any(m in cle for m in _FACULTATIF) else requises
+        for code, mots in _PIECES_CONNUES:
+            reconnue = any(m in cle for m in mots) or (code == "CV" and _CV_SEUL.search(cle))
+            if reconnue and code not in requises and code not in facultatives:
+                ou.append(code)
+    trouve: dict[str, object] = {}
+    if requises:
+        trouve["pieces_requises"] = requises
+    if facultatives:
+        trouve["pieces_facultatives"] = facultatives
+    return trouve
 
 
 # Les étiquettes « clé : valeur » de la rubrique d'identification.
@@ -316,14 +402,21 @@ _NIVEAUX_NOMMES = (
     ("dut", 2),
 )
 _BAC_PLUS = re.compile(r"bac\s*\+\s*(\d)", re.I)
+# Le chiffre en toutes lettres suivi du nombre entre parenthèses est la forme
+# courante des avis de la sous-région : « huit (08) années d'expérience ». Sans
+# la parenthèse fermante, le motif butait dessus et la trame ne lisait aucune
+# durée — l'assistance rattrapait, mais elle n'est ni obligatoire ni gratuite.
+_UNITE_ANNEES = r"\(?\s*(\d{1,2})\s*\)?\s*(?:ans|annees|annee)"
 # « Minimum 10 années d'expérience », « 7 ans d'expérience professionnelle »
-_ANNEES_GENERALES = re.compile(
-    r"(\d{1,2})\s*(?:ans|annees)\s+(?:d['’]\s*)?experience", re.I
-)
+_ANNEES_GENERALES = re.compile(_UNITE_ANNEES + r"\s+(?:d['’]\s*)?experience", re.I)
 # « Au moins 5 ans à un poste de management dans les secteurs : … »
 _ANNEES_SPECIFIQUES = re.compile(
-    r"(?:dont|au\s+moins|au\s+minimum|minimum)\s+(\d{1,2})\s*(?:ans|annees)\s+"
-    r"(?:a|au|aux|dans|en|sur)\s+(.+)",
+    r"(?:dont|au\s+moins|au\s+minimum|minimum)\s+(?:[a-z]+\s+)?"
+    + _UNITE_ANNEES
+    # « cinq (05) années **au moins** dans… » : la précision se glisse entre la
+    # durée et son domaine, et elle ne doit pas rompre la lecture.
+    + r"(?:\s+(?:au\s+moins|au\s+minimum|minimum))?"
+    + r"\s+(?:a|au|aux|dans|en|sur)\s+(.+)",
     re.I,
 )
 
@@ -339,6 +432,37 @@ def _liste_apres_deux_points(lignes: list[str], depart: int) -> list[str]:
             break
         elements.append(ligne)
     return _elements(elements)
+
+
+# « une fonction comptable », « la passation des marchés » : l'article ouvre la
+# tournure, il n'appartient pas au domaine.
+# `\b` n'est pas décoratif : l'alternance est ordonnée, et sans lui « un »
+# l'emportait sur « une » — « une fonction comptable » devenait « e fonction
+# comptable », proposé tel quel comme domaine d'expérience.
+_ARTICLE = re.compile(
+    r"^(?:(?:un|une|des|du|de\s+la|de|le|la|les)\b\s*|l['’]\s*)", re.I
+)
+
+
+def _domaines_de(ligne: str, cle: str, trouvee: re.Match[str]) -> list[str]:
+    """Le domaine d'une expérience spécifique énoncée sans deux-points.
+
+    « dont cinq (05) années au moins dans une fonction comptable en entreprise
+    industrielle » nomme son domaine dans la phrase. Le motif le capturait déjà
+    et personne ne le lisait : la trame ne rendait un domaine que devant un
+    deux-points, si bien que la tournure la plus courante des fiches livrait la
+    durée sans ce à quoi elle s'applique.
+
+    La capture porte sur `cle`, qui est `ligne` sans accents ni capitales. Le
+    domaine doit être rendu tel qu'écrit, donc on reprend la fin de `ligne` —
+    et seulement si les deux chaînes ont la même longueur, faute de quoi la
+    correspondance des positions n'est pas garantie (« œ » devient « oe »).
+    """
+    queue = trouvee.group(2)
+    if len(cle) == len(ligne):
+        queue = ligne[len(ligne) - len(queue) :]
+    morceaux = [_ARTICLE.sub("", d.strip(" .")).strip(" .") for d in re.split(r",|;", queue)]
+    return [d for d in morceaux if len(d) > 2]
 
 
 def _profil(lignes: list[str]) -> dict[str, object]:
@@ -379,12 +503,24 @@ def _profil(lignes: list[str]) -> dict[str, object]:
         # portent sur un domaine ou une fonction.
         specifique = _ANNEES_SPECIFIQUES.search(cle)
         if specifique and "annees_experience_specifique_min" not in trouve:
+            # « Minimum 10 années d'expérience, dont 5 ans en passation » énonce
+            # les deux exigences d'un trait. Passer à la ligne suivante après
+            # avoir lu la spécifique perdait la générale — et une fiche qui
+            # demande dix ans se retrouvait à n'en demander aucun. La générale
+            # se cherche donc en amont de la spécifique, jamais dedans : sans
+            # cette découpe, « dont 5 ans » fournirait les deux valeurs.
+            if "annees_experience_min" not in trouve:
+                amont = _ANNEES_GENERALES.search(cle[: specifique.start()])
+                if amont:
+                    trouve["annees_experience_min"] = int(amont.group(1))
             trouve["annees_experience_specifique_min"] = int(specifique.group(1))
             if ligne.rstrip().endswith(":"):
                 domaines = _liste_apres_deux_points(lignes, index)
-            else:
-                queue = ligne.split(":", 1)[1] if ":" in ligne else ""
+            elif ":" in ligne:
+                queue = ligne.split(":", 1)[1]
                 domaines = [d.strip(" .") for d in re.split(r",|;", queue) if d.strip(" .")]
+            else:
+                domaines = _domaines_de(ligne, cle, specifique)
             if domaines:
                 trouve["domaines_experience"] = domaines
             continue
@@ -429,6 +565,8 @@ def lire_trame(texte: str) -> dict[str, object]:
         )
     if rubriques.get("profil"):
         trouve.update(_profil(rubriques["profil"]))
+    if rubriques.get("pieces"):
+        trouve.update(_pieces(rubriques["pieces"]))
 
     # Rien de vide : une clé présente veut dire « trouvé ». Un entier, même
     # nul, est une valeur lue — « 0 an d'expérience » n'est pas une absence.
@@ -496,7 +634,7 @@ async def _assistance(texte: str) -> dict[str, object]:
     if not isinstance(charge, dict):
         return {}
     propose: dict[str, object] = {}
-    for champ in CHAMPS:
+    for champ in _CHAMPS_ASSISTES:
         valeur = _normaliser(champ, charge.get(champ))
         if valeur not in (None, "", []):
             propose[champ] = valeur
@@ -518,7 +656,7 @@ async def proposer(texte: str, *, avec_assistance: bool = True) -> Proposition:
         proposition.origines[champ] = "document"
 
     if avec_assistance:
-        manquants = [c for c in CHAMPS if c not in proposition.valeurs]
+        manquants = [c for c in _CHAMPS_ASSISTES if c not in proposition.valeurs]
         if manquants:
             for champ, valeur in (await _assistance(texte)).items():
                 if champ not in proposition.valeurs:

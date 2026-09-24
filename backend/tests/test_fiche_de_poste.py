@@ -95,6 +95,72 @@ def test_la_trame_livre_chaque_rubrique_telle_qu_ecrite():
     assert lu["competences_comportementales"] == ["Rigueur", "Discrétion"]
 
 
+def test_les_pieces_a_fournir_ferment_la_rubrique_precedente():
+    """Sans rubrique « pièces », leur liste grossissait les savoir-être.
+
+    La fiche qui finit par « PIÈCES À FOURNIR / Une lettre de motivation / Un
+    CV détaillé » les voyait proposées comme compétences comportementales — et
+    enregistrées telles quelles par qui ne relisait pas la fenêtre.
+    """
+    lu = fiche_poste.lire_trame(
+        "Intitulé du poste : Comptable\n"
+        "COMPÉTENCES COMPORTEMENTALES\n"
+        "Rigueur\n"
+        "Discrétion professionnelle\n"
+        "PIÈCES À FOURNIR\n"
+        "Une lettre de motivation\n"
+        "Un CV détaillé\n"
+        "Les copies des diplômes\n"
+        "Les attestations de travail\n"
+        "Une lettre de recommandation (facultatif)\n"
+    )
+    assert lu["competences_comportementales"] == ["Rigueur", "Discrétion professionnelle"]
+    assert lu["pieces_requises"] == [
+        "LETTRE_MOTIVATION",
+        "CV",
+        "COPIE_DIPLOMES",
+        "ATTESTATIONS_TRAVAIL",
+    ]
+    assert lu["pieces_facultatives"] == ["LETTRE_RECOMMANDATION"]
+
+
+def test_une_piece_hors_nomenclature_est_ignoree():
+    """Le vocabulaire des pièces est fermé : un code inventé n'exigerait rien."""
+    lu = fiche_poste.lire_trame(
+        "Intitulé du poste : Comptable\n"
+        "DOSSIER DE CANDIDATURE\n"
+        "Un CV\n"
+        "Une fiche de renseignements du candidat\n"
+        "Trois photos d'identité\n"
+    )
+    assert lu["pieces_requises"] == ["CV"]
+    assert "pieces_facultatives" not in lu
+
+
+def test_le_nombre_entre_parentheses_se_lit_comme_une_duree():
+    """« huit (08) années » est la forme courante des avis de la sous-région."""
+    lu = fiche_poste.lire_trame(
+        "Profil requis\n"
+        "Justifier d'au moins huit (08) années d'expérience professionnelle, dont "
+        "cinq (05) années au moins dans une fonction comptable en entreprise "
+        "industrielle.\n"
+    )
+    assert lu["annees_experience_min"] == 8
+    assert lu["annees_experience_specifique_min"] == 5
+    assert lu["domaines_experience"] == ["fonction comptable en entreprise industrielle"]
+
+
+def test_les_deux_durees_d_une_meme_phrase_se_lisent_toutes_les_deux():
+    """« 10 ans, dont 5 en X » : lire la spécifique ne doit pas perdre la générale."""
+    lu = fiche_poste.lire_trame(
+        "Profil requis\n"
+        "Minimum 10 années d'expérience, dont 5 ans dans la passation des marchés\n"
+    )
+    assert lu["annees_experience_min"] == 10
+    assert lu["annees_experience_specifique_min"] == 5
+    assert lu["domaines_experience"] == ["passation des marchés"]
+
+
 def test_les_responsabilites_groupees_se_resument_a_leurs_intitules():
     """Quarante lignes ne se publient pas : les intitulés lettrés suffisent."""
     lu = fiche_poste.lire_trame(FICHE)

@@ -1,7 +1,7 @@
-﻿import { useState } from 'react'
+﻿import { useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { rapportsApi, recrutementApi } from '@/lib/api'
+import { fichesApi, rapportsApi, recrutementApi } from '@/lib/api'
 import {
   Callout,
   CopyField,
@@ -21,7 +21,7 @@ import ChoisirDestinataires from '@/components/ChoisirDestinataires'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
 import FichePosteEditeur from '@/components/FichePosteEditeur'
 import GrilleEntretienEditeur from '@/components/GrilleEntretienEditeur'
-import type { Avis, LigneGrille, Poste } from '@/types'
+import type { Avis, LigneGrille, Poste, PropositionFiche } from '@/types'
 import { NIVEAUX, libelleNiveau } from '@/lib/niveaux'
 
 type Onglet = 'preselection' | 'sous_seuil' | 'elimination' | 'a_verifier'
@@ -111,6 +111,12 @@ function FichePoste({ poste }: { poste: Poste }) {
     ['Postes à pourvoir', String(poste.nombre_a_pourvoir)],
   ]
 
+  // Le lieu et le rattachement ne notent personne : ils décrivent le poste, et
+  // ils paraissent dans l'avis. Ils viennent de la fiche du client, alors ils
+  // s'affichent là où on relit la fiche — pas ailleurs.
+  if (poste.localisation) lignes.splice(1, 0, ['Lieu d’affectation', poste.localisation])
+  if (poste.rattachement) lignes.splice(1, 0, ['Rattachement', poste.rattachement])
+
   if (poste.formation_complementaire_souhaitee) {
     lignes.splice(2, 0, [
       'Formation complémentaire souhaitée',
@@ -151,7 +157,247 @@ function FichePoste({ poste }: { poste: Poste }) {
           </div>
         ))}
       </dl>
+      <Liste titre="Responsabilités" valeurs={poste.responsabilites} />
+      <Liste titre="Compétences techniques" valeurs={poste.competences_techniques} />
+      <Liste
+        titre="Compétences comportementales"
+        valeurs={poste.competences_comportementales}
+      />
     </section>
+  )
+}
+
+/**
+ * Une liste de la fiche, repliée si elle est longue.
+ *
+ * Une fiche de poste énumère volontiers douze responsabilités ; déroulées, elles
+ * repoussent la grille des candidats sous la ligne de flottaison. Les trois
+ * premières suffisent à reconnaître le poste, le reste se déplie.
+ */
+function Liste({ titre, valeurs }: { titre: string; valeurs: string[] }) {
+  const [tout, setTout] = useState(false)
+  if (!valeurs.length) return null
+  const visibles = tout ? valeurs : valeurs.slice(0, 3)
+  const reste = valeurs.length - 3
+  return (
+    <div className="mt-3 border-t border-ink-100 pt-3">
+      <p className="text-xs text-ink-500">{titre}</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-4 text-sm text-ink-800">
+        {visibles.map((v, i) => (
+          <li key={`${v}-${i}`}>{v}</li>
+        ))}
+      </ul>
+      {valeurs.length > 3 && (
+        <button
+          type="button"
+          className="mt-1 text-xs font-medium text-ink-500 underline"
+          onClick={() => setTout(!tout)}
+        >
+          {tout ? 'Replier' : reste === 1 ? 'Voir la dernière' : `Voir les ${reste} autres`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Le document que le client a transmis.
+ *
+ * La fiche de poste est une pièce du dossier, pas une saisie : c'est elle qu'on
+ * ressort quand un candidat conteste une exigence, et c'est sur son texte que
+ * l'avis se rédige. Elle restait pourtant invisible une fois déposée — on
+ * pouvait la joindre et ne plus jamais savoir laquelle était jointe.
+ *
+ * Joindre une fiche à un poste déjà ouvert pose une question de plus :
+ * faut-il en reprendre les exigences ? Le document seul ne change rien à la
+ * notation — et c'est parfois exactement ce qu'on veut, quand la fiche arrive
+ * après que les exigences ont été négociées. La case le demande, et la
+ * relecture se fait dans le formulaire, pas à l'insu de qui la coche.
+ */
+function DocumentFiche({
+  poste,
+  onProposition,
+  onCompteRendu,
+  onErreur,
+}: {
+  poste: Poste
+  onProposition: (proposition: PropositionFiche | null) => void
+  onCompteRendu: (message: string) => void
+  onErreur: (message: string) => void
+}) {
+  const queryClient = useQueryClient()
+  const [collage, setCollage] = useState(false)
+  const [texte, setTexte] = useState('')
+  const [reprendre, setReprendre] = useState(!poste.fiche_a_texte)
+  const fichierRef = useRef<HTMLInputElement>(null)
+
+  const rafraichir = () => {
+    void queryClient.invalidateQueries({ queryKey: ['poste', poste.id] })
+  }
+
+  const joindre = useMutation({
+    mutationFn: (source: { fichier?: File; texte?: string }) =>
+      fichesApi.joindre(poste.id, source, { proposer: reprendre }),
+    onSuccess: (r) => {
+      rafraichir()
+      setCollage(false)
+      setTexte('')
+      if (r.proposition) onProposition(r.proposition)
+      else onCompteRendu('Fiche jointe au poste.')
+    },
+    onError: (e) => onErreur(e instanceof Error ? e.message : "La fiche n'a pas pu être jointe"),
+  })
+
+  const retirer = useMutation({
+    mutationFn: () => fichesApi.retirer(poste.id),
+    onSuccess: () => {
+      rafraichir()
+      onCompteRendu('Fiche retirée. Les exigences du poste, elles, restent en place.')
+    },
+    onError: (e) => onErreur(e instanceof Error ? e.message : 'Le retrait a échoué'),
+  })
+
+  const ouvrir = useMutation({
+    mutationFn: () => fichesApi.telecharger(poste.id, poste.fiche_nom_fichier),
+    onError: (e) => onErreur(e instanceof Error ? e.message : "L'ouverture a échoué"),
+  })
+
+  const occupe = joindre.isPending || retirer.isPending || ouvrir.isPending
+  const jointe = Boolean(poste.fiche_nom_fichier) || poste.fiche_a_texte
+
+  return (
+    <section className="card p-4">
+      <h2 className="mb-3 text-sm font-semibold text-ink-900">Document de la fiche</h2>
+
+      {!jointe && (
+        <p className="text-sm text-ink-600">
+          Aucune fiche n’est jointe. L’avis se rédige alors sur les seules exigences saisies,
+          sans le texte du client.
+        </p>
+      )}
+
+      {jointe && (
+        <div className="text-sm text-ink-800">
+          <p className="font-medium">
+            {poste.fiche_nom_fichier ?? 'Texte collé, sans document'}
+          </p>
+          <p className="mt-0.5 text-xs text-ink-500">
+            {poste.fiche_deposee_le
+              ? `Déposée le ${new Date(poste.fiche_deposee_le).toLocaleDateString('fr-FR')}`
+              : 'Date de dépôt inconnue'}
+            {poste.fiche_a_texte
+              ? ' · texte relevé, la rédaction d’un avis peut s’y appuyer'
+              : ' · texte non relevé : l’avis ne pourra pas s’y appuyer'}
+          </p>
+        </div>
+      )}
+
+      {collage ? (
+        <div className="mt-3 space-y-2">
+          <textarea
+            className="input font-mono text-xs"
+            rows={8}
+            value={texte}
+            onChange={(e) => setTexte(e.target.value)}
+            placeholder="Collez ici le texte de la fiche de poste…"
+          />
+          <Reprise valeur={reprendre} onChange={setReprendre} />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="btn-primary px-3 py-1.5 text-xs"
+              disabled={occupe || texte.trim().length < 40}
+              onClick={() => joindre.mutate({ texte: texte.trim() })}
+            >
+              {joindre.isPending && <Spinner />}
+              Joindre ce texte
+            </button>
+            <button
+              type="button"
+              className="btn-ghost px-3 py-1.5 text-xs"
+              onClick={() => setCollage(false)}
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {poste.fiche_nom_fichier && (
+              <button
+                type="button"
+                className="btn-ghost px-3 py-1.5 text-xs"
+                disabled={occupe}
+                onClick={() => ouvrir.mutate()}
+              >
+                {ouvrir.isPending && <Spinner />}
+                Ouvrir le document
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-ghost px-3 py-1.5 text-xs"
+              disabled={occupe}
+              onClick={() => fichierRef.current?.click()}
+            >
+              {jointe ? 'Remplacer par un document' : 'Joindre un document'}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost px-3 py-1.5 text-xs"
+              disabled={occupe}
+              onClick={() => setCollage(true)}
+            >
+              {jointe ? 'Remplacer par du texte' : 'Coller le texte'}
+            </button>
+            {jointe && (
+              <button
+                type="button"
+                className="btn-ghost px-3 py-1.5 text-xs text-red-700"
+                disabled={occupe}
+                onClick={() => retirer.mutate()}
+              >
+                {retirer.isPending && <Spinner />}
+                Retirer
+              </button>
+            )}
+          </div>
+          <div className="mt-2">
+            <Reprise valeur={reprendre} onChange={setReprendre} />
+          </div>
+        </>
+      )}
+
+      <input
+        ref={fichierRef}
+        type="file"
+        accept=".pdf,.docx"
+        className="hidden"
+        onChange={(e) => {
+          const fichier = e.target.files?.[0]
+          if (fichier) joindre.mutate({ fichier })
+          e.target.value = ''
+        }}
+      />
+    </section>
+  )
+}
+
+function Reprise({ valeur, onChange }: { valeur: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2 text-xs text-ink-600">
+      <input
+        type="checkbox"
+        className="mt-0.5"
+        checked={valeur}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span>
+        Relire les exigences d’après ce document — le formulaire s’ouvrira prérempli. Décoché,
+        le document est simplement conservé et les exigences actuelles ne bougent pas.
+      </span>
+    </label>
   )
 }
 
@@ -923,6 +1169,9 @@ export default function PosteDetailPage() {
   // Quel document tableur exporter : le choix se fait avant, pas après.
   const [choixExport, setChoixExport] = useState(false)
   const [ficheOuverte, setFicheOuverte] = useState(false)
+  // Ce qu'une fiche jointe propose. Non nul = le formulaire s'ouvre dessus ;
+  // rien n'est enregistré tant que personne n'a relu.
+  const [proposition, setProposition] = useState<PropositionFiche | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
   // Ce qu'une action menée dans une fenêtre laisse derrière elle : un dossier
   // supprimé, une fiche modifiée. La fenêtre se referme et les compteurs de la
@@ -1095,8 +1344,47 @@ export default function PosteDetailPage() {
         </div>
       )}
 
-      <div className="mb-5 grid gap-4 lg:grid-cols-2">
-        <FichePoste poste={p} />
+      {p.a_completer && (
+        <div className="mb-5">
+          <Callout tone="warning">
+            <b>Fiche à compléter.</b> Ce poste a été créé avec son seul intitulé : ses exigences
+            — diplôme, années, domaines, pièces — sont des valeurs par défaut que personne n’a
+            posées.{' '}
+            {g.nombre_candidatures > 0
+              ? `Les ${g.nombre_candidatures} dossier(s) déjà déposés ont été notés dessus et seront réévalués.`
+              : 'Aucun avis ne peut être publié tant que c’est le cas.'}{' '}
+            <button
+              type="button"
+              className="font-medium underline"
+              onClick={() => setFicheOuverte(true)}
+            >
+              Compléter la fiche
+            </button>
+          </Callout>
+        </div>
+      )}
+
+      <div className="mb-5 grid items-start gap-4 lg:grid-cols-2">
+        <div className="space-y-4">
+          <FichePoste poste={p} />
+          <DocumentFiche
+            poste={p}
+            onProposition={(prop) => {
+              setErreur(null)
+              setCompteRendu(
+                'Fiche jointe. Relisez ce qui en a été lu avant d’enregistrer — une valeur ' +
+                  'mal lue deviendrait une exigence réelle.',
+              )
+              setProposition(prop)
+              setFicheOuverte(true)
+            }}
+            onCompteRendu={(m) => {
+              setErreur(null)
+              setCompteRendu(m)
+            }}
+            onErreur={setErreur}
+          />
+        </div>
         <PanneauAvis posteId={posteId} poste={p} />
       </div>
 
@@ -1306,7 +1594,11 @@ export default function PosteDetailPage() {
       {ficheOuverte && (
         <FichePosteEditeur
           poste={p}
-          onClose={() => setFicheOuverte(false)}
+          proposition={proposition}
+          onClose={() => {
+            setFicheOuverte(false)
+            setProposition(null)
+          }}
           onEnregistre={(compteRendu) => {
             setErreur(null)
             setCompteRendu(compteRendu)

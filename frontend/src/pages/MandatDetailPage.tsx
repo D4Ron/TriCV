@@ -16,7 +16,12 @@ import ActionsMandat from '@/components/ActionsMandat'
 import PanneauEspaceClient from '@/components/PanneauEspaceClient'
 import PanneauRapports from '@/components/PanneauRapports'
 import { NIVEAUX } from '@/lib/niveaux'
-import { GROUPES_TYPES, PIECES_EXIGIBLES, enListe } from '@/lib/pieces'
+import { enListe } from '@/lib/pieces'
+import PiecesDuDossier, {
+  CHOIX_PAR_DEFAUT,
+  piecesVers,
+  type ChoixPieces,
+} from '@/components/PiecesDuDossier'
 import DepartPoste, { type Depart } from '@/components/DepartPoste'
 
 
@@ -62,12 +67,9 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
   // expérience en passation de marchés. Le champ est désormais visible, et
   // vide il retombe sur l'ancien comportement.
   const [domainesExp, setDomainesExp] = useState('')
-  const [pieces, setPieces] = useState<string[]>(['LETTRE_MOTIVATION', 'CV'])
-  const [facultatives, setFacultatives] = useState<string[]>([])
-  const [groupes, setGroupes] = useState<number[]>([])
-  // Formats imposés, par code de pièce. Vide = tout format accepté.
-  const [pdfSeul, setPdfSeul] = useState<string[]>([])
-  const [libresAutorisees, setLibresAutorisees] = useState(true)
+  // Les pièces, leurs formats et leurs groupes : un seul objet, et le même
+  // bloc d'écran qu'à la modification de la fiche.
+  const [choixPieces, setChoixPieces] = useState<ChoixPieces>(CHOIX_PAR_DEFAUT)
   const [erreur, setErreur] = useState<string | null>(null)
 
   /**
@@ -87,7 +89,7 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
     setExperienceSpec(depuis(v, 'annees_experience_specifique_min', 3))
     setDomainesExp(depuis<string[]>(v, 'domaines_experience', []).join(', '))
     const lues = depuis<string[]>(v, 'pieces_requises', [])
-    if (lues.length) setPieces(lues)
+    if (lues.length) setChoixPieces((c) => ({ ...c, requises: lues }))
   }
 
   const creer = useMutation({
@@ -101,15 +103,7 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
         domaines_experience: enListe(domainesExp).length
           ? enListe(domainesExp)
           : enListe(domaines),
-        pieces_requises: pieces,
-        pieces_facultatives: facultatives,
-        groupes_pieces: groupes.map((i) => ({
-          codes: GROUPES_TYPES[i].codes,
-          mode: GROUPES_TYPES[i].mode,
-          libelle: GROUPES_TYPES[i].libelle,
-        })),
-        formats_pieces: Object.fromEntries(pdfSeul.map((code) => [code, ['pdf']])),
-        pieces_libres_autorisees: libresAutorisees,
+        ...piecesVers(choixPieces),
         langues_requises: ['français'],
         // Ce que la fiche apporte et que le formulaire ne demande pas : on le
         // transmet tel quel plutôt que de le perdre entre la lecture et
@@ -271,96 +265,7 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
           />
         </Field>
 
-        <Field
-          label="Pièces du dossier"
-          hint="Exigée : son absence élimine le dossier. Facultative : acceptée, jamais éliminatoire. Cochez « PDF » pour imposer ce format."
-        >
-          <div className="space-y-1.5">
-            {PIECES_EXIGIBLES.map(([code, libelle]) => {
-              const etat = pieces.includes(code)
-                ? 'exigee'
-                : facultatives.includes(code)
-                  ? 'facultative'
-                  : 'aucune'
-              return (
-                <div key={code} className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink-700">{libelle}</span>
-                  <label className="flex items-center gap-1 text-xs text-ink-500">
-                    <input
-                      type="checkbox"
-                      checked={pdfSeul.includes(code)}
-                      aria-label={`PDF exigé — ${libelle}`}
-                      onChange={(e) =>
-                        setPdfSeul((a) =>
-                          e.target.checked ? [...a, code] : a.filter((c) => c !== code),
-                        )
-                      }
-                    />
-                    PDF
-                  </label>
-                  <select
-                    className="input w-auto py-1 text-xs"
-                    value={etat}
-                    aria-label={libelle}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      setPieces((a) => (v === 'exigee' ? [...a, code] : a.filter((c) => c !== code)))
-                      setFacultatives((a) =>
-                        v === 'facultative' ? [...a, code] : a.filter((c) => c !== code),
-                      )
-                    }}
-                  >
-                    <option value="aucune">Non demandée</option>
-                    <option value="exigee">Exigée</option>
-                    <option value="facultative">Facultative</option>
-                  </select>
-                </div>
-              )
-            })}
-          </div>
-        </Field>
-
-        <Field
-          label="Pièces liées"
-          hint="Ce que « exigée / facultative » ne sait pas dire : un choix entre deux documents, ou deux documents indissociables."
-        >
-          <div className="space-y-1.5">
-            {GROUPES_TYPES.map((groupe, index) => (
-              <label key={groupe.libelle} className="flex items-start gap-2 text-sm text-ink-700">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={groupes.includes(index)}
-                  onChange={(e) =>
-                    setGroupes((a) =>
-                      e.target.checked ? [...a, index] : a.filter((i) => i !== index),
-                    )
-                  }
-                />
-                <span>
-                  {groupe.libelle}
-                  <span className="block text-xs text-ink-500">{groupe.aide}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        </Field>
-
-        <label className="flex items-start gap-2 text-sm text-ink-700">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={libresAutorisees}
-            onChange={(e) => setLibresAutorisees(e.target.checked)}
-          />
-          <span>
-            Autoriser les documents libres
-            <span className="block text-xs text-ink-500">
-              Le candidat peut joindre ce qu'il juge utile — lettre de recommandation,
-              attestation — en le nommant lui-même.
-            </span>
-          </span>
-        </label>
+        <PiecesDuDossier valeur={choixPieces} onChange={setChoixPieces} />
 
         {erreur && (
           <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
