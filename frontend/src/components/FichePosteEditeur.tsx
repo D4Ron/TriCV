@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi } from '@/lib/api'
 import { Callout, Field, Modal, Spinner, Toggle } from '@/components/ui'
 import type { ExperienceSpecifique, Poste } from '@/types'
+import { NIVEAUX } from '@/lib/niveaux'
 
 /**
  * Modifier la fiche de poste après sa création.
@@ -29,14 +30,6 @@ import type { ExperienceSpecifique, Poste } from '@/types'
  *   et c'est la grille que le client relit.
  */
 
-const NIVEAUX: Array<[number, string]> = [
-  [0, 'BAC'],
-  [2, 'BAC+2 (DUT, BTS)'],
-  [3, 'BAC+3 (Licence)'],
-  [4, 'BAC+4 (Maîtrise, Master 1)'],
-  [5, 'BAC+5 (Master, Ingénieur)'],
-  [8, 'BAC+8 (Doctorat)'],
-]
 
 const enListe = (valeur: string) =>
   valeur
@@ -253,7 +246,7 @@ export default function FichePosteEditeur({
             value={niveau}
             onChange={(e) => setNiveau(Number(e.target.value))}
           >
-            {NIVEAUX.map(([valeur, libelle]) => (
+            {NIVEAUX.map(({ valeur, libelle }) => (
               <option key={valeur} value={valeur}>
                 {libelle}
               </option>

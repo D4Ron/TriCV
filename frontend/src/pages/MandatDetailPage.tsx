@@ -15,15 +15,8 @@ import {
 import ActionsMandat from '@/components/ActionsMandat'
 import PanneauEspaceClient from '@/components/PanneauEspaceClient'
 import PanneauRapports from '@/components/PanneauRapports'
+import { NIVEAUX } from '@/lib/niveaux'
 
-const NIVEAUX = [
-  [0, 'BAC'],
-  [2, 'BAC+2 (DUT, BTS)'],
-  [3, 'BAC+3 (Licence)'],
-  [4, 'BAC+4 (Maîtrise, Master 1)'],
-  [5, 'BAC+5 (Master, Ingénieur)'],
-  [8, 'BAC+8 (Doctorat)'],
-] as const
 
 const PIECES = [
   ['LETTRE_MOTIVATION', 'Lettre de motivation'],
@@ -137,7 +130,7 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
             value={niveau}
             onChange={(e) => setNiveau(Number(e.target.value))}
           >
-            {NIVEAUX.map(([valeur, libelle]) => (
+            {NIVEAUX.map(({ valeur, libelle }) => (
               <option key={valeur} value={valeur}>
                 {libelle}
               </option>

@@ -14,6 +14,7 @@ import {
   delaiListe,
 } from '@/components/ui'
 import { formatDate } from '@/lib/format'
+import { NIVEAUX } from '@/lib/niveaux'
 
 /**
  * Le vivier : les profils déjà passés par le cabinet.
@@ -32,14 +33,6 @@ import { formatDate } from '@/lib/format'
  *   est là.
  */
 
-const NIVEAUX: Array<[number, string]> = [
-  [0, 'BAC'],
-  [2, 'BAC+2'],
-  [3, 'BAC+3 (licence)'],
-  [4, 'BAC+4'],
-  [5, 'BAC+5 (master)'],
-  [8, 'BAC+8 (doctorat)'],
-]
 
 function mentionProvenance(item: { provenance: string; verifie: boolean }) {
   if (item.verifie || item.provenance === 'VERIFIE_RH') {
@@ -317,7 +310,7 @@ export default function VivierPage() {
                 onChange={(e) => modifier('niveau_min', e.target.value)}
               >
                 <option value="">Indifférent</option>
-                {NIVEAUX.map(([valeur, libelle]) => (
+                {NIVEAUX.map(({ valeur, libelle }) => (
                   <option key={valeur} value={valeur}>
                     {libelle}
                   </option>

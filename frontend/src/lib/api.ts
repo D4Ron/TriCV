@@ -27,6 +27,7 @@ import type {
 } from '@/types'
 
 import { API_BASE as BASE, API_URL } from '@/lib/config'
+import { NIVEAUX } from '@/lib/niveaux'
 
 export { API_URL }
 
@@ -909,15 +910,15 @@ export interface ParcoursDeclare {
 }
 
 /** L'échelle BAC+N du référentiel, telle que le candidat la choisit. */
-export const NIVEAUX_DIPLOME: Array<{ valeur: number; libelle: string }> = [
-  { valeur: 0, libelle: 'Baccalauréat' },
-  { valeur: 1, libelle: 'BAC+1' },
-  { valeur: 2, libelle: 'BAC+2 — BTS, DUT, DEUG' },
-  { valeur: 3, libelle: 'BAC+3 — Licence, Bachelor' },
-  { valeur: 4, libelle: 'BAC+4 — Maîtrise, Master 1' },
-  { valeur: 5, libelle: 'BAC+5 — Master, Ingénieur, DEA, DESS' },
-  { valeur: 8, libelle: 'Doctorat, PhD' },
-]
+/**
+ * L'échelle des diplômes, pour le formulaire du candidat.
+ *
+ * Elle vit désormais dans `lib/niveaux` avec les autres : quatre écrans en
+ * gardaient chacun leur copie, et les copies avaient fini par diverger.
+ * Conservée ici sous son nom d'origine pour ne pas toucher aux appelants.
+ */
+export const NIVEAUX_DIPLOME: Array<{ valeur: number; libelle: string }> =
+  NIVEAUX.map(({ valeur, detaille }) => ({ valeur, libelle: detaille }))
 
 export interface AvisPublic extends AvisPublicItem {
   description: string | null

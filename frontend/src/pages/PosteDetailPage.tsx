@@ -22,18 +22,10 @@ import ChoisirExportGrille from '@/components/ChoisirExportGrille'
 import FichePosteEditeur from '@/components/FichePosteEditeur'
 import GrilleEntretienEditeur from '@/components/GrilleEntretienEditeur'
 import type { Avis, LigneGrille, Poste } from '@/types'
+import { NIVEAUX, libelleNiveau } from '@/lib/niveaux'
 
 type Onglet = 'preselection' | 'sous_seuil' | 'elimination' | 'a_verifier'
 
-const NIVEAUX: Record<number, string> = {
-  0: 'BAC',
-  1: 'BAC+1',
-  2: 'BAC+2',
-  3: 'BAC+3 (Licence)',
-  4: 'BAC+4 (Maîtrise, Master 1)',
-  5: 'BAC+5 (Master, Ingénieur)',
-  8: 'BAC+8 (Doctorat)',
-}
 
 const LIBELLE_TYPE_AVIS: Record<string, string> = {
   NATIONAL: 'Avis national',
@@ -79,7 +71,7 @@ function Statistique({
 /** Le rappel des exigences : c'est la fiche de poste, pas l'avis publié. */
 function FichePoste({ poste }: { poste: Poste }) {
   const lignes: Array<[string, string]> = [
-    ['Diplôme exigé', NIVEAUX[poste.niveau_min] ?? `BAC+${poste.niveau_min}`],
+    ['Diplôme exigé', libelleNiveau(poste.niveau_min)],
     [
       'Domaines acceptés',
       poste.domaines_acceptes.length ? poste.domaines_acceptes.join(', ') : 'tous',
@@ -584,7 +576,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
                 value={niveau}
                 onChange={(e) => setNiveau(Number(e.target.value))}
               >
-                {Object.entries(NIVEAUX).map(([valeur, libelle]) => (
+                {NIVEAUX.map(({ valeur, libelle }) => (
                   <option key={valeur} value={valeur}>
                     {libelle}
                   </option>
