@@ -922,6 +922,8 @@ export interface AvisPublicItem {
   cle_publique: string
   intitule: string
   departement: string | null
+  /** Le lieu d'affectation : la première question que pose un candidat. */
+  localisation: string | null
   type_avis: string
   date_cloture: string | null
   publie_le: string | null
@@ -976,6 +978,14 @@ export const NIVEAUX_DIPLOME: Array<{ valeur: number; libelle: string }> =
 
 export interface AvisPublic extends AvisPublicItem {
   description: string | null
+  /** La référence à recopier dans l'objet du courriel. */
+  reference: string | null
+  rattachement: string | null
+  responsabilites: string[]
+  competences_techniques: string[]
+  competences_comportementales: string[]
+  /** L'adresse à qui écrire en cas de difficulté. Null = celle du cabinet. */
+  contact: string | null
   missions: string[]
   profil: string[]
   /** Conditions éliminatoires, dites avant le dépôt. */
@@ -1000,6 +1010,14 @@ export interface AvisPublic extends AvisPublicItem {
 export const avisPublicApi = {
   ouverts: () => request<AvisPublicItem[]>('/public/avis', { auth: false }),
   detail: (cle: string) => request<AvisPublic>(`/public/avis/${cle}`, { auth: false }),
+  /**
+   * L'adresse à qui un candidat écrit quand quelque chose ne marche pas.
+   *
+   * Elle était écrite en dur dans le pied de page — celle du cabinet, pas celle
+   * du recrutement — et un candidat bloqué écrivait donc à personne. Elle se
+   * règle désormais dans les paramètres, et la page d'aide la lit ici.
+   */
+  aide: () => request<{ contact: string | null }>('/public/aide', { auth: false }),
   candidater: (
     cle: string,
     payload: {

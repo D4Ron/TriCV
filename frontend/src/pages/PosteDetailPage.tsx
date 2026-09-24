@@ -402,6 +402,46 @@ function Reprise({ valeur, onChange }: { valeur: boolean; onChange: (v: boolean)
 }
 
 /**
+ * Une référence d'avis proposée d'après l'intitulé du poste.
+ *
+ * La référence n'est pas décorative : c'est elle que le candidat recopie dans
+ * l'objet de son courriel, et c'est sur elle que la boîte range les dossiers.
+ * Laissée vide — ce qu'elle était par défaut — les candidatures arrivaient sans
+ * poste, à trier à la main. Proposer « CC-2026-01 » plutôt que rien coûte un
+ * coup d'œil et évite ce tri.
+ *
+ * La proposition reste modifiable : le cabinet a parfois sa propre
+ * nomenclature, et celle du client l'emporte toujours.
+ */
+const _MOTS_VIDES = new Set([
+  'de', 'du', 'des', 'la', 'le', 'les', 'et', 'en', 'a', 'au', 'aux', 'pour',
+  'sur', 'd', 'l', 'un', 'une',
+])
+
+function sigle(intitule: string): string {
+  const mots = intitule
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/[^A-Za-z0-9]+/)
+    .filter((m) => m && !_MOTS_VIDES.has(m.toLowerCase()))
+  const lettres = mots
+    .slice(0, 4)
+    .map((m) => m[0].toUpperCase())
+    .join('')
+  return lettres || 'AVIS'
+}
+
+function referenceSuggeree(intitule: string, prises: Array<string | null>): string {
+  const base = `${sigle(intitule)}-${new Date().getFullYear()}`
+  const occupees = new Set(prises.filter(Boolean).map((r) => r!.trim().toUpperCase()))
+  for (let n = 1; n <= 99; n += 1) {
+    const essai = `${base}-${String(n).padStart(2, '0')}`
+    if (!occupees.has(essai)) return essai
+  }
+  return base
+}
+
+/**
  * Les avis du poste, et leur rédaction.
  *
  * Le niveau de diplôme minimum et la formation complémentaire souhaitée se
@@ -453,7 +493,9 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
   /** Ouvre le formulaire sur un avis existant, ou vide pour en créer un. */
   const reprendre = (a: Avis | null) => {
     setErreur(null)
-    setReference(a?.reference ?? '')
+    setReference(
+      a?.reference ?? referenceSuggeree(poste.intitule, (avis.data ?? []).map((x) => x.reference)),
+    )
     setType(a?.type_avis ?? 'NATIONAL')
     setCloture(a?.date_cloture ?? '')
     setNiveau(poste.niveau_min)
@@ -771,7 +813,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
             <Field
               label="Référence"
               htmlFor="avis-ref"
-              hint="Sert à rattacher les candidatures reçues par email, via l'objet du message."
+              hint="Sert à rattacher les candidatures reçues par email, via l'objet du message. Celle-ci est proposée d'après l'intitulé du poste ; remplacez-la par la nomenclature du client s'il en impose une."
             >
               <input
                 id="avis-ref"

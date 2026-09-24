@@ -15,6 +15,7 @@ import SessionDetailPage from '@/pages/SessionDetailPage'
 import SettingsPage from '@/pages/SettingsPage'
 import ApplyPage from '@/pages/ApplyPage'
 import CareersPage from '@/pages/CareersPage'
+import AidePage from '@/pages/AidePage'
 import EspaceClientPage, { ActivationEspaceClient } from '@/pages/EspaceClientPage'
 import { useAuthStore } from '@/store/auth'
 
@@ -43,6 +44,9 @@ export default function App() {
       {/* Public — no auth, no chrome. Candidates never sign in. */}
       <Route path="/careers" element={<CareersPage />} />
       <Route path="/apply/:publicKey" element={<ApplyPage />} />
+      {/* Hors authentification, comme /careers et /apply : elle existe pour
+          quelqu'un qui n'a pas de compte et n'en aura pas. */}
+      <Route path="/aide" element={<AidePage />} />
       {/* L'espace du promoteur. Porte séparée de celle du cabinet, jusque dans
           le type de jeton : un accès client n'ouvre aucune route interne. */}
       <Route path="/espace-client" element={<EspaceClientPage />} />

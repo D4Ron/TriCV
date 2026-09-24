@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { avisPublicApi } from '@/lib/api'
-import { LogoKapi, Marque } from '@/components/Marque'
+import { Marque } from '@/components/Marque'
+import PiedPublic, { EncartProbleme } from '@/components/PiedPublic'
 import { Callout, Field, PageLoader, Spinner } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 import SaisieParcoursDeclare, {
@@ -61,14 +62,9 @@ export default function ApplyPage() {
       {/* Le candidat dépose des pièces personnelles : il doit voir sans
           chercher à qui il les confie. */}
       <footer className="mx-auto max-w-3xl px-4 pb-10">
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-ink-200 pt-5 text-xs text-ink-400">
-          <LogoKapi taille={18} />
-          <span className="font-medium text-ink-500">Kapi Consult</span>
-          <span aria-hidden="true">·</span>
-          <span>Immeuble D&amp;D, Agoè BKS, Lomé, Togo</span>
-          <span aria-hidden="true">·</span>
-          <span>info@kapiconsult.tg</span>
-        </p>
+        <div className="border-t border-ink-200 pt-5">
+          <PiedPublic />
+        </div>
       </footer>
     </div>
   )
@@ -199,9 +195,29 @@ export default function ApplyPage() {
 
       <h1 className="mt-2 text-2xl font-semibold tracking-tight text-ink-900">{a.intitule}</h1>
       <p className="mt-1 text-sm text-ink-500">
+        {a.localisation ? `${a.localisation} · ` : ''}
         {a.departement ? `${a.departement} · ` : ''}
         {a.date_cloture ? `candidatures jusqu'au ${formatDate(a.date_cloture, 'fr')}` : ''}
       </p>
+      {/* La référence n'est pas une formalité : c'est elle que le candidat
+          recopie s'il écrit, et sans elle son message ne se rattache à aucun
+          dossier. Elle est donnée à recopier, pas enfouie dans un paragraphe. */}
+      {(a.reference || a.rattachement) && (
+        <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 rounded-lg border border-ink-200 bg-white px-4 py-3">
+          {a.reference && (
+            <div>
+              <dt className="text-xs text-ink-500">Référence de l&apos;avis</dt>
+              <dd className="text-sm font-medium text-ink-900">{a.reference}</dd>
+            </div>
+          )}
+          {a.rattachement && (
+            <div>
+              <dt className="text-xs text-ink-500">Rattachement</dt>
+              <dd className="text-sm text-ink-800">{a.rattachement}</dd>
+            </div>
+          )}
+        </dl>
+      )}
 
       {a.description && (
         <p className="mt-4 whitespace-pre-line text-sm text-ink-700">{a.description}</p>
@@ -217,6 +233,13 @@ export default function ApplyPage() {
           </ul>
         </section>
       )}
+
+      <ListePoste titre="Responsabilités" valeurs={a.responsabilites} />
+      <ListePoste titre="Compétences techniques attendues" valeurs={a.competences_techniques} />
+      <ListePoste
+        titre="Qualités attendues"
+        valeurs={a.competences_comportementales}
+      />
 
       <section className="mt-6">
         <h2 className="text-sm font-semibold text-ink-900">Profil recherché</h2>
@@ -574,6 +597,30 @@ export default function ApplyPage() {
           </p>
         </form>
       )}
+
+      <EncartProbleme reference={a.reference} />
     </div>,
+  )
+}
+
+/**
+ * Une liste du poste, telle que la fiche du client l'énonce.
+ *
+ * Ces rubriques existaient en base depuis que la fiche est lue, et la page
+ * candidat n'en montrait aucune : l'avis disait ce qu'il fallait fournir sans
+ * dire ce qu'il y avait à faire. Rien ne s'affiche quand la liste est vide —
+ * un intertitre sans contenu laisserait croire à une omission.
+ */
+function ListePoste({ titre, valeurs }: { titre: string; valeurs: string[] }) {
+  if (!valeurs.length) return null
+  return (
+    <section className="mt-6">
+      <h2 className="text-sm font-semibold text-ink-900">{titre}</h2>
+      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-ink-700">
+        {valeurs.map((v, i) => (
+          <li key={`${v}-${i}`}>{v}</li>
+        ))}
+      </ul>
+    </section>
   )
 }

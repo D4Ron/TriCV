@@ -2,7 +2,8 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { avisPublicApi } from '@/lib/api'
 import CandidatureSpontanee from '@/components/CandidatureSpontanee'
-import { LogoKapi, Marque } from '@/components/Marque'
+import { Marque } from '@/components/Marque'
+import PiedPublic from '@/components/PiedPublic'
 import { EmptyState, ErrorState, PageLoader } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 
@@ -77,7 +78,11 @@ export default function CareersPage() {
                 </span>
                 <span className="ml-auto text-sm font-medium text-brand-700">Postuler →</span>
               </div>
+              {/* Le lieu avant les dates : c'est la première question que pose
+                  un candidat devant une liste de postes, et l'absence de
+                  réponse en écarte plus d'un. */}
               <p className="mt-1 text-xs text-ink-500">
+                {item.localisation ? `${item.localisation} · ` : ''}
                 {item.departement ? `${item.departement} · ` : ''}
                 {item.publie_le ? `publié le ${formatDate(item.publie_le, 'fr')}` : ''}
                 {item.date_cloture
@@ -95,14 +100,9 @@ export default function CareersPage() {
             Aucun compte n'est nécessaire pour postuler. Les informations que vous fournissez
             servent uniquement à l'examen de votre candidature.
           </p>
-          <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-ink-400">
-            <LogoKapi taille={18} />
-            <span className="font-medium text-ink-500">Kapi Consult</span>
-            <span aria-hidden="true">·</span>
-            <span>Immeuble D&amp;D, Agoè BKS, Lomé, Togo</span>
-            <span aria-hidden="true">·</span>
-            <span>info@kapiconsult.tg</span>
-          </p>
+          <div className="mt-3">
+            <PiedPublic />
+          </div>
         </div>
       </main>
     </div>
