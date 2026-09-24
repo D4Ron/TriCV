@@ -16,49 +16,8 @@ import ActionsMandat from '@/components/ActionsMandat'
 import PanneauEspaceClient from '@/components/PanneauEspaceClient'
 import PanneauRapports from '@/components/PanneauRapports'
 import { NIVEAUX } from '@/lib/niveaux'
+import { GROUPES_TYPES, PIECES_EXIGIBLES, enListe } from '@/lib/pieces'
 
-
-const PIECES = [
-  ['LETTRE_MOTIVATION', 'Lettre de motivation'],
-  ['CV', 'CV détaillé'],
-  ['COPIE_DIPLOMES', 'Copie des diplômes'],
-  ['ATTESTATIONS_TRAVAIL', 'Attestations de travail'],
-  ['PIECE_IDENTITE', "Carte nationale d'identité"],
-  ['PASSEPORT', 'Passeport'],
-  ['CERTIFICAT_NATIONALITE', 'Certificat de nationalité'],
-  ['LETTRE_RECOMMANDATION', 'Lettre de recommandation'],
-] as const
-
-/**
- * Les groupes de pièces liées.
- *
- * Deux besoins que « exigée / facultative » ne sait pas exprimer :
- * « la carte d'identité **ou** le passeport » — exiger les deux obligerait un
- * candidat qui n'a qu'un passeport valide à en refaire une — et « le diplôme
- * **et** son attestation », qui ne valent rien l'un sans l'autre.
- */
-const GROUPES_TYPES = [
-  {
-    libelle: "Pièce d'identité",
-    mode: 'AU_MOINS_UNE' as const,
-    codes: ['PIECE_IDENTITE', 'PASSEPORT'],
-    aide: "La carte nationale d'identité ou le passeport, au choix du candidat.",
-  },
-  {
-    libelle: 'Diplôme et attestation',
-    mode: 'TOUTES' as const,
-    codes: ['COPIE_DIPLOMES', 'ATTESTATIONS_TRAVAIL'],
-    aide: "Les deux sont exigés : l'un sans l'autre ne prouve rien.",
-  },
-]
-
-/** Découpe une saisie « a, b ; c » en liste propre. */
-function enListe(valeur: string): string[] {
-  return valeur
-    .split(/[,;]/)
-    .map((x) => x.trim())
-    .filter(Boolean)
-}
 
 function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => void }) {
   const queryClient = useQueryClient()
@@ -196,7 +155,7 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
           hint="Exigée : son absence élimine le dossier. Facultative : acceptée, jamais éliminatoire. Cochez « PDF » pour imposer ce format."
         >
           <div className="space-y-1.5">
-            {PIECES.map(([code, libelle]) => {
+            {PIECES_EXIGIBLES.map(([code, libelle]) => {
               const etat = pieces.includes(code)
                 ? 'exigee'
                 : facultatives.includes(code)

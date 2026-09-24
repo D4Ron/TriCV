@@ -332,6 +332,40 @@ export interface Poste {
   bareme: { formation?: Record<string, number> } | null
   nombre_candidatures: number
   created_at: string
+
+  // --- ce que la fiche de poste apporte --------------------------------------
+  /** Lieu d'affectation, tel qu'il paraîtra dans l'avis. */
+  localisation: string | null
+  /** À qui le titulaire rend compte — « Directeur Général ». */
+  rattachement: string | null
+  /** Les grands domaines de responsabilité, pas le détail des tâches. */
+  responsabilites: string[]
+  competences_techniques: string[]
+  competences_comportementales: string[]
+  /**
+   * Le poste a été créé avec son seul intitulé, le reste étant remis à plus
+   * tard. Il ne peut pas porter d'avis tant que c'est vrai : on ne note pas
+   * des candidats sur des exigences par défaut.
+   */
+  a_completer: boolean
+  /** La fiche jointe, si le cabinet en a reçu une. */
+  fiche_nom_fichier: string | null
+  fiche_deposee_le: string | null
+  /** Le texte a été relevé : la rédaction d'un avis peut s'y appuyer. */
+  fiche_a_texte: boolean
+}
+
+/**
+ * Ce qu'une fiche de poste propose, avant qu'un humain ne la valide.
+ *
+ * Rien n'est enregistré : c'est une proposition pour le formulaire. Chaque
+ * champ porte son origine, pour que l'écran distingue ce qui a été *lu* dans
+ * le document de ce qu'une assistance a *deviné* — le second se relit.
+ */
+export interface PropositionFiche {
+  valeurs: Partial<Poste> & Record<string, unknown>
+  origines: Record<string, 'document' | 'assistance'>
+  avertissement: string | null
 }
 
 export interface Avis {

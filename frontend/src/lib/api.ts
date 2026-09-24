@@ -17,6 +17,7 @@ import type {
   HrStatus,
   Language,
   PaginatedCandidates,
+  PropositionFiche,
   PublicRole,
   PublicSession,
   RecruitmentSession,
@@ -834,6 +835,53 @@ export const vivierApi = {
     )
   },
   profil: (id: string) => request<ProfilVivier>(`/vivier/${id}`),
+}
+
+// --- fiche de poste ---------------------------------------------------------
+
+/**
+ * Lire une fiche de poste, et la joindre au poste qu'elle décrit.
+ *
+ * Deux gestes distincts, et c'est voulu. `lire` ne touche à rien : elle rend
+ * une proposition qu'on ouvre dans le formulaire, à relire. `joindre`
+ * enregistre le document sur le poste — c'est lui que la rédaction d'un avis
+ * relira ensuite, en entier.
+ */
+export const fichesApi = {
+  /** Propose les champs d'un poste depuis un document ou un texte collé. */
+  lire: (source: { fichier?: File; texte?: string }, avecAssistance = true) => {
+    const formData = new FormData()
+    if (source.fichier) formData.append('fichier', source.fichier)
+    if (source.texte) formData.append('texte', source.texte)
+    formData.append('avec_assistance', String(avecAssistance))
+    return request<PropositionFiche>('/fiches/lecture', { method: 'POST', formData })
+  },
+
+  /**
+   * Attache la fiche au poste. `proposer` demande en plus une relecture des
+   * champs — utile quand la fiche arrive après la création du poste.
+   */
+  joindre: (
+    posteId: string,
+    source: { fichier?: File; texte?: string },
+    options: { proposer?: boolean; avecAssistance?: boolean } = {},
+  ) => {
+    const formData = new FormData()
+    if (source.fichier) formData.append('fichier', source.fichier)
+    if (source.texte) formData.append('texte', source.texte)
+    formData.append('proposer', String(options.proposer ?? false))
+    formData.append('avec_assistance', String(options.avecAssistance ?? true))
+    return request<{ poste: Poste; proposition: PropositionFiche | null }>(
+      `/postes/${posteId}/fiche`,
+      { method: 'POST', formData },
+    )
+  },
+
+  /** L'adresse de téléchargement, à ouvrir dans un onglet. */
+  urlTelechargement: (posteId: string) => `${BASE}/postes/${posteId}/fiche`,
+
+  retirer: (posteId: string) =>
+    request<void>(`/postes/${posteId}/fiche`, { method: 'DELETE' }),
 }
 
 // --- misc -------------------------------------------------------------------

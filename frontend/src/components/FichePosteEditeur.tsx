@@ -4,6 +4,7 @@ import { recrutementApi } from '@/lib/api'
 import { Callout, Field, Modal, Spinner, Toggle } from '@/components/ui'
 import type { ExperienceSpecifique, Poste } from '@/types'
 import { NIVEAUX } from '@/lib/niveaux'
+import { enListe } from '@/lib/pieces'
 
 /**
  * Modifier la fiche de poste après sa création.
@@ -30,12 +31,6 @@ import { NIVEAUX } from '@/lib/niveaux'
  *   et c'est la grille que le client relit.
  */
 
-
-const enListe = (valeur: string) =>
-  valeur
-    .split(',')
-    .map((x) => x.trim())
-    .filter(Boolean)
 
 const enTexte = (valeurs: string[]) => valeurs.join(', ')
 
