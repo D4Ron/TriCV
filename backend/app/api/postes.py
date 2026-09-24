@@ -78,6 +78,7 @@ async def _vers_sortie(db: AsyncSession, poste: Poste) -> PosteOut:
         select(func.count(Candidature.id)).where(Candidature.poste_id == poste.id)
     )
     sortie.nombre_candidatures = nombre.scalar_one()
+    sortie.fiche_a_texte = bool((poste.fiche_texte or "").strip())
     return sortie
 
 
@@ -888,12 +889,17 @@ async def rediger_avis(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Modèle introuvable")
         gabarit = modele.texte_source or ""
 
+    reglages = await parametres.lire(db)
     if payload.avec_assistance:
-        texte = await redaction_avis.rediger(poste, avis, mandat, gabarit)
+        texte = await redaction_avis.rediger(poste, avis, mandat, gabarit, reglages)
         if texte:
-            return RedactionAvisOut(texte=texte, propose=True)
+            return RedactionAvisOut(
+                texte=texte,
+                propose=True,
+                avertissement=_avertissement_redaction(poste, reglages),
+            )
         return RedactionAvisOut(
-            texte=redaction_avis.brouillon_manuel(poste, avis, mandat),
+            texte=redaction_avis.brouillon_manuel(poste, avis, mandat, reglages),
             propose=False,
             avertissement=(
                 "La rédaction assistée n'a rien renvoyé. Voici les éléments de "
@@ -902,8 +908,33 @@ async def rediger_avis(
         )
 
     return RedactionAvisOut(
-        texte=redaction_avis.brouillon_manuel(poste, avis, mandat), propose=False
+        texte=redaction_avis.brouillon_manuel(poste, avis, mandat, reglages),
+        propose=False,
+        avertissement=_avertissement_redaction(poste, reglages),
     )
+
+
+def _avertissement_redaction(poste: Poste, reglages) -> str | None:
+    """Ce qui manque pour que l'avis soit complet — dit avant qu'on le publie."""
+    manques: list[str] = []
+    if not (poste.fiche_texte or "").strip():
+        manques.append(
+            "aucune fiche de poste n'est jointe : le texte ne s'appuie que sur les "
+            "champs du poste"
+        )
+    if not reglages.url_publique:
+        manques.append(
+            "l'adresse publique de l'application n'est pas réglée : le lien de "
+            "candidature et celui de l'aide ne peuvent pas figurer dans l'avis"
+        )
+    if not reglages.contact:
+        manques.append(
+            "aucune adresse de contact n'est réglée : la section « En cas de "
+            "difficulté » n'a personne à indiquer"
+        )
+    if not manques:
+        return None
+    return "À savoir : " + " ; ".join(manques) + "."
 
 
 @router.patch("/avis/{avis_id}", response_model=AvisOut)
@@ -975,6 +1006,17 @@ async def supprimer_avis(avis_id: str, db: DbSession, user: CurrentUser) -> Resp
 @router.post("/avis/{avis_id}/publier", response_model=AvisOut)
 async def publier_avis(avis_id: str, db: DbSession, user: CurrentUser) -> AvisOut:
     avis = await _get_avis_or_404(db, avis_id)
+    poste = await get_poste_or_404(db, avis.poste_id)
+    if poste.a_completer:
+        # Un poste créé « à compléter plus tard » n'a que des exigences par
+        # défaut. Publier l'avis ferait noter des candidats sur des valeurs que
+        # personne n'a décidées.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "La fiche de ce poste n'est pas encore complétée : ses exigences sont "
+            "des valeurs par défaut. Complétez-la (« Modifier la fiche ») avant "
+            "de publier l'avis.",
+        )
     if avis.date_cloture is None:
         # La clôture sert de date de référence à l'âge et à l'ancienneté :
         # sans elle, la grille ne serait pas reproductible.

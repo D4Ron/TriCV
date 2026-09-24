@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class ScoreBucket(BaseModel):
@@ -83,6 +85,21 @@ class SettingsOut(BaseModel):
     # deviner depuis sa propre adresse d'écoute.
     url_publique: str = ""
 
+    # --- fournisseur et accès Microsoft 365 ------------------------------
+    # « microsoft365 » : lecture et envoi par Microsoft Graph ; « imap » : tout
+    # autre fournisseur. Le secret de l'application ne sort jamais, comme les
+    # mots de passe.
+    fournisseur_courriel: str = "imap"
+    oauth_tenant: str = ""
+    oauth_client_id: str = ""
+    oauth_client_secret_defini: bool = False
+
+    # --- aide aux candidats ------------------------------------------------
+    # L'adresse réglée, et celle qui sera réellement affichée : vide, c'est la
+    # boîte de recrutement qui sert, et l'écran doit le dire.
+    contact_candidats: str = ""
+    contact_effectif: str = ""
+
 
 class ReglagesIn(BaseModel):
     """Les seuls réglages modifiables sans toucher au serveur."""
@@ -110,3 +127,22 @@ class ReglagesIn(BaseModel):
     smtp_tls: bool | None = None
     smtp_expediteur: str | None = Field(default=None, max_length=255)
     url_publique: str | None = Field(default=None, max_length=512)
+
+    fournisseur_courriel: Literal["microsoft365", "imap"] | None = None
+    oauth_tenant: str | None = Field(default=None, max_length=255)
+    oauth_client_id: str | None = Field(default=None, max_length=255)
+    # Vide vaut « inchangé », comme les mots de passe.
+    oauth_client_secret: str | None = Field(default=None, max_length=255)
+
+    contact_candidats: str | None = Field(default=None, max_length=255)
+
+    @field_validator("contact_candidats")
+    @classmethod
+    def _adresse_ou_vide(cls, valeur: str | None) -> str | None:
+        """Vide est permis — la boîte de recrutement prend le relais."""
+        if valeur is None or not valeur.strip():
+            return valeur
+        adresse = valeur.strip()
+        if "@" not in adresse or " " in adresse or "." not in adresse.split("@")[-1]:
+            raise ValueError("L'adresse de contact des candidats n'est pas une adresse email.")
+        return adresse

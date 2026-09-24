@@ -97,7 +97,11 @@ def _extract_docx(data: bytes) -> ExtractedDocument:
     return ExtractedDocument(normalise("\n".join(parts)), 1, DOCX_MIME)
 
 
-def extract_sync(data: bytes, mime_type: str, filename: str = "") -> ExtractedDocument:
+def extract_sync(
+    data: bytes, mime_type: str, filename: str = "", min_chars: int = MIN_USEFUL_CHARS
+) -> ExtractedDocument:
+    """`min_chars` à 0 laisse l'appelant juger : le seuil et son message
+    d'erreur sont écrits pour un CV, pas pour une fiche de poste."""
     if mime_type == PDF_MIME:
         doc = _extract_pdf(data)
     elif mime_type == DOCX_MIME:
@@ -110,7 +114,7 @@ def extract_sync(data: bytes, mime_type: str, filename: str = "") -> ExtractedDo
     else:
         raise UnreadableDocument(f"Unsupported file type: {mime_type}")
 
-    if len(doc.text) < MIN_USEFUL_CHARS:
+    if len(doc.text) < min_chars:
         raise UnreadableDocument(
             "This CV is not machine-readable — it looks like a scan or an image-only "
             "export, so no text could be extracted. Ask the candidate for a text-based "
@@ -119,6 +123,8 @@ def extract_sync(data: bytes, mime_type: str, filename: str = "") -> ExtractedDo
     return doc
 
 
-async def extract(data: bytes, mime_type: str, filename: str = "") -> ExtractedDocument:
+async def extract(
+    data: bytes, mime_type: str, filename: str = "", min_chars: int = MIN_USEFUL_CHARS
+) -> ExtractedDocument:
     """PyMuPDF and python-docx are CPU-bound and synchronous — run off-loop."""
-    return await asyncio.to_thread(extract_sync, data, mime_type, filename)
+    return await asyncio.to_thread(extract_sync, data, mime_type, filename, min_chars)

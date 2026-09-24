@@ -30,6 +30,19 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.RECRUITER
 
 
+class UserUpdate(BaseModel):
+    """Ce qu'un administrateur change sur un compte. L'adresse ne change pas :
+    elle identifie la personne dans le journal d'audit."""
+
+    full_name: str | None = Field(default=None, min_length=1, max_length=255)
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+
+class PasswordReset(BaseModel):
+    password: str = Field(min_length=8, max_length=72)
+
+
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=72)

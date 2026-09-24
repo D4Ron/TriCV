@@ -60,6 +60,7 @@ from app.services import (
     depouillement,
     doublons,
     entretiens,
+    graph_microsoft,
     parametres,
     storage,
     uploads,
@@ -953,54 +954,87 @@ async def etat_courriel(db: DbSession, _: CurrentUser) -> dict:
     }
 
 
-async def _config_boite(db: AsyncSession) -> courriel.ConfigBoite:
-    """Les coordonnées de la boîte, ou un refus qui dit quoi faire.
+async def _ouvrir_boite(db: AsyncSession):
+    """La boîte de candidatures, prête à relever — ou un refus qui dit quoi faire.
 
-    Tout se règle depuis Paramètres › Boîte de candidatures : le message
-    renvoie donc à l'écran, pas au fichier de configuration du serveur.
+    Microsoft 365 se lit par Graph, tout autre fournisseur par IMAP. Les deux
+    boîtes ont la même interface : le relevé ne sait pas laquelle il lit.
+
+    Tout se règle depuis Paramètres › Courriel : le message renvoie donc à
+    l'écran, pas au fichier de configuration du serveur.
     """
     reglages = await parametres.lire(db)
     if not reglages.courriel_actif:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "Le relevé de la boîte est désactivé. Activez-le dans "
-            "Paramètres › Boîte de candidatures.",
+            "Le relevé de la boîte est désactivé. Activez-le dans Paramètres › Courriel.",
         )
-    manquants = [
-        libelle
-        for libelle, valeur in (
-            ("le serveur", reglages.imap_host),
-            ("l'adresse", reglages.imap_user),
-            # Un mot de passe *ou* un accès OAuth. Une boîte Microsoft n'a pas
-            # de mot de passe qui fonctionne : l'exiger la rendrait à jamais
-            # « incomplète ».
-            (
-                "le mot de passe ou l'accès Microsoft",
-                reglages.imap_password or (reglages.oauth_utilisable and "oauth"),
-            ),
-        )
-        if not valeur
-    ]
+
+    if reglages.microsoft365:
+        manquants = [
+            libelle
+            for libelle, valeur in (
+                ("l'adresse de la boîte", reglages.boite),
+                ("l'identifiant du tenant", reglages.graph_utilisable or reglages.oauth_tenant),
+                ("l'identifiant de l'application", reglages.oauth_client_id),
+                ("le secret de l'application", reglages.oauth_client_secret),
+            )
+            if not valeur
+        ]
+        if not manquants and not reglages.graph_utilisable:
+            manquants = ["un identifiant de tenant d'organisation (pas « common » ni « consumers »)"]
+    else:
+        manquants = [
+            libelle
+            for libelle, valeur in (
+                ("le serveur", reglages.imap_host),
+                ("l'adresse", reglages.imap_user),
+                # Un mot de passe *ou* un accès OAuth. Une boîte Microsoft n'a
+                # pas de mot de passe qui fonctionne : l'exiger la rendrait à
+                # jamais « incomplète ».
+                (
+                    "le mot de passe ou l'accès Microsoft",
+                    reglages.imap_password or (reglages.oauth_utilisable and "oauth"),
+                ),
+            )
+            if not valeur
+        ]
     if manquants:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"Boîte incomplète : il manque {' et '.join(manquants)}. "
-            "À renseigner dans Paramètres › Boîte de candidatures.",
+            "À renseigner dans Paramètres › Courriel.",
         )
-    return courriel.ConfigBoite(
-        hote=reglages.imap_host,
-        port=reglages.imap_port,
-        utilisateur=reglages.imap_user,
-        mot_de_passe=reglages.imap_password,
-        dossier=reglages.imap_folder,
-        oauth=reglages.config_oauth if reglages.oauth_utilisable else None,
-    )
+
+    try:
+        if reglages.microsoft365:
+            return graph_microsoft.BoiteGraph(
+                graph_microsoft.config_graph(
+                    reglages.oauth_tenant,
+                    reglages.oauth_client_id,
+                    reglages.oauth_client_secret,
+                ),
+                reglages.boite,
+                reglages.imap_folder,
+            )
+        return courriel.BoiteImap(
+            courriel.ConfigBoite(
+                hote=reglages.imap_host,
+                port=reglages.imap_port,
+                utilisateur=reglages.imap_user,
+                mot_de_passe=reglages.imap_password,
+                dossier=reglages.imap_folder,
+                oauth=reglages.config_oauth if reglages.oauth_utilisable else None,
+            )
+        )
+    except courriel.ErreurBoite as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
 
 @router.post("/courriel/tester")
 async def tester_courriel(db: DbSession, _: CurrentUser) -> dict:
     """Ouvre la boîte et compte, sans rien lire ni écrire."""
-    boite = courriel.BoiteImap(await _config_boite(db))
+    boite = await _ouvrir_boite(db)
     try:
         return boite.verifier()
     except courriel.ErreurBoite as exc:
@@ -1016,7 +1050,7 @@ async def apercu_courriel(db: DbSession, _: CurrentUser) -> dict:
     À utiliser au premier branchement d'une boîte réelle : on voit comment les
     messages arrivent avant de laisser quoi que ce soit s'écrire en base.
     """
-    boite = courriel.BoiteImap(await _config_boite(db))
+    boite = await _ouvrir_boite(db)
     try:
         lignes = await courriel.apercu(db, boite)
     except courriel.ErreurBoite as exc:
@@ -1034,7 +1068,7 @@ async def relever_courriel(db: DbSession, user: CurrentUser) -> dict:
     action que les RH veulent voir aboutir, avec son compte-rendu.
     """
     reglages = await parametres.lire(db)
-    boite = courriel.BoiteImap(await _config_boite(db))
+    boite = await _ouvrir_boite(db)
     try:
         resultat = await courriel.relever(
             db, boite, accepter_spontanees=reglages.candidatures_spontanees

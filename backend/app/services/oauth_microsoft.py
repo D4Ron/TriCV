@@ -98,11 +98,16 @@ class _JetonEnCache:
 
 # Un cache par (tenant, client_id, compte) : deux boîtes réglées différemment ne
 # doivent pas se prêter un jeton.
-_cache: dict[tuple[str, str, str], _JetonEnCache] = {}
+_cache: dict[tuple[str, str, str, str], _JetonEnCache] = {}
 
 
-def _demander(config: ConfigOAuth) -> tuple[str, int]:
-    """Échange les identifiants contre un jeton d'accès. Rend (jeton, durée)."""
+def _demander(config: ConfigOAuth, portee: str | None = None) -> tuple[str, int]:
+    """Échange les identifiants contre un jeton d'accès. Rend (jeton, durée).
+
+    `portee` remplace la portée du flux application : IMAP/SMTP visent
+    `outlook.office365.com`, Microsoft Graph `graph.microsoft.com`. Un jeton
+    ne vaut que pour la ressource qu'il nomme.
+    """
     corps: dict[str, str] = {"client_id": config.client_id}
     if config.delegue:
         corps.update(
@@ -121,7 +126,7 @@ def _demander(config: ConfigOAuth) -> tuple[str, int]:
             {
                 "grant_type": "client_credentials",
                 "client_secret": config.client_secret,
-                "scope": PORTEE_APPLICATION,
+                "scope": portee or PORTEE_APPLICATION,
             }
         )
 
@@ -191,7 +196,7 @@ def _expliquer(code: int, corps: str, config: ConfigOAuth) -> str:
     return f"Microsoft a refusé la demande de jeton (HTTP {code}) : {corps[:300]}"
 
 
-def jeton(config: ConfigOAuth, compte: str) -> str:
+def jeton(config: ConfigOAuth, compte: str, portee: str | None = None) -> str:
     """Un jeton d'accès valide pour ce compte, mis en cache jusqu'à échéance."""
     if not config.utilisable:
         raise ErreurOAuth(
@@ -200,12 +205,12 @@ def jeton(config: ConfigOAuth, compte: str) -> str:
             "rafraîchissement."
         )
 
-    cle = (config.tenant, config.client_id, compte)
+    cle = (config.tenant, config.client_id, compte, portee or "")
     en_cache = _cache.get(cle)
     if en_cache is not None and en_cache.valide():
         return en_cache.valeur
 
-    valeur, duree = _demander(config)
+    valeur, duree = _demander(config, portee)
     _cache[cle] = _JetonEnCache(valeur=valeur, expire_a=time.time() + duree)
     logger.info(
         "jeton Microsoft obtenu pour %s (%s), valable %d s",

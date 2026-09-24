@@ -14,6 +14,7 @@ from app.api import (
     candidatures,
     collaboration,
     exports,
+    fiches,
     mandats,
     portail_client,
     postes,
@@ -142,6 +143,7 @@ for router in (
     # Chaîne de recrutement : Client -> Mandat -> Poste -> Avis -> Candidature.
     mandats.router,
     postes.router,
+    fiches.router,
     candidatures.router,
     collaboration.router,
     rapports.router,

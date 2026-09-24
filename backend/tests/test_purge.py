@@ -152,3 +152,114 @@ async def test_la_purge_est_journalisee(client, auth):
     async with SessionLocal() as db:
         actions = [a.action for a in (await db.execute(select(AuditLog))).scalars()]
         assert "mandat.purge" in actions
+
+
+
+# --- la suppression, et les fichiers qu'elle laissait derrière elle ----------
+#
+# La cascade SQL emporte les lignes — pièces, postes, candidatures — mais pas
+# ce qu'elles désignent sur le disque. Un mandat supprimé laissait donc tous
+# ses CV et sa fiche de poste dans le stockage, sans plus aucune ligne pour
+# dire à quoi ils correspondaient : ni retrouvables, ni effaçables, et des
+# données personnelles qu'on croyait supprimées avec le mandat.
+#
+# Les tests comparent les fichiers **de ce mandat-ci** : le dépôt est commun à
+# toute la session d'essai, et le voir vide ne prouverait rien.
+
+
+def _fichiers_du_depot() -> set[str]:
+    from pathlib import Path
+
+    from app.config import settings
+
+    racine = Path(settings.storage_path)
+    return {str(p) for p in racine.rglob("*") if p.is_file()} if racine.exists() else set()
+
+
+def _fiche_docx() -> bytes:
+    """Une fiche de poste minimale, mais un vrai DOCX : le lecteur l'ouvre."""
+    import io
+
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph("Intitulé du poste : Comptable")
+    document.add_paragraph("Profil requis")
+    document.add_paragraph("Diplôme de niveau BAC+3 au minimum.")
+    tampon = io.BytesIO()
+    document.save(tampon)
+    return tampon.getvalue()
+
+
+async def test_supprimer_un_mandat_efface_aussi_ses_fichiers(client, auth):
+    avant = _fichiers_du_depot()
+    ids = await monter(client, auth)
+    siens = _fichiers_du_depot() - avant
+    assert siens, "le dépôt doit contenir le CV déposé"
+
+    await client.post(f"{API}/mandats/{ids['mandat']}/archiver", headers=auth)
+    reponse = await client.delete(
+        f"{API}/mandats/{ids['mandat']}?confirmer=true", headers=auth
+    )
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["fichiers_supprimes"] >= 1
+
+    restants = siens & _fichiers_du_depot()
+    assert not restants, f"fichiers orphelins : {restants}"
+
+
+async def test_supprimer_un_client_efface_les_fichiers_de_ses_mandats(client, auth):
+    avant = _fichiers_du_depot()
+    ids = await monter(client, auth)
+    siens = _fichiers_du_depot() - avant
+    assert siens
+
+    await client.post(f"{API}/mandats/{ids['mandat']}/archiver", headers=auth)
+    await client.post(f"{API}/clients/{ids['client']}/archiver", headers=auth)
+    reponse = await client.delete(
+        f"{API}/clients/{ids['client']}?confirmer=true", headers=auth
+    )
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["fichiers_supprimes"] >= 1
+
+    assert not (siens & _fichiers_du_depot())
+
+
+async def test_la_fiche_de_poste_part_a_la_purge(client, auth):
+    """Le document du client est un fichier comme un autre.
+
+    Son texte relevé, lui, reste : c'est ce que relit la rédaction d'un avis,
+    et il ne pèse rien.
+    """
+    ids = await monter(client, auth)
+    depot = await client.post(
+        f"{API}/postes/{ids['poste']}/fiche",
+        files=[
+            (
+                "fichier",
+                (
+                    "fiche.docx",
+                    _fiche_docx(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+            )
+        ],
+        data={"proposer": "false"},
+        headers=auth,
+    )
+    assert depot.status_code == 200, depot.text
+
+    await client.post(f"{API}/mandats/{ids['mandat']}/archiver", headers=auth)
+    resultat = (
+        await client.post(f"{API}/mandats/{ids['mandat']}/purge", headers=auth)
+    ).json()
+    assert resultat["fiches"] >= 1
+
+    from app.models import Poste
+
+    async with SessionLocal() as db:
+        poste = await db.get(Poste, ids["poste"])
+        assert poste.fiche_chemin is None
+        # Ce qu'on a tiré du document survit à son fichier.
+        assert poste.fiche_nom_fichier == "fiche.docx"
+        assert poste.fiche_texte and "Comptable" in poste.fiche_texte

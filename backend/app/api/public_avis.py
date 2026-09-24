@@ -53,6 +53,7 @@ class AvisPublicItem(BaseModel):
     intitule: str
     client: str | None = None
     departement: str | None = None
+    localisation: str | None = None
     type_avis: str
     date_cloture: date | None = None
     publie_le: date | None = None
@@ -61,6 +62,15 @@ class AvisPublicItem(BaseModel):
 class AvisPublicOut(AvisPublicItem):
     description: str | None = None
     missions: list[str] = Field(default_factory=list)
+    reference: str | None = None
+    rattachement: str | None = None
+    responsabilites: list[str] = Field(default_factory=list)
+    competences_techniques: list[str] = Field(default_factory=list)
+    competences_comportementales: list[str] = Field(default_factory=list)
+    # À qui écrire en cas de difficulté. Vide si aucune adresse n'est réglée :
+    # la page renvoie alors à l'aide seule plutôt que d'afficher une adresse
+    # inventée.
+    contact: str | None = None
     profil: list[str] = Field(default_factory=list)
     # Les conditions éliminatoires, dites avant le dépôt : un dossier complet
     # composé pour rien serait un manque d'égards, et le candidat déclare
@@ -79,6 +89,12 @@ class AvisPublicOut(AvisPublicItem):
     taille_max_mo: int = 10
     formats_acceptes: list[str] = Field(default_factory=lambda: ["PDF", "Word"])
     accepte_candidatures: bool = True
+
+
+class AidePublique(BaseModel):
+    """Ce que la page d'aide aux candidats doit connaître du cabinet."""
+
+    contact: str | None = None
 
 
 class DepotResponse(BaseModel):
@@ -233,12 +249,19 @@ async def avis_ouverts(db: AsyncSession = Depends(get_db)) -> list[AvisPublicIte
                 cle_publique=avis.cle_publique,
                 intitule=avis.poste.intitule,
                 departement=avis.poste.departement,
+                localisation=avis.poste.localisation,
                 type_avis=avis.type_avis.value,
                 date_cloture=avis.date_cloture,
                 publie_le=avis.date_publication,
             )
         )
     return sortie
+
+
+@router.get("/aide", response_model=AidePublique)
+async def aide_publique(db: AsyncSession = Depends(get_db)) -> AidePublique:
+    """L'adresse de contact des candidats, pour la page d'aide."""
+    return AidePublique(contact=(await parametres.lire(db)).contact or None)
 
 
 @router.get("/avis/{cle_publique}", response_model=AvisPublicOut)
@@ -254,6 +277,13 @@ async def avis_public(cle_publique: str, db: AsyncSession = Depends(get_db)) -> 
         publie_le=avis.date_publication,
         description=poste.description or avis.texte,
         missions=list(poste.missions or ()),
+        reference=avis.reference,
+        localisation=poste.localisation,
+        rattachement=poste.rattachement,
+        responsabilites=list(poste.responsabilites or ()),
+        competences_techniques=list(poste.competences_techniques or ()),
+        competences_comportementales=list(poste.competences_comportementales or ()),
+        contact=(await parametres.lire(db)).contact or None,
         profil=_profil(poste),
         conditions=_conditions(poste),
         justification_conditions=poste.restriction_justification or None,

@@ -3,20 +3,22 @@ from __future__ import annotations
 import secrets
 
 import jwt
-from fastapi import APIRouter, HTTPException, Request, status
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Request, Response, status
+from sqlalchemy import func, select
 
 from app.config import settings
 from app.deps import AdminUser, CurrentUser, DbSession, client_ip
 from app.models import User, UserRole
 from app.schemas.auth import (
     LoginRequest,
+    PasswordReset,
     RefreshRequest,
     SignupConfig,
     SignupRequest,
     TokenPair,
     UserCreate,
     UserOut,
+    UserUpdate,
 )
 from app.security import (
     create_access_token,
@@ -156,3 +158,101 @@ async def create_user(payload: UserCreate, db: DbSession, admin: AdminUser) -> U
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def _get_user_or_404(db, user_id: str) -> User:
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Compte introuvable")
+    return user
+
+
+async def _admins_actifs(db) -> int:
+    resultat = await db.execute(
+        select(func.count(User.id)).where(
+            User.role == UserRole.ADMIN, User.is_active.is_(True)
+        )
+    )
+    return resultat.scalar_one()
+
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+async def update_user(
+    user_id: str, payload: UserUpdate, db: DbSession, admin: AdminUser
+) -> User:
+    """Renommer, changer de rôle, désactiver ou réactiver un compte.
+
+    Un compte ne se supprime pas : son nom figure dans le journal d'audit, sur
+    chaque décision qu'il a prise. Le désactiver ferme l'accès et garde la trace.
+    """
+    user = await _get_user_or_404(db, user_id)
+    changes = payload.model_dump(exclude_unset=True)
+
+    if user.id == admin.id and (
+        changes.get("is_active") is False
+        or ("role" in changes and changes["role"] != UserRole.ADMIN)
+    ):
+        # Se retirer ses propres droits se fait par erreur plus souvent qu'à
+        # dessein, et personne ne serait là pour les rendre.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Vous ne pouvez pas retirer vos propres droits d'administrateur ni "
+            "désactiver votre propre compte. Demandez-le à un autre administrateur.",
+        )
+
+    retire_un_admin = user.role == UserRole.ADMIN and user.is_active and (
+        changes.get("is_active") is False
+        or ("role" in changes and changes["role"] != UserRole.ADMIN)
+    )
+    if retire_un_admin and await _admins_actifs(db) <= 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "C'est le dernier administrateur actif : sans lui, plus personne ne "
+            "pourrait gérer les comptes ni les paramètres.",
+        )
+
+    if "full_name" in changes and changes["full_name"] is not None:
+        user.full_name = changes["full_name"].strip()
+    if "role" in changes and changes["role"] is not None:
+        user.role = UserRole(changes["role"])
+    if "is_active" in changes and changes["is_active"] is not None:
+        user.is_active = changes["is_active"]
+
+    await audit.record(
+        db,
+        action="user.update",
+        entity_type="user",
+        entity_id=user.id,
+        user_id=admin.id,
+        details={
+            k: (v.value if isinstance(v, UserRole) else v)
+            for k, v in changes.items()
+            if v is not None
+        },
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/users/{user_id}/password", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(
+    user_id: str, payload: PasswordReset, db: DbSession, admin: AdminUser
+) -> Response:
+    """Fixe un nouveau mot de passe, à communiquer à la personne.
+
+    Le mot de passe n'est jamais journalisé — seulement le fait qu'il a été
+    changé, et par qui.
+    """
+    user = await _get_user_or_404(db, user_id)
+    user.password_hash = hash_password(payload.password)
+    await audit.record(
+        db,
+        action="user.password_reset",
+        entity_type="user",
+        entity_id=user.id,
+        user_id=admin.id,
+        details={"email": user.email},
+    )
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -16,7 +16,7 @@ from app.schemas.stats import (
     SessionStats,
     SettingsOut,
 )
-from app.services import audit, parametres, uploads
+from app.services import audit, oauth_microsoft, parametres, uploads
 from app.services.redaction import loaded_ner_models
 
 router = APIRouter(tags=["stats"])
@@ -144,6 +144,12 @@ async def deployment_settings(db: DbSession, _: CurrentUser) -> SettingsOut:
         smtp_password_defini=bool(reglages.smtp_password),
         envoi_utilisable=reglages.envoi_utilisable,
         url_publique=reglages.url_publique,
+        fournisseur_courriel=reglages.fournisseur_courriel,
+        oauth_tenant=reglages.oauth_tenant,
+        oauth_client_id=reglages.oauth_client_id,
+        oauth_client_secret_defini=bool(reglages.oauth_client_secret),
+        contact_candidats=reglages.contact_candidats,
+        contact_effectif=reglages.contact,
     )
 
 
@@ -157,6 +163,10 @@ async def modifier_reglages(
     portée — ils appartiennent au déploiement, pas à l'écran.
     """
     changees = await parametres.ecrire(db, payload.model_dump(exclude_unset=True))
+    if any(cle.startswith("oauth_") for cle in changees):
+        # Un jeton obtenu avec l'ancien secret resterait servi jusqu'à son
+        # échéance : le test qui suit un changement d'accès ne prouverait rien.
+        oauth_microsoft.oublier_cache()
     if changees:
         await audit.record(
             db,

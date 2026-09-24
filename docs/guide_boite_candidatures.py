@@ -349,26 +349,41 @@ def contenu() -> list:
         puces(
             [
                 "Dans l'application → <b>API autorisées</b> → <b>Ajouter une autorisation</b> "
-                "→ <b>API utilisées par mon organisation</b> → <b>Office 365 Exchange "
-                "Online</b> → <b>Autorisations d'application</b> → cochez "
-                "<font face='Courier'>IMAP.AccessAsApp</font> (et "
-                "<font face='Courier'>SMTP.SendAsApp</font> si TriCV doit aussi écrire aux "
-                "candidats) → <b>Accorder le consentement administrateur</b>.",
-                "Puis, en PowerShell Exchange Online, autoriser le principal de service sur "
-                "la boîte précise. Cette commande limite l'accès à cette boîte-là : "
-                "l'application ne peut pas lire les autres.",
+                "→ <b>Microsoft Graph</b> → <b>Autorisations d'application</b> → cochez "
+                "<font face='Courier'>Mail.ReadWrite</font> et "
+                "<font face='Courier'>Mail.Send</font> → <b>Accorder le consentement "
+                "administrateur</b>.",
+                "Puis restreindre l'application à la seule boîte de recrutement, par une "
+                "<b>stratégie d'accès applicatif</b> Exchange. Ce second geste n'est pas "
+                "optionnel : sans lui, ces autorisations portent sur "
+                "<b>toutes les boîtes</b> de l'organisation.",
             ]
         )
     )
     h.append(
         para(
             "<font face='Courier' size='8'>"
-            "New-ServicePrincipal -AppId &lt;ID application&gt; "
-            "-ServiceId &lt;ID objet du principal&gt;<br/>"
-            "Add-MailboxPermission -Identity recrutement@kapiconsult.tg "
-            "-User &lt;ID objet du principal&gt; -AccessRights FullAccess"
+            "New-ApplicationAccessPolicy -AppId &lt;ID application&gt; "
+            "-PolicyScopeGroupId recrutement@kapiconsult.tg "
+            "-AccessRight RestrictAccess "
+            "-Description &quot;TriCV : boîte de recrutement uniquement&quot;"
             "</font>",
             "corps",
+        )
+    )
+    h.extend(
+        encadre(
+            "Pourquoi Graph plutôt qu'IMAP",
+            "Les deux chemins mènent à la boîte, et ils ne coûtent pas la même chose à "
+            "ouvrir. Graph demande ce qui précède, et rien d'autre. La voie IMAP — "
+            "<font face='Courier'>IMAP.AccessAsApp</font>, "
+            "<font face='Courier'>SMTP.SendAsApp</font> — exige en plus de <b>réactiver "
+            "SMTP AUTH</b> sur le tenant, puis de créer un principal de service et de le "
+            "rattacher à la boîte en PowerShell "
+            "(<font face='Courier'>New-ServicePrincipal</font>, puis "
+            "<font face='Courier'>Add-MailboxPermission</font>). TriCV sait faire les deux ; "
+            "une installation neuve part sur Graph, et le chemin se règle côté serveur "
+            "tant que l'écran ne l'expose pas.",
         )
     )
     h.append(
@@ -394,23 +409,44 @@ def contenu() -> list:
         encadre(
             "À transmettre à l'administrateur Entra ID",
             "Bonjour,<br/><br/>"
-            "Nous mettons en service une application interne (TriCV) qui doit <b>lire</b> la "
-            "boîte de recrutement <font face='Courier'>recrutement@kapiconsult.tg</font> en "
-            "IMAP, pour y récupérer les candidatures reçues. Microsoft n'acceptant plus "
-            "l'authentification par mot de passe, il lui faut un accès applicatif. "
-            "Pourriez-vous :<br/><br/>"
+            "Nous mettons en service une application interne (TriCV) qui doit "
+            "<b>lire et écrire</b> la boîte de recrutement "
+            "<font face='Courier'>recrutement@kapiconsult.tg</font> : y relever les "
+            "candidatures reçues, et répondre aux candidats. Microsoft n'acceptant plus "
+            "l'authentification par mot de passe, il lui faut un accès applicatif par "
+            "Microsoft Graph. Pourriez-vous :<br/><br/>"
             "1. créer une inscription d'application nommée « TriCV — boîte de "
             "candidatures » (ce répertoire organisationnel uniquement) ;<br/>"
             "2. lui créer un secret client, de la durée la plus longue possible ;<br/>"
-            "3. lui accorder la permission d'application "
-            "<font face='Courier'>IMAP.AccessAsApp</font> sur Office 365 Exchange Online "
-            "— et <font face='Courier'>SMTP.SendAsApp</font> si nous devons aussi écrire "
-            "aux candidats — puis donner le consentement administrateur ;<br/>"
-            "4. autoriser le principal de service <b>sur cette seule boîte</b> "
-            "(New-ServicePrincipal puis Add-MailboxPermission).<br/><br/>"
+            "3. lui accorder les permissions <b>d'application</b> Microsoft Graph "
+            "<font face='Courier'>Mail.ReadWrite</font> et "
+            "<font face='Courier'>Mail.Send</font>, puis donner le "
+            "<b>consentement administrateur</b> ;<br/>"
+            "4. restreindre l'application à cette seule boîte par une stratégie d'accès "
+            "applicatif :<br/>"
+            "<font face='Courier' size='8'>New-ApplicationAccessPolicy "
+            "-AppId &lt;ID application&gt; -PolicyScopeGroupId "
+            "recrutement@kapiconsult.tg -AccessRight RestrictAccess</font><br/><br/>"
+            "Le point 4 n'est pas facultatif : sans lui, les permissions du point 3 "
+            "portent sur toutes les boîtes du tenant, ce que nous ne demandons pas.<br/><br/>"
             "Merci de nous transmettre <b>l'ID d'annuaire (tenant)</b>, <b>l'ID "
-            "d'application (client)</b> et <b>la valeur du secret</b> — et non son ID. "
-            "L'accès restera limité à cette boîte.",
+            "d'application (client)</b> et <b>la valeur du secret</b> — et non son ID.",
+        )
+    )
+    h.extend(
+        encadre(
+            "Si votre organisation impose IMAP plutôt que Graph",
+            "Remplacez le point 3 par les permissions "
+            "<font face='Courier'>IMAP.AccessAsApp</font> et "
+            "<font face='Courier'>SMTP.SendAsApp</font> sur Office 365 Exchange Online, et "
+            "le point 4 par la création d'un principal de service rattaché à la boîte "
+            "(<font face='Courier'>New-ServicePrincipal</font>, puis "
+            "<font face='Courier'>Add-MailboxPermission</font>) — en sachant que SMTP AUTH "
+            "doit alors être réactivé sur le tenant. Côté TriCV, il suffit de renseigner "
+            "<font face='Courier'>outlook.office365.com</font> et "
+            "<font face='Courier'>smtp.office365.com</font>.",
+            ton=DISCRET,
+            fond=FOND,
         )
     )
 

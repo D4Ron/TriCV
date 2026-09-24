@@ -223,6 +223,18 @@ async def supprimer_client(
     compte = await _compter_sous_arbre(db, client_id=client_id)
     _refuser_si_dossiers(compte, confirmer)
 
+    # Même raison que pour un mandat : la cascade emporte les lignes, jamais
+    # les fichiers. Un client supprimé laissait sur le disque les dossiers de
+    # tous ses mandats, désormais impossibles à rattacher à quoi que ce soit.
+    mandats = (
+        await db.execute(select(Mandat.id).where(Mandat.client_id == client_id))
+    ).scalars().all()
+    fichiers = 0
+    for mandat_id in mandats:
+        libere = await purge.purger_mandat(db, mandat_id)
+        fichiers += libere.fichiers + libere.fiches
+    compte["fichiers_supprimes"] = fichiers
+
     await audit.record(
         db,
         action="client.delete",
@@ -355,6 +367,15 @@ async def supprimer_mandat(
     compte = await _compter_sous_arbre(db, mandat_id=mandat_id)
     _refuser_si_dossiers(compte, confirmer)
 
+    # Les fichiers d'abord, les lignes ensuite. La cascade SQL emporte les
+    # pièces et les postes, mais pas ce qu'ils désignent sur le disque : un
+    # mandat supprimé laissait derrière lui tous ses CV et sa fiche de poste,
+    # sans plus aucune ligne pour dire à quoi ils correspondaient. Purger
+    # avant la suppression est le seul moment où l'on sait encore les
+    # retrouver.
+    libere = await purge.purger_mandat(db, mandat_id)
+    compte["fichiers_supprimes"] = libere.fichiers + libere.fiches
+
     await audit.record(
         db,
         action="mandat.delete",
@@ -440,6 +461,7 @@ async def estimer_purge(mandat_id: str, db: DbSession, _: CurrentUser) -> dict:
         "fichiers": estimation.fichiers,
         "mo": estimation.mo,
         "candidatures": estimation.candidatures,
+        "fiches": estimation.fiches,
     }
 
 
@@ -470,6 +492,7 @@ async def purger(mandat_id: str, db: DbSession, user: CurrentUser) -> dict:
         details={
             "intitule": mandat.intitule,
             "fichiers": resultat.fichiers,
+            "fiches": resultat.fiches,
             "mo": resultat.mo,
         },
     )
@@ -478,4 +501,5 @@ async def purger(mandat_id: str, db: DbSession, user: CurrentUser) -> dict:
         "fichiers": resultat.fichiers,
         "mo": resultat.mo,
         "candidatures": resultat.candidatures,
+        "fiches": resultat.fiches,
     }

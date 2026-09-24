@@ -108,6 +108,34 @@ class Poste(Base, TimestampMixin):
     missions: Mapped[list | None] = mapped_column(JsonB)
     nombre_a_pourvoir: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
 
+    # --- présentation ------------------------------------------------------
+    # Ce que l'avis dit du poste sans que la présélection le note : où il
+    # s'exerce, à qui il rend compte, ce qu'on y attend. Les fiches de poste
+    # des clients portent toutes ces rubriques ; l'avis les reprenait à la
+    # main, ou les inventait.
+    localisation: Mapped[str | None] = mapped_column(sa.String(255))
+    rattachement: Mapped[str | None] = mapped_column(sa.String(255))
+    responsabilites: Mapped[list | None] = mapped_column(JsonB)
+    competences_techniques: Mapped[list | None] = mapped_column(JsonB)
+    competences_comportementales: Mapped[list | None] = mapped_column(JsonB)
+
+    # Vrai tant que la fiche n'a pas été remplie : le poste a été créé avec
+    # son seul intitulé, pour y revenir plus tard. Ses exigences sont alors
+    # les valeurs par défaut, pas une décision — et noter des dossiers ou
+    # publier un avis sur des valeurs par défaut ferait passer un oubli pour
+    # une règle. D'où un drapeau explicite plutôt qu'une supposition.
+    a_completer: Mapped[bool] = mapped_column(sa.Boolean, default=False, nullable=False)
+
+    # --- la fiche de poste reçue du client ---------------------------------
+    # Le document tel qu'il a été fourni, et son texte. Le fichier fait
+    # référence en cas de désaccord ; le texte sert à rédiger l'avis, qui doit
+    # dire du poste ce que la fiche en dit — pas ce qu'un modèle en imagine.
+    fiche_nom_fichier: Mapped[str | None] = mapped_column(sa.String(512))
+    fiche_chemin: Mapped[str | None] = mapped_column(sa.String(512))
+    fiche_type_mime: Mapped[str | None] = mapped_column(sa.String(128))
+    fiche_texte: Mapped[str | None] = mapped_column(sa.Text)
+    fiche_deposee_le: Mapped[datetime | None] = mapped_column(sa.DateTime)
+
     # --- exigences ---------------------------------------------------------
     niveau_min: Mapped[int] = mapped_column(sa.Integer, default=3, nullable=False, index=True)
     domaines_acceptes: Mapped[list | None] = mapped_column(JsonB)

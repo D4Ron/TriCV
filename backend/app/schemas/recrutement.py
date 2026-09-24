@@ -188,6 +188,16 @@ class PosteBase(BaseModel):
     missions: ListeTexte = Field(default_factory=list)
     nombre_a_pourvoir: int = Field(default=1, ge=1)
 
+    # Présentation : reprise par l'avis, jamais notée.
+    localisation: str | None = Field(default=None, max_length=255)
+    rattachement: str | None = Field(default=None, max_length=255)
+    responsabilites: ListeTexte = Field(default_factory=list)
+    competences_techniques: ListeTexte = Field(default_factory=list)
+    competences_comportementales: ListeTexte = Field(default_factory=list)
+    # Poste créé avec son seul intitulé : ses exigences sont des valeurs par
+    # défaut, pas une décision. Voir `Poste.a_completer`.
+    a_completer: Annotated[bool, BeforeValidator(lambda v: bool(v))] = False
+
     niveau_min: int = Field(default=3, ge=0, le=8)
     domaines_acceptes: ListeTexte = Field(default_factory=list)
     annees_experience_min: int = Field(default=0, ge=0, le=60)
@@ -241,6 +251,12 @@ class PosteUpdate(BaseModel):
     description: str | None = None
     missions: list[str] | None = None
     nombre_a_pourvoir: int | None = Field(default=None, ge=1)
+    localisation: str | None = Field(default=None, max_length=255)
+    rattachement: str | None = Field(default=None, max_length=255)
+    responsabilites: list[str] | None = None
+    competences_techniques: list[str] | None = None
+    competences_comportementales: list[str] | None = None
+    a_completer: bool | None = None
     niveau_min: int | None = Field(default=None, ge=0, le=8)
     domaines_acceptes: list[str] | None = None
     annees_experience_min: int | None = Field(default=None, ge=0, le=60)
@@ -270,6 +286,13 @@ class PosteOut(PosteBase):
     seuil_justification: str | None = None
     bareme: dict | None = None
     nombre_candidatures: int = 0
+    # La fiche fournie par le client. Le chemin de stockage ne sort pas : le
+    # fichier se télécharge par sa route, sous authentification.
+    fiche_nom_fichier: str | None = None
+    fiche_deposee_le: datetime | None = None
+    # Vrai quand l'avis peut être rédigé à partir du texte de la fiche — un
+    # document déposé, ou un texte collé.
+    fiche_a_texte: bool = False
 
 
 class SeuilIn(BaseModel):

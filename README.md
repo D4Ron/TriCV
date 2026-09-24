@@ -419,17 +419,41 @@ correct, and exporting again.
 
 ## The application mailbox
 
-Configured in the app, at **Paramètres › Boîte de candidatures**: address, password, IMAP server,
-port, folder, plus a **Tester la connexion** button. No restart, no file access. The values in
-`.env` only seed a fresh install.
+Configured in the app, under **Paramètres**, with a **Tester la connexion** button. No restart, no
+file access. The values in `.env` only seed a fresh install.
 
-The password is write-only: it goes to the server and never comes back — the API reports whether one
-is set, never its value, and the audit log records which settings changed, not their contents.
-Saving with the field left blank keeps the existing password.
+**Two routes, and a setting picks one.** A fresh install starts on **Microsoft 365**, which is what
+the firm runs; setting `IMAP_HOST` or `SMTP_HOST` in `.env` keeps an existing install on IMAP
+instead, so nobody's working mailbox flips on upgrade.
 
-**Gmail** needs 2-Step Verification and an **App password** (Google Account → Security → App
-passwords); the account password is rejected over IMAP. IMAP also has to be enabled in Gmail's
-settings. App passwords are displayed in groups of four — the spaces are stripped automatically.
+> The API and the mail layer support both routes today. The **settings screen still shows the IMAP
+> fields only** — choosing the provider and entering the Entra credentials from the interface is the
+> frontend half of this change, and it is not built yet. Until it is, a Microsoft 365 install is
+> configured through `.env` (`OAUTH_*`).
+
+| | |
+|---|---|
+| **Microsoft 365** *(default)* | Reads and sends over **Microsoft Graph**. Nothing to set on the IMAP/SMTP side — the same tenant, client ID and secret serve both directions |
+| **Autre fournisseur** | Classic IMAP + SMTP, for a client whose mailbox is elsewhere |
+
+Graph rather than IMAP-over-XOAUTH2 for Microsoft, because of what each costs to switch on: Graph
+needs an app registration, two **application** permissions (`Mail.ReadWrite`, `Mail.Send`) and an
+admin consent. The IMAP route needs all that *plus* re-enabling SMTP AUTH on the tenant and creating
+a service principal bound to the mailbox in Exchange PowerShell. For a firm that already has Entra
+ID, only the first fits in one meeting.
+
+**Restrict the app to the recruitment mailbox.** Those two permissions are tenant-wide by default —
+they reach every mailbox in the organisation. An Exchange *Application Access Policy* scopes them to
+the one address, and that step belongs in the same request to the administrator.
+
+Secrets are write-only: they go to the server and never come back — the API reports whether one is
+set, never its value, and the audit log records which settings changed, not their contents. Saving
+with the field left blank keeps the existing secret.
+
+**Gmail**, on the *autre fournisseur* route, needs 2-Step Verification and an **App password**
+(Google Account → Security → App passwords); the account password is rejected over IMAP, and IMAP
+has to be enabled in Gmail's settings. App passwords are displayed in groups of four — the spaces
+are stripped automatically.
 
 ### How a message becomes an application
 

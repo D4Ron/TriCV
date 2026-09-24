@@ -369,5 +369,8 @@ def avis_system_prompt() -> str:
         "cabinet : une condition inventée devient opposable.\n"
         "- Reprenez les intitulés de pièces exactement tels qu'ils sont "
         "donnés.\n"
+        "- N'écrivez aucune adresse, aucun lien ni aucun numéro de téléphone "
+        "qui ne figure pas dans les éléments fournis : un candidat qui écrit à "
+        "une adresse inventée perd sa candidature.\n"
         "- Répondez uniquement par le texte de l'avis, sans commentaire."
     )

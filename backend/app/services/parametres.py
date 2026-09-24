@@ -9,10 +9,16 @@ inscription libre, candidatures spontanées, boîtes de courriel — change avec
 l'usage et doit pouvoir se régler sans redémarrage ni accès au serveur.
 
 Les boîtes de courriel font exception à la règle « les secrets restent au
-déploiement » : leurs mots de passe sont réglables ici. Le motif est pratique et
-assumé — l'adresse de recrutement change avec les campagnes, et un mot de passe
-d'application Gmail se révoque et se recrée. Le secret n'est jamais renvoyé par
-l'API ; l'interface sait seulement s'il est renseigné.
+déploiement » : mots de passe d'application comme secrets Microsoft sont
+réglables ici. Le motif est pratique et assumé — l'adresse de recrutement
+change avec les campagnes, un secret d'application Entra expire à date fixe, et
+un mot de passe d'application se révoque sans prévenir. Aucun de ces secrets
+n'est renvoyé par l'API ; l'interface sait seulement s'il est renseigné.
+
+Le **fournisseur** de courriel se règle ici aussi. Une installation neuve part
+sur Microsoft 365 — la messagerie du cabinet, atteinte par Graph — et une
+installation qui portait déjà un hôte IMAP ou SMTP dans son `.env` reste sur ce
+chemin : personne ne doit voir sa boîte basculer à la faveur d'une mise à jour.
 
 Chaque écriture passe au journal d'audit par l'appelant : l'expurgation des
 données démographiques ou l'ouverture des candidatures spontanées sont des
@@ -99,6 +105,25 @@ OAUTH_REFRESH_TOKEN = "oauth_refresh_token"
 # serveur, qui ne connaît que sa propre adresse d'écoute.
 URL_PUBLIQUE = "url_publique"
 
+# Le fournisseur de la boîte. Deux voies, qui ne se configurent pas pareil :
+#
+# - « microsoft365 » : une boîte Microsoft 365 (Exchange Online), lue et
+#   utilisée pour l'envoi par Microsoft Graph. C'est la voie du cabinet : un
+#   abonnement professionnel, une application déclarée dans Entra, et rien à
+#   régler côté Exchange — ni principal de service à inscrire en PowerShell, ni
+#   SMTP AUTH à rouvrir sur la boîte, deux prérequis de la voie IMAP/SMTP
+#   auxquels un administrateur de petite structure se heurte.
+# - « imap » : tout autre fournisseur, par IMAP et SMTP.
+FOURNISSEUR_COURRIEL = "fournisseur_courriel"
+FOURNISSEUR_MICROSOFT365 = "microsoft365"
+FOURNISSEUR_IMAP = "imap"
+FOURNISSEURS = frozenset({FOURNISSEUR_MICROSOFT365, FOURNISSEUR_IMAP})
+
+# L'adresse que les candidats écrivent en cas de difficulté. Elle figure dans
+# l'avis, sur la page de candidature et dans l'aide. Vide, c'est l'adresse de
+# la boîte de recrutement qui sert : c'est elle que l'avis donne déjà.
+CONTACT_CANDIDATS = "contact_candidats"
+
 # Ce que l'API ne renvoie jamais en clair.
 SECRETS = frozenset(
     {
@@ -136,6 +161,41 @@ class Reglages:
     oauth_client_id: str = ""
     oauth_client_secret: str = ""
     oauth_refresh_token: str = ""
+    fournisseur_courriel: str = FOURNISSEUR_IMAP
+    contact_candidats: str = ""
+
+    @property
+    def microsoft365(self) -> bool:
+        return self.fournisseur_courriel == FOURNISSEUR_MICROSOFT365
+
+    @property
+    def graph_utilisable(self) -> bool:
+        """De quoi obtenir un jeton d'application pour Microsoft Graph.
+
+        Le flux application exige un tenant réel : « consumers » ou « common »
+        ne désignent aucune organisation, et Microsoft y refuse ce flux.
+        """
+        tenant = self.oauth_tenant.strip().lower()
+        return bool(
+            tenant
+            and tenant not in ("consumers", "common", "organizations")
+            and self.oauth_client_id.strip()
+            and self.oauth_client_secret.strip()
+        )
+
+    @property
+    def boite(self) -> str:
+        """L'adresse de la boîte de recrutement, quel que soit le fournisseur."""
+        return self.imap_user.strip()
+
+    @property
+    def contact(self) -> str:
+        """L'adresse que les candidats écrivent en cas de difficulté."""
+        return (
+            self.contact_candidats.strip()
+            or self.smtp_expediteur.strip()
+            or self.boite
+        )
 
     @property
     def config_oauth(self) -> ConfigOAuth:
@@ -158,6 +218,8 @@ class Reglages:
         Microsoft n'a pas de mot de passe qui fonctionne, et exiger les deux
         rendrait la fonction inatteignable pour elle.
         """
+        if self.microsoft365:
+            return bool(self.courriel_actif and self.boite and self.graph_utilisable)
         return bool(
             self.courriel_actif
             and self.imap_host
@@ -168,11 +230,20 @@ class Reglages:
     @property
     def envoi_utilisable(self) -> bool:
         """Expédiable : activé, avec un serveur et une adresse d'expéditeur."""
+        if self.microsoft365:
+            return bool(self.smtp_actif and self.expediteur and self.graph_utilisable)
         return bool(self.smtp_actif and self.smtp_host and self.expediteur)
 
     @property
     def expediteur(self) -> str:
-        """L'adresse « De : ». À défaut d'être réglée, le compte d'envoi."""
+        """L'adresse « De : ». À défaut d'être réglée, le compte d'envoi.
+
+        Chez Microsoft 365, il n'y a pas de compte d'envoi distinct : on écrit
+        depuis la boîte de recrutement, sauf si une autre adresse est réglée —
+        l'application doit alors avoir le droit d'envoyer en son nom.
+        """
+        if self.microsoft365:
+            return self.smtp_expediteur.strip() or self.boite
         return self.smtp_expediteur.strip() or self.smtp_user.strip()
 
 
@@ -206,6 +277,14 @@ def _defauts() -> Reglages:
         oauth_client_id=settings.oauth_client_id,
         oauth_client_secret=settings.oauth_client_secret,
         oauth_refresh_token=settings.oauth_refresh_token,
+        # Une installation déjà réglée en IMAP le reste ; une installation
+        # neuve part sur Microsoft 365, la messagerie du cabinet.
+        fournisseur_courriel=(
+            FOURNISSEUR_IMAP
+            if settings.imap_host or settings.smtp_host
+            else FOURNISSEUR_MICROSOFT365
+        ),
+        contact_candidats="",
     )
 
 
@@ -216,6 +295,7 @@ def _en_bool(valeur: str) -> bool:
 async def lire(db: AsyncSession) -> Reglages:
     """Les réglages effectifs : .env, surchargé par ce qui a été réglé."""
     reglages = _defauts()
+    fournisseur_choisi = False
     lignes = await db.execute(select(Parametre.cle, Parametre.valeur))
     for cle, valeur in lignes:
         try:
@@ -269,10 +349,25 @@ async def lire(db: AsyncSession) -> Reglages:
                 reglages.oauth_client_secret = valeur.strip()
             elif cle == OAUTH_REFRESH_TOKEN:
                 reglages.oauth_refresh_token = valeur.strip()
+            elif cle == FOURNISSEUR_COURRIEL:
+                if valeur.strip() in FOURNISSEURS:
+                    reglages.fournisseur_courriel = valeur.strip()
+                    fournisseur_choisi = True
+            elif cle == CONTACT_CANDIDATS:
+                reglages.contact_candidats = valeur.strip()
         except (TypeError, ValueError):
             # Une valeur illisible en base ne doit pas empêcher l'application
             # de démarrer : on retombe sur le défaut du fichier.
             continue
+    if not fournisseur_choisi:
+        # Jamais choisi à l'écran : une boîte IMAP déjà réglée — par le
+        # fichier ou par l'écran — reste en IMAP. Basculer d'office une
+        # installation qui relève correctement la couperait sans prévenir.
+        reglages.fournisseur_courriel = (
+            FOURNISSEUR_IMAP
+            if reglages.imap_host or reglages.smtp_host
+            else FOURNISSEUR_MICROSOFT365
+        )
     return reglages
 
 
