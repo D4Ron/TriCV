@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi, settingsApi } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { Callout, ErrorState, Field, PageLoader, Spinner, Toggle } from '@/components/ui'
+import PanneauUtilisateurs from '@/components/PanneauUtilisateurs'
 
 /**
  * Paramètres du cabinet.
@@ -24,6 +25,42 @@ import { Callout, ErrorState, Field, PageLoader, Spinner, Toggle } from '@/compo
  * vers le serveur et n'en reviennent jamais — le champ affiche « déjà défini »,
  * pas la valeur.
  */
+/** Un choix exclusif présenté en toutes lettres, pas en liste déroulante. */
+function Choix({
+  actif,
+  titre,
+  detail,
+  disabled,
+  onClick,
+}: {
+  actif: boolean
+  titre: string
+  detail: string
+  disabled?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      aria-pressed={actif}
+      className={`w-full rounded-lg border px-4 py-3 text-left transition disabled:opacity-60 ${
+        actif ? 'border-brand-400 bg-brand-50' : 'border-ink-200 bg-white hover:border-ink-300'
+      }`}
+    >
+      <span className="block text-sm font-semibold text-ink-900">{titre}</span>
+      <span className="mt-0.5 block text-xs leading-relaxed text-ink-500">{detail}</span>
+    </button>
+  )
+}
+
+const ONGLETS: Array<['general' | 'courriel' | 'comptes', string]> = [
+  ['general', 'Général'],
+  ['courriel', 'Courriel'],
+  ['comptes', 'Utilisateurs'],
+]
+
 export default function SettingsPage() {
   const queryClient = useQueryClient()
   const user = useAuthStore((state) => state.user)
@@ -60,6 +97,18 @@ export default function SettingsPage() {
   const [envoiResultat, setEnvoiResultat] = useState<string | null>(null)
   const [envoiErreur, setEnvoiErreur] = useState<string | null>(null)
 
+  // Par où passe le courriel. Microsoft a fermé l'authentification par mot de
+  // passe sur beaucoup de locataires : là où elle l'est, IMAP échoue quel que
+  // soit le mot de passe, et l'écran ne disait pas pourquoi.
+  const [fournisseur, setFournisseur] = useState<'imap' | 'microsoft365'>('imap')
+  const [tenant, setTenant] = useState('')
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+
+  const [contactCandidats, setContactCandidats] = useState('')
+
+  const [onglet, setOnglet] = useState<'general' | 'courriel' | 'comptes'>('general')
+
   // Le formulaire part de l'état du serveur, pas d'une valeur inventée.
   useEffect(() => {
     if (!reglages.data) return
@@ -78,9 +127,14 @@ export default function SettingsPage() {
     setSmtpTls(reglages.data.smtp_tls)
     setExpediteur(reglages.data.smtp_expediteur)
     setUrlPublique(reglages.data.url_publique)
+    setFournisseur(reglages.data.fournisseur_courriel)
+    setTenant(reglages.data.oauth_tenant)
+    setClientId(reglages.data.oauth_client_id)
+    setContactCandidats(reglages.data.contact_candidats)
     // Jamais réhydratés : le serveur ne renvoie aucun secret.
     setMotDePasse('')
     setSmtpMotDePasse('')
+    setClientSecret('')
   }, [reglages.data])
 
   const enregistrer = useMutation({
@@ -104,13 +158,21 @@ export default function SettingsPage() {
         smtp_tls: smtpTls,
         smtp_expediteur: expediteur.trim(),
         url_publique: urlPublique.trim(),
+        fournisseur_courriel: fournisseur,
+        oauth_tenant: tenant.trim(),
+        oauth_client_id: clientId.trim(),
+        // Vide = inchangé, comme les mots de passe.
+        oauth_client_secret: clientSecret,
+        contact_candidats: contactCandidats.trim(),
       }),
     onSuccess: () => {
       setErreur(null)
       setMessage('Réglages enregistrés.')
       setMotDePasse('')
       setSmtpMotDePasse('')
+      setClientSecret('')
       void queryClient.invalidateQueries({ queryKey: ['settings'] })
+      void queryClient.invalidateQueries({ queryKey: ['aide-publique'] })
       void queryClient.invalidateQueries({ queryKey: ['courriel', 'etat'] })
     },
     onError: (e) => {
@@ -152,6 +214,10 @@ export default function SettingsPage() {
     return <ErrorState error={reglages.error} onRetry={() => reglages.refetch()} />
 
   const s = reglages.data!
+  // Chez Microsoft, rien ne passe par un serveur IMAP ni SMTP : ni hôte, ni
+  // port, ni mot de passe. Les laisser à l'écran ferait croire qu'ils comptent,
+  // et on les remplirait avant de chercher pourquoi le relevé échoue encore.
+  const graph = fournisseur === 'microsoft365'
 
   return (
     <div className="max-w-2xl">
@@ -170,7 +236,35 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <section className="card mt-5 p-5">
+      {/* Trois onglets plutôt qu'une colonne de mille pixels : la pratique du
+          cabinet se règle une fois, le courriel se débogue à plusieurs
+          reprises, et les comptes s'ouvrent quand quelqu'un arrive. Rien ne
+          gagnait à les empiler. */}
+      <div className="mt-5 flex gap-1 border-b border-ink-200">
+        {ONGLETS.filter(([cle]) => cle !== 'comptes' || estAdmin).map(([cle, libelle]) => (
+          <button
+            key={cle}
+            type="button"
+            onClick={() => setOnglet(cle)}
+            className={`-mb-px shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+              onglet === cle
+                ? 'border-ink-900 text-ink-900'
+                : 'border-transparent text-ink-500 hover:text-ink-800'
+            }`}
+          >
+            {libelle}
+          </button>
+        ))}
+      </div>
+
+      {onglet === 'comptes' && (
+        <div className="mt-5">
+          <PanneauUtilisateurs />
+        </div>
+      )}
+
+      <section className={`card mt-5 p-5 ${onglet === 'comptes' ? 'hidden' : ''}`}>
+        <div className={onglet === 'general' ? '' : 'hidden'}>
         <h2 className="text-sm font-semibold text-ink-900">Pratique de recrutement</h2>
         <p className="mt-1 text-xs text-ink-500">
           {estAdmin
@@ -203,6 +297,129 @@ export default function SettingsPage() {
             hint="Un dossier reçu hors de tout avis — par la boîte de candidatures ou par le formulaire du site — rejoint le vivier sans être noté. Décoché, ces messages restent simplement signalés « non rattachés »."
           />
         </div>
+
+        </div>
+
+        <div className={onglet === 'courriel' ? '' : 'hidden'}>
+        <div>
+          <h2 className="text-sm font-semibold text-ink-900">Par où passe le courriel</h2>
+          <p className="mt-1 text-xs text-ink-500">
+            Microsoft a fermé l&apos;authentification par mot de passe sur beaucoup de
+            locataires professionnels. Là où elle l&apos;est, IMAP échoue quel que soit le mot de
+            passe saisi — y compris un mot de passe d&apos;application, que Microsoft n&apos;offre
+            pas non plus. Ce n&apos;est pas une erreur de saisie : c&apos;est le mauvais chemin.
+          </p>
+
+          <div className="mt-4 space-y-2">
+            <Choix
+              actif={fournisseur === 'imap'}
+              disabled={!estAdmin}
+              titre="IMAP et SMTP"
+              detail="Gmail avec un mot de passe d'application, une boîte OVH, Zoho, ou tout serveur classique."
+              onClick={() => setFournisseur('imap')}
+            />
+            <Choix
+              actif={fournisseur === 'microsoft365'}
+              disabled={!estAdmin}
+              titre="Microsoft 365 (Graph)"
+              detail="Une boîte Exchange Online. Demande une inscription d'application dans Entra ID, et le consentement d'un administrateur du locataire."
+              onClick={() => setFournisseur('microsoft365')}
+            />
+          </div>
+        </div>
+
+        {fournisseur === 'microsoft365' && (
+          <div className="mt-6 border-t border-ink-100 pt-5">
+            <h2 className="text-sm font-semibold text-ink-900">Accès Microsoft 365</h2>
+            <p className="mt-1 text-xs text-ink-500">
+              Ces trois valeurs viennent d&apos;une inscription d&apos;application dans Entra ID.
+              L&apos;application relève et envoie <em>sans utilisateur connecté</em> : les
+              permissions sont donc des permissions d&apos;application, pas déléguées, et elles
+              demandent le consentement d&apos;un administrateur du locataire.
+            </p>
+
+            <details className="mt-3 rounded-lg border border-ink-200 bg-ink-50 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-ink-700">
+                Les étapes, côté Entra ID
+              </summary>
+              <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs leading-relaxed text-ink-600">
+                <li>
+                  Entra ID › <b>Inscriptions d&apos;applications</b> › Nouvelle inscription. Un
+                  nom suffit ; aucune URI de redirection n&apos;est nécessaire.
+                </li>
+                <li>
+                  Relevez l&apos;<b>ID d&apos;application (client)</b> et l&apos;
+                  <b>ID de l&apos;annuaire (locataire)</b> sur la page Vue d&apos;ensemble.
+                </li>
+                <li>
+                  <b>Certificats et secrets</b> › Nouveau secret client. Copiez sa{' '}
+                  <em>valeur</em> tout de suite : elle n&apos;est plus affichée ensuite.
+                </li>
+                <li>
+                  <b>API autorisées</b> › Microsoft Graph ›{' '}
+                  <b>Autorisations d&apos;application</b> : <code>Mail.ReadWrite</code> et{' '}
+                  <code>Mail.Send</code>. Puis <b>Accorder un consentement administrateur</b> —
+                  sans ce clic, rien ne fonctionne.
+                </li>
+                <li>
+                  Ces permissions portent sur <em>toutes</em> les boîtes du locataire. Pour les
+                  restreindre à la seule boîte de recrutement, un administrateur Exchange
+                  exécute <code>New-ApplicationAccessPolicy</code>. C&apos;est fortement
+                  recommandé, et le service informatique du cabinet saura le faire.
+                </li>
+              </ol>
+            </details>
+
+            <div className="mt-4 space-y-4">
+              <Field
+                label="ID du locataire (tenant)"
+                htmlFor="oauth-tenant"
+                hint="L'« ID de l'annuaire (locataire) » de la page Vue d'ensemble. Un domaine — kapiconsult.onmicrosoft.com — est accepté aussi."
+              >
+                <input
+                  id="oauth-tenant"
+                  className="input"
+                  value={tenant}
+                  disabled={!estAdmin}
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  onChange={(e) => setTenant(e.target.value)}
+                />
+              </Field>
+
+              <Field label="ID de l'application (client)" htmlFor="oauth-client">
+                <input
+                  id="oauth-client"
+                  className="input"
+                  value={clientId}
+                  disabled={!estAdmin}
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  onChange={(e) => setClientId(e.target.value)}
+                />
+              </Field>
+
+              <Field
+                label="Secret client"
+                htmlFor="oauth-secret"
+                hint={
+                  s.oauth_client_secret_defini
+                    ? 'Déjà défini. Laissez vide pour le conserver. Un secret Entra expire — notez sa date d’échéance quelque part.'
+                    : 'La « valeur » du secret, pas son identifiant. Elle n’est affichée qu’une fois par Entra ID.'
+                }
+              >
+                <input
+                  id="oauth-secret"
+                  type="password"
+                  className="input"
+                  value={clientSecret}
+                  disabled={!estAdmin}
+                  autoComplete="new-password"
+                  placeholder={s.oauth_client_secret_defini ? '•••••••• (inchangé)' : ''}
+                  onChange={(e) => setClientSecret(e.target.value)}
+                />
+              </Field>
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 border-t border-ink-100 pt-5">
           <h2 className="text-sm font-semibold text-ink-900">Boîte de candidatures</h2>
@@ -237,6 +454,8 @@ export default function SettingsPage() {
               />
             </Field>
 
+            {!graph && (
+              <>
             <Field
               label="Mot de passe"
               htmlFor="imap-password"
@@ -283,6 +502,9 @@ export default function SettingsPage() {
               </Field>
             </div>
 
+              </>
+            )}
+
             <Field
               label="Dossier à relever"
               htmlFor="imap-folder"
@@ -301,7 +523,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 className="btn-ghost px-3 py-1.5 text-xs"
-                disabled={tester.isPending || !s.imap_host}
+                disabled={tester.isPending || !s.courriel_utilisable}
                 onClick={() => tester.mutate()}
               >
                 {tester.isPending && <Spinner />}
@@ -352,6 +574,8 @@ export default function SettingsPage() {
               />
             </Field>
 
+            {!graph && (
+              <>
             <Field label="Compte d'envoi" htmlFor="smtp-user">
               <input
                 id="smtp-user"
@@ -417,6 +641,9 @@ export default function SettingsPage() {
               hint="À laisser coché. Le port 465 chiffre dès l'ouverture et ignore ce réglage."
             />
 
+              </>
+            )}
+
             <Field
               label="Adresse publique de l'application"
               htmlFor="url-publique"
@@ -436,7 +663,7 @@ export default function SettingsPage() {
               <button
                 type="button"
                 className="btn-ghost px-3 py-1.5 text-xs"
-                disabled={testerEnvoi.isPending || !s.smtp_host}
+                disabled={testerEnvoi.isPending || !s.envoi_utilisable}
                 onClick={() => testerEnvoi.mutate()}
               >
                 {testerEnvoi.isPending && <Spinner />}
@@ -450,6 +677,39 @@ export default function SettingsPage() {
             {envoiResultat && <Callout tone="success">{envoiResultat}</Callout>}
             {envoiErreur && <Callout tone="danger">{envoiErreur}</Callout>}
           </div>
+        </div>
+
+        <div className="mt-6 border-t border-ink-100 pt-5">
+          <h2 className="text-sm font-semibold text-ink-900">
+            Adresse de contact des candidats
+          </h2>
+          <p className="mt-1 text-xs text-ink-500">
+            Celle qui paraît sur les pages publiques et sur la page d&apos;aide, pour un
+            candidat que le dépôt bloque. Mettez-y une boîte que quelqu&apos;un relève : une
+            adresse affichée et jamais lue vaut moins qu&apos;aucune adresse.
+          </p>
+
+          <div className="mt-4">
+            <Field
+              label="Adresse affichée aux candidats"
+              htmlFor="contact-candidats"
+              hint={`Laissée vide, c'est l'adresse d'expédition qui sert, puis la boîte de candidatures. Actuellement servie : ${
+                s.contact_effectif ||
+                'aucune — les pages publiques n’affichent alors pas de contact'
+              }.`}
+            >
+              <input
+                id="contact-candidats"
+                type="email"
+                className="input"
+                value={contactCandidats}
+                disabled={!estAdmin}
+                placeholder="recrutement@kapiconsult.tg"
+                onChange={(e) => setContactCandidats(e.target.value)}
+              />
+            </Field>
+          </div>
+        </div>
         </div>
 
         {message && <p className="mt-4 text-sm font-medium text-emerald-700">{message}</p>}

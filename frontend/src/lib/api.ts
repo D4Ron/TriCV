@@ -913,9 +913,41 @@ export const settingsApi = {
     smtp_tls?: boolean
     smtp_expediteur?: string
     url_publique?: string
+    fournisseur_courriel?: 'imap' | 'microsoft365'
+    oauth_tenant?: string
+    oauth_client_id?: string
+    /** Omis ou vide = inchangé, comme les mots de passe. */
+    oauth_client_secret?: string
+    contact_candidats?: string
   }) => request<DeploymentSettings>('/settings', { method: 'PATCH', body: payload }),
   /** Ouvre une session SMTP sans rien envoyer, pour valider la configuration. */
   testerEnvoi: () => request<{ ok: boolean; expediteur: string }>('/messagerie/test', { method: 'POST' }),
+}
+
+/**
+ * Les comptes du cabinet.
+ *
+ * L'API existait depuis longtemps ; aucun écran ne l'atteignait, si bien qu'un
+ * collègue ne pouvait être ajouté qu'en ouvrant l'inscription libre à tout
+ * internaute — un réglage qu'on oublie ensuite de refermer. Un compte ne se
+ * supprime pas : son nom figure au journal d'audit sur chaque décision qu'il a
+ * prise, et le désactiver ferme l'accès en gardant la trace.
+ */
+export const utilisateursApi = {
+  lister: () => request<User[]>('/auth/users'),
+  creer: (payload: {
+    email: string
+    password: string
+    full_name: string
+    role: 'ADMIN' | 'RECRUITER'
+  }) => request<User>('/auth/users', { method: 'POST', body: payload }),
+  modifier: (
+    id: string,
+    payload: { full_name?: string; role?: 'ADMIN' | 'RECRUITER'; is_active?: boolean },
+  ) => request<User>(`/auth/users/${id}`, { method: 'PATCH', body: payload }),
+  /** Le nouveau mot de passe est choisi par l'administrateur, et transmis par lui. */
+  motDePasse: (id: string, password: string) =>
+    request<void>(`/auth/users/${id}/password`, { method: 'POST', body: { password } }),
 }
 
 export interface AvisPublicItem {

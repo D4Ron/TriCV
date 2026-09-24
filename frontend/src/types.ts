@@ -199,6 +199,24 @@ export interface DeploymentSettings {
   envoi_utilisable: boolean
   /** Adresse publique de l'application, pour les liens envoyés par courriel. */
   url_publique: string
+
+  // --- par où passe le courriel ----------------------------------------------
+  /**
+   * `imap` (IMAP + SMTP) ou `microsoft365` (Graph).
+   *
+   * Microsoft a fermé l'authentification par mot de passe sur les boîtes
+   * professionnelles : là où elle est fermée, IMAP échoue quel que soit le mot
+   * de passe saisi, et rien dans l'écran ne l'expliquait.
+   */
+  fournisseur_courriel: 'imap' | 'microsoft365'
+  oauth_tenant: string
+  oauth_client_id: string
+  oauth_client_secret_defini: boolean
+
+  /** L'adresse que les candidats écrivent en cas de difficulté. */
+  contact_candidats: string
+  /** Celle réellement servie : le réglage, sinon l'expéditeur, sinon la boîte. */
+  contact_effectif: string
 }
 
 export interface PublicSession {
