@@ -16,6 +16,7 @@ import {
 import CandidatureDrawer from '@/components/CandidatureDrawer'
 import DepotEnLot from '@/components/DepotEnLot'
 import { LIBELLE_PIECE } from '@/lib/pieces'
+import { formatDate } from '@/lib/format'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import ChoisirDestinataires from '@/components/ChoisirDestinataires'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
@@ -645,7 +646,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
                 }`}
               >
                 {a.date_cloture
-                  ? `clôture le ${a.date_cloture}`
+                  ? `clôture le ${formatDate(a.date_cloture, 'fr')}`
                   : 'sans date de clôture — à fixer pour publier'}
               </span>
             </div>
@@ -1306,7 +1307,7 @@ export default function PosteDetailPage() {
           <h1 className="text-xl font-semibold tracking-tight text-ink-900">{p.intitule}</h1>
           <p className="mt-1 text-sm text-ink-500">
             {g.client_nom}
-            {g.date_reference ? ` · clôture le ${g.date_reference}` : ''}
+            {g.date_reference ? ` · clôture le ${formatDate(g.date_reference, 'fr')}` : ''}
           </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -1655,7 +1656,10 @@ export default function PosteDetailPage() {
           onClose={() => setChoixExport(false)}
           onExporte={(libelle) => {
             setErreur(null)
-            setCompteRendu(`${libelle} téléchargé.`)
+            // « Grille de présélection téléchargé » : le participe s'accordait
+            // avec un libellé dont on ne connaît pas le genre. Deux des cinq
+            // sont féminins. La tournure ci-dessous n'a rien à accorder.
+            setCompteRendu(`${libelle} : téléchargement terminé.`)
           }}
         />
       )}

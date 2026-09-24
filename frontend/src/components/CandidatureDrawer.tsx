@@ -4,7 +4,7 @@ import { ApiError, rapportsApi, recrutementApi } from '@/lib/api'
 import { LIBELLE_PIECE, libellePiece } from '@/lib/pieces'
 import { Callout, ErrorState, Spinner } from '@/components/ui'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
-import { formatDateTime } from '@/lib/format'
+import { formatDateTime, formatMois } from '@/lib/format'
 import type { Elimination, Provenance } from '@/types'
 
 const LIBELLE_PROVENANCE: Record<Provenance, string> = {
@@ -1056,7 +1056,7 @@ export default function CandidatureDrawer({
                       {e.poste} — {e.employeur}
                     </p>
                     <p className="text-xs text-ink-500">
-                      {e.debut} → {e.fin ?? 'en cours'}
+                      {formatMois(e.debut, 'fr')} → {e.fin ? formatMois(e.fin, 'fr') : 'en cours'}
                       {e.pays ? ` · ${e.pays}` : ''}
                     </p>
                   </div>

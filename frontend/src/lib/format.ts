@@ -55,6 +55,22 @@ export function formatDate(value: string | null | undefined, locale: string): st
   }).format(new Date(iso))
 }
 
+/**
+ * Un mois et une année, sans le jour.
+ *
+ * Les bornes d'une expérience se saisissent au mois : le jour vaut 1 parce
+ * qu'il faut bien une date, pas parce que quelqu'un l'a renseigné. L'afficher
+ * — « 01 janv. 2022 » — annonce une précision que personne n'a fournie, et
+ * qu'un relecteur pourrait prendre pour une date exacte lue sur le CV.
+ */
+export function formatMois(value: string | null | undefined, locale: string): string {
+  if (!value) return '—'
+  const iso = value.endsWith('Z') || value.includes('+') ? value : `${value}Z`
+  return new Intl.DateTimeFormat(locale, { month: 'short', year: 'numeric' }).format(
+    new Date(iso),
+  )
+}
+
 export function formatDateTime(value: string | null | undefined, locale: string): string {
   if (!value) return '—'
   const iso = value.endsWith('Z') || value.includes('+') ? value : `${value}Z`

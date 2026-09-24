@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SCORE_BG, SCORE_TEXT, formatScore, scoreTone } from '@/lib/format'
 
@@ -203,6 +204,25 @@ export function Modal({
   tone?: 'neutral' | 'danger'
 }) {
   const { t } = useTranslation()
+
+  // Échap ferme la fenêtre.
+  //
+  // Elle se ferme au clic sur le fond et sur la croix, et se disait pourtant
+  // `aria-modal` : quiconque navigue au clavier attend Échap, et ne trouvait
+  // qu'une tabulation vers la croix. Le geste est universel ; ne pas le servir
+  // n'est pas un choix, c'est un oubli.
+  //
+  // L'écouteur est posé sur le document et non sur le panneau, parce que le
+  // focus se trouve le plus souvent dans un champ, parfois nulle part.
+  useEffect(() => {
+    if (!open) return undefined
+    const surTouche = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', surTouche)
+    return () => document.removeEventListener('keydown', surTouche)
+  }, [open, onClose])
+
   if (!open) return null
   return (
     <div
