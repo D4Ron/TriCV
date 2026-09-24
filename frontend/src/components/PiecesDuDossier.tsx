@@ -1,6 +1,6 @@
 import { Field } from '@/components/ui'
 import { GROUPES_TYPES, PIECES_EXIGIBLES } from '@/lib/pieces'
-import type { Poste } from '@/types'
+import type { GroupePieces, Poste } from '@/types'
 
 /**
  * Les pièces exigées d'un candidat, en un seul écran partagé.
@@ -38,11 +38,23 @@ export const CHOIX_PAR_DEFAUT: ChoixPieces = {
 const memesCodes = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|')
 
-/** Relit un poste enregistré comme un choix affichable. */
-export function piecesDepuis(poste: Poste): ChoixPieces {
-  const groupes = (poste.groupes_pieces ?? [])
+/**
+ * Les index de `GROUPES_TYPES` que ces groupes désignent.
+ *
+ * Le référentiel fait foi : un groupe venu d'ailleurs — d'une fiche lue, d'un
+ * poste enregistré avant que la liste existe — n'est retenu que s'il retombe
+ * sur l'un des nôtres. Le libellé ne compte pas dans la comparaison ; c'est le
+ * jeu de codes et le mode qui font le groupe.
+ */
+export function groupesDepuis(groupes: GroupePieces[] | null | undefined): number[] {
+  return (groupes ?? [])
     .map((g) => GROUPES_TYPES.findIndex((t) => t.mode === g.mode && memesCodes(t.codes, g.codes)))
     .filter((i) => i >= 0)
+}
+
+/** Relit un poste enregistré comme un choix affichable. */
+export function piecesDepuis(poste: Poste): ChoixPieces {
+  const groupes = groupesDepuis(poste.groupes_pieces)
   const formats = poste.formats_pieces ?? {}
   return {
     requises: poste.pieces_requises,

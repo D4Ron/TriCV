@@ -19,9 +19,11 @@ import { NIVEAUX } from '@/lib/niveaux'
 import { enListe } from '@/lib/pieces'
 import PiecesDuDossier, {
   CHOIX_PAR_DEFAUT,
+  groupesDepuis,
   piecesVers,
   type ChoixPieces,
 } from '@/components/PiecesDuDossier'
+import type { GroupePieces } from '@/types'
 import DepartPoste, { type Depart } from '@/components/DepartPoste'
 
 
@@ -88,8 +90,21 @@ function NouveauPoste({ mandatId, onClose }: { mandatId: string; onClose: () => 
     setExperience(depuis(v, 'annees_experience_min', 5))
     setExperienceSpec(depuis(v, 'annees_experience_specifique_min', 3))
     setDomainesExp(depuis<string[]>(v, 'domaines_experience', []).join(', '))
-    const lues = depuis<string[]>(v, 'pieces_requises', [])
-    if (lues.length) setChoixPieces((c) => ({ ...c, requises: lues }))
+    // Les pièces d'un coup : exigées, facultatives et alternatives se lisent sur
+    // la même rubrique, et n'en reprendre qu'une partie ferait dire à la fiche
+    // autre chose que ce qu'elle dit — « la CNI ou le passeport » deviendrait
+    // deux exigences, ou rien.
+    const requises = depuis<string[]>(v, 'pieces_requises', [])
+    const facultatives = depuis<string[]>(v, 'pieces_facultatives', [])
+    const groupes = groupesDepuis(depuis<GroupePieces[]>(v, 'groupes_pieces', []))
+    if (requises.length || facultatives.length || groupes.length) {
+      setChoixPieces((c) => ({
+        ...c,
+        requises: requises.length ? requises : c.requises,
+        facultatives,
+        groupes,
+      }))
+    }
   }
 
   const creer = useMutation({

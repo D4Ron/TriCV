@@ -57,6 +57,7 @@ CHAMPS = (
     "langues_requises",
     "pieces_requises",
     "pieces_facultatives",
+    "groupes_pieces",
 )
 
 _LISTES = frozenset(
@@ -79,7 +80,10 @@ _LISTES = frozenset(
 # tel il exigerait un document que le portail ne sait pas demander — le
 # candidat le verrait manquant sans pouvoir le fournir. La trame les lit, ou
 # personne ne les lit.
-_CHAMPS_ASSISTES = tuple(c for c in CHAMPS if not c.startswith("pieces_"))
+_CHAMPS_DES_PIECES = frozenset(
+    {"pieces_requises", "pieces_facultatives", "groupes_pieces"}
+)
+_CHAMPS_ASSISTES = tuple(c for c in CHAMPS if c not in _CHAMPS_DES_PIECES)
 
 _ENTIERS = frozenset(
     {
@@ -278,30 +282,74 @@ _PIECES_CONNUES: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 # « CV » seul, en capitales ou non, mais pas le « cv » d'un autre mot.
 _CV_SEUL = re.compile(r"\bcv\b", re.I)
+# « CNI ou passeport », « l'un ou l'autre » : un choix, pas deux exigences.
+# Le « ou » doit être un mot entier — « oui », « pourvoir » et « ou » ne se
+# distinguent que par là.
+_ALTERNATIVE = re.compile(r"\b(?:ou|soit)\b", re.I)
+
 # « (facultatif) », « le cas échéant », « optionnel » : la pièce est acceptée,
 # son absence n'élimine pas. La distinction n'est pas cosmétique — elle décide
 # qui reste dans la sélection.
 _FACULTATIF = ("facultat", "optionnel", "le cas echeant", "si disponible", "eventuel")
 
 
+def _codes_de(ligne: str) -> list[str]:
+    """Les pièces que cette ligne nomme, dans l'ordre du référentiel."""
+    cle = _sans_accents(_nettoyer_element(ligne))
+    if not cle:
+        return []
+    return [
+        code
+        for code, mots in _PIECES_CONNUES
+        if any(m in cle for m in mots) or (code == "CV" and _CV_SEUL.search(cle))
+    ]
+
+
 def _pieces(lignes: list[str]) -> dict[str, object]:
-    """Les pièces citées par la fiche, réparties entre exigées et facultatives."""
+    """Les pièces citées par la fiche : exigées, facultatives, et alternatives.
+
+    « La carte nationale d'identité **ou** le passeport » est la formule
+    ordinaire des avis de la sous-région, et elle énonce un choix. Lue comme
+    deux exigences — ce qu'elle devenait —, elle écartait pour CNI manquante un
+    candidat qui avait joint son passeport. C'est précisément l'élimination que
+    les groupes de pièces existent pour empêcher, et elle se serait produite en
+    silence : l'écran aurait affiché deux pièces exigées, ce qui se relit comme
+    une décision du cabinet.
+
+    Le « et » ne pose pas le même problème : deux pièces indissociables se
+    disent aussi bien par deux exigences séparées.
+    """
     requises: list[str] = []
     facultatives: list[str] = []
+    groupes: list[dict[str, object]] = []
+    vus: set[str] = set()
+
     for ligne in lignes:
-        cle = _sans_accents(_nettoyer_element(ligne))
-        if not cle:
+        codes = [c for c in _codes_de(ligne) if c not in vus]
+        if not codes:
             continue
-        ou = facultatives if any(m in cle for m in _FACULTATIF) else requises
-        for code, mots in _PIECES_CONNUES:
-            reconnue = any(m in cle for m in mots) or (code == "CV" and _CV_SEUL.search(cle))
-            if reconnue and code not in requises and code not in facultatives:
-                ou.append(code)
+        cle = _sans_accents(_nettoyer_element(ligne))
+        vus.update(codes)
+
+        if len(codes) > 1 and _ALTERNATIVE.search(cle):
+            groupes.append(
+                {
+                    "codes": codes,
+                    "mode": "AU_MOINS_UNE",
+                    "libelle": _nettoyer_element(ligne)[:120],
+                }
+            )
+            continue
+
+        (facultatives if any(m in cle for m in _FACULTATIF) else requises).extend(codes)
+
     trouve: dict[str, object] = {}
     if requises:
         trouve["pieces_requises"] = requises
     if facultatives:
         trouve["pieces_facultatives"] = facultatives
+    if groupes:
+        trouve["groupes_pieces"] = groupes
     return trouve
 
 

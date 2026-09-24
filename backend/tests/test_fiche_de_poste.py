@@ -124,6 +124,41 @@ def test_les_pieces_a_fournir_ferment_la_rubrique_precedente():
     assert lu["pieces_facultatives"] == ["LETTRE_RECOMMANDATION"]
 
 
+def test_deux_pieces_au_choix_font_un_groupe_et_non_deux_exigences():
+    """« La CNI ou le passeport » est un choix ; deux exigences éliminent.
+
+    C'est la formule ordinaire des avis de la sous-région. Lue comme deux
+    pièces obligatoires, elle écarte pour CNI manquante un candidat qui a joint
+    son passeport — et l'écran affiche deux exigences, ce qui se relit comme une
+    décision du cabinet plutôt que comme une erreur de lecture.
+    """
+    lu = fiche_poste.lire_trame(
+        "Intitulé du poste : Comptable\n"
+        "PIÈCES À FOURNIR\n"
+        "Un CV détaillé\n"
+        "Une copie de la carte nationale d'identité ou du passeport\n"
+    )
+    assert lu["pieces_requises"] == ["CV"]
+    assert lu["groupes_pieces"] == [
+        {
+            "codes": ["PIECE_IDENTITE", "PASSEPORT"],
+            "mode": "AU_MOINS_UNE",
+            "libelle": "Une copie de la carte nationale d'identité ou du passeport",
+        }
+    ]
+
+
+def test_deux_pieces_liees_par_et_restent_deux_exigences():
+    """Deux pièces indissociables se disent aussi bien séparément."""
+    lu = fiche_poste.lire_trame(
+        "Intitulé du poste : Comptable\n"
+        "PIÈCES À FOURNIR\n"
+        "Les copies des diplômes et les attestations de travail\n"
+    )
+    assert lu["pieces_requises"] == ["COPIE_DIPLOMES", "ATTESTATIONS_TRAVAIL"]
+    assert "groupes_pieces" not in lu
+
+
 def test_une_piece_hors_nomenclature_est_ignoree():
     """Le vocabulaire des pièces est fermé : un code inventé n'exigerait rien."""
     lu = fiche_poste.lire_trame(
