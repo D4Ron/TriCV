@@ -33,6 +33,7 @@ RUN python -m spacy download fr_core_news_md \
 COPY backend/alembic.ini .
 COPY backend/alembic ./alembic
 COPY backend/app ./app
+COPY backend/tools ./tools
 COPY backend/tests ./tests
 COPY backend/pytest.ini .
 COPY backend/entrypoint.sh .
