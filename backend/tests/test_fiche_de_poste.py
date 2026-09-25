@@ -565,3 +565,21 @@ async def test_une_adresse_de_contact_invalide_est_refusee(client, auth):
         f"{API}/settings", json={"contact_candidats": "pas une adresse"}, headers=auth
     )
     assert reponse.status_code == 422
+
+
+def test_l_avis_dit_de_cliquer_sur_le_lien_et_d_envoyer_le_formulaire():
+    from types import SimpleNamespace
+
+    avis = SimpleNamespace(cle_publique="abc123", reference="")
+    lignes = redaction_avis.modalites(avis, _reglages(url_publique="https://r.kapi.tg"))
+    consigne = lignes[0]
+    assert "cliquez sur le lien" in consigne
+    assert "« Envoyer ma candidature »" in consigne
+    assert consigne.endswith("https://r.kapi.tg/apply/abc123")
+    assert "« Candidature enregistrée »" in lignes[1]
+
+
+def test_le_lien_candidat_pointe_par_defaut_sur_le_domaine_du_cabinet():
+    from app.config import Settings
+
+    assert Settings.model_fields["url_publique"].default == "https://recruitement.kapiconsult.tg"

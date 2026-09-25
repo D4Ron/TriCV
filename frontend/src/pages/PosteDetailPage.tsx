@@ -17,6 +17,7 @@ import CandidatureDrawer from '@/components/CandidatureDrawer'
 import DepotEnLot from '@/components/DepotEnLot'
 import { LIBELLE_PIECE } from '@/lib/pieces'
 import { formatDate } from '@/lib/format'
+import { PUBLIC_URL } from '@/lib/config'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import ChoisirDestinataires from '@/components/ChoisirDestinataires'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
@@ -707,7 +708,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
                   <div className="w-full">
                     <CopyField
                       label="Lien de candidature"
-                      value={`${window.location.origin}/apply/${a.cle_publique}`}
+                      value={`${PUBLIC_URL}/apply/${a.cle_publique}`}
                     />
                   </div>
                 </>
