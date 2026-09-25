@@ -67,7 +67,19 @@ def modalites(avis: Avis | None, reglages: Reglages | None) -> list[str]:
     lignes: list[str] = []
     lien = _lien_candidature(avis, reglages)
     if lien:
-        lignes.append(f"Candidature en ligne : {lien}")
+        # Un lien seul, posé en fin d'avis, se lit comme une référence et non
+        # comme la marche à suivre : l'avis dit donc quoi en faire, jusqu'à
+        # l'envoi du formulaire, avec les libellés exacts de la page.
+        lignes.append(
+            "Pour déposer votre dossier, cliquez sur le lien suivant (ou "
+            "copiez-le dans la barre d'adresse de votre navigateur), remplissez "
+            "le formulaire, joignez les pièces demandées, puis cliquez sur "
+            f"« Envoyer ma candidature » : {lien}"
+        )
+        lignes.append(
+            "Votre dossier n'est enregistré qu'une fois ce formulaire envoyé : "
+            "attendez l'écran « Candidature enregistrée » avant de fermer la page."
+        )
     boite = reglages.boite if reglages is not None else ""
     if boite:
         objet = f" en indiquant « [{avis.reference}] » dans l'objet" if avis and avis.reference else ""
@@ -462,6 +474,12 @@ def _consigne(
             "intertitres. Si le modèle contient des exigences qui ne figurent "
             "pas dans les éléments opposables, ignorez-les."
         )
+    consigne += (
+        "\n\nDans les modalités de dépôt, reprenez mot pour mot la consigne qui "
+        "accompagne le lien de candidature : le candidat doit comprendre qu'il "
+        "dépose son dossier en cliquant sur ce lien, en remplissant le "
+        "formulaire et en validant l'envoi."
+    )
     if avec_aide:
         consigne += (
             f"\n\nTerminez par la section « {TITRE_AIDE} », qui reprend mot pour "

@@ -45,3 +45,13 @@ function resolveApiUrl(): string {
 export const API_URL = resolveApiUrl()
 
 export const API_BASE = `${API_URL}/api/v1`
+
+/**
+ * Where candidates reach the application. Links handed out to them (the
+ * /apply page of a job posting) are built on this domain rather than on
+ * whatever address the recruiter happens to be using — an internal host or a
+ * tunnel means nothing to a candidate. VITE_PUBLIC_URL overrides it at build.
+ */
+export const PUBLIC_URL = (
+  (import.meta.env.VITE_PUBLIC_URL as string | undefined) || 'https://recrutement.kapiconsult.tg'
+).replace(/\/$/, '')

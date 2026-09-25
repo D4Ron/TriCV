@@ -1,12 +1,13 @@
 import { useTranslation } from 'react-i18next'
 import { API_URL } from '@/lib/api'
+import { PUBLIC_URL } from '@/lib/config'
 import { Callout, CopyField } from '@/components/ui'
 import type { RecruitmentSession } from '@/types'
 
 export default function SharePanel({ session }: { session: RecruitmentSession }) {
   const { t } = useTranslation()
 
-  const applyUrl = `${window.location.origin}/apply/${session.public_key}`
+  const applyUrl = `${PUBLIC_URL}/apply/${session.public_key}`
   const widgetSnippet = [
     '<div id="tricv-widget"></div>',
     `<script src="${API_URL.replace(/\/$/, '')}/widget.js"`,

@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     # Adresse publique de l'application, pour les liens envoyés par courriel
     # (activation d'un accès client, page d'un avis). Sans elle, les messages
     # partent sans lien plutôt qu'avec un lien vers « localhost ».
-    url_publique: str = ""
+    url_publique: str = "https://recrutement.kapiconsult.tg"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
