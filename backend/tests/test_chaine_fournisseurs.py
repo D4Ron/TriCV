@@ -43,7 +43,7 @@ class Faux(LLMProvider):
     async def structure_fiche(self, raw_text, language="fr"):  # pragma: no cover
         raise NotImplementedError
 
-    async def rediger(self, consigne, contexte, systeme="", titre=""):
+    async def rediger(self, consigne, contexte, systeme="", titre="", cloture=""):
         self.appels += 1
         if self.erreur:
             raise self.erreur

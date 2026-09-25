@@ -47,6 +47,7 @@ import logging
 import time
 from collections.abc import Sequence
 
+from app.llm import prompts
 from app.llm.base import (
     AnalysisResult,
     CriterionDraft,
@@ -183,13 +184,18 @@ class ChaineFournisseurs(LLMProvider):
         )
 
     async def rediger(
-        self, consigne: str, contexte: str, systeme: str = "", titre: str = ""
+        self,
+        consigne: str,
+        contexte: str,
+        systeme: str = "",
+        titre: str = "",
+        cloture: str = prompts.CLOTURE_SECTION,
     ) -> str:
         # La prose part au client sous la signature du cabinet : elle suit son
         # propre ordre de fournisseurs quand on en a déclaré un.
         return await self._essayer(
             f"rédaction de « {titre or 'une section'} »",
-            lambda f: f.rediger(consigne, contexte, systeme, titre),
+            lambda f: f.rediger(consigne, contexte, systeme, titre, cloture),
             defaut="",
             ordre=self.prose,
         )

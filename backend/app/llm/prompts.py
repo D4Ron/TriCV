@@ -344,7 +344,17 @@ REDACTION_SYSTEM = (
 )
 
 
-def redaction_user_prompt(consigne: str, contexte: str) -> str:
+# La dernière ligne d'un prompt pèse plus que les autres, et celle-ci disait
+# « Rédigez la section demandée » à un modèle chargé d'écrire un avis entier.
+# Le mot « section » au singulier arrivait après deux mille signes de consignes
+# de développement et les contredisait en six mots. Les rapports, eux, se
+# rédigent bien section par section : la valeur par défaut reste la leur.
+CLOTURE_SECTION = "Rédigez la section demandée."
+
+
+def redaction_user_prompt(
+    consigne: str, contexte: str, cloture: str = CLOTURE_SECTION
+) -> str:
     return (
         f"{consigne}\n"
         "\n"
@@ -353,22 +363,119 @@ def redaction_user_prompt(consigne: str, contexte: str) -> str:
         f"{contexte}\n"
         "---\n"
         "\n"
-        "Rédigez la section demandée."
+        f"{cloture}"
     )
 
 
+# Ce que le modèle lit en dernier avant d'écrire **une section** de l'avis.
+# Volontairement redondant avec la consigne : c'est la place qui compte, pas la
+# nouveauté. La borne — « cette section et rien d'autre » — n'est pas une
+# précaution de style : sans elle, sommé d'écrire le profil recherché, le
+# modèle enchaînait sur le dossier de candidature et les modalités de dépôt,
+# qui sont écrits par le code. L'avis portait alors deux fois les mêmes
+# rubriques, dont une inventée.
+CLOTURE_AVIS_SECTION = (
+    "Rédigez maintenant cette section, et elle seule.\n"
+    "- N'écrivez pas son titre : il est ajouté automatiquement. Commencez "
+    "directement par le texte.\n"
+    "- N'enchaînez sur aucune autre rubrique de l'avis, même si elle vous "
+    "semble manquer : les pièces à fournir, la date limite, le lien de "
+    "candidature et le contact sont écrits ailleurs, mot pour mot.\n"
+    "- Les données ci-dessus sont des notes internes ; votre texte est publié. "
+    "Reprenez chaque élément en phrases pleines, pas en puce recopiée.\n"
+    "- N'ajoutez aucun élément à aucune liste, et n'en retirez aucun. Les "
+    "diplômes, durées et dates se recopient mot pour mot."
+)
+
+# Ce que le modèle lit en dernier quand un modèle imposé commande la trame :
+# là, il écrit l'avis d'un seul tenant.
+CLOTURE_AVIS = (
+    "Rédigez maintenant l'avis complet, toutes sections dans l'ordre annoncé.\n"
+    "Avant de répondre, rappelez-vous :\n"
+    "- les données ci-dessus sont des notes internes ; votre texte est publié. "
+    "Reprenez chaque responsabilité et chaque compétence en phrases pleines, "
+    "pas en puce recopiée ;\n"
+    "- n'ajoutez aucun élément à aucune liste, et n'en retirez aucun ;\n"
+    "- les diplômes, durées, dates, pièces, adresses et liens se recopient mot "
+    "pour mot."
+)
+
+
 def avis_system_prompt() -> str:
+    # La consigne disait « phrases courtes », et rien sur la longueur d'ensemble.
+    # Le modèle rendait quinze lignes : un aide-mémoire, là où le cabinet publie
+    # un avis que des candidats lisent pour décider s'ils postulent. Un poste de
+    # direction dont l'avis tient en un écran ne trouve pas ses candidats.
+    #
+    # La brièveté n'était pourtant pas une précaution inutile : un avis publié
+    # est opposable, et un modèle qui développe est un modèle qui invente. D'où
+    # la distinction qui tient tout ce prompt — on développe ce que la fiche
+    # **décrit**, jamais ce qu'elle **exige**. Le contexte, la mission, les
+    # responsabilités, le déroulement : tout cela s'étoffe sans engager
+    # personne. Un diplôme, une durée, une pièce, une date : cela se recopie,
+    # et rien de plus.
     return (
         "Vous rédigez un avis de recrutement destiné à être publié, pour un "
         "cabinet de conseil basé à Lomé (Togo). Registre administratif, "
-        "français soutenu, phrases courtes.\n"
+        "français soutenu.\n"
+        "\n"
+        "Longueur et développement :\n"
+        "- Rédigez un avis complet, tel qu'un cabinet le publie : des "
+        "paragraphes pleins, pas des notes. Le lecteur est un candidat qui "
+        "décide s'il consacre plusieurs jours à constituer un dossier ; il lui "
+        "faut de quoi se reconnaître dans le poste, ou y renoncer.\n"
+        "- Exploitez **toute** la matière fournie. Chaque responsabilité, "
+        "chaque compétence, chaque qualité citée mérite d'être reprise et "
+        "située — ce qu'elle recouvre dans ce poste, à quoi elle sert. Une "
+        "donnée fournie que vous laissez de côté est une section inachevée.\n"
+        # Les listes sont fermées par précaution, pas après incident : un avis
+        # est opposable, et une compétence ajoutée pour étoffer une section
+        # nomme une norme ou un logiciel que le poste n'exige pas. Le
+        # candidat qui s'y fie postule à un autre métier.
+        "- Mais les listes sont **fermées**. Développer une responsabilité, "
+        "c'est en dire plus long ; ce n'est jamais en ajouter une autre. "
+        "Quand la consigne annonce combien la fiche en donne, ce nombre est "
+        "exact : comptez les vôtres avant de répondre.\n"
+        # Le vrai défaut mesuré était ailleurs : le modèle recopiait chaque
+        # responsabilité en une puce, mot pour mot. L'avis faisait alors la
+        # longueur de la fiche — c'est-à-dire d'une note interne — là où le
+        # cabinet publie un texte rédigé. Recopier n'est pas développer.
+        "- Une puce recopiée n'est pas un développement. La fiche de poste "
+        "est une note interne, écrite en style télégraphique ; l'avis est un "
+        "texte publié. Reprenez donc chaque élément **en phrases** : ce "
+        "qu'il recouvre concrètement dans ce poste, avec qui ou sur quoi il "
+        "s'exerce. Les sections « mission et responsabilités » et « profil "
+        "recherché » se rédigent en paragraphes ; n'y laissez une liste à "
+        "puces que si chaque puce porte elle-même une ou deux phrases "
+        "pleines. Les pièces du dossier, elles, restent une liste sèche : "
+        "c'est une énumération administrative, et la développer serait la "
+        "modifier.\n"
+        "- Ce qui s'étoffe : le contexte, la mission, les responsabilités, le "
+        "profil décrit, le déroulement du dépôt. Ce qui ne s'étoffe pas : les "
+        "exigences. Un niveau de diplôme, un nombre d'années, un intitulé de "
+        "pièce, une date se recopient tels quels — les commenter revient à les "
+        "modifier.\n"
+        "- N'étirez jamais par du remplissage. Interdits : les formules "
+        "creuses, les généralités sur le recrutement qui vaudraient pour "
+        "n'importe quel poste, les redites, et les annonces de ce que vous "
+        "allez dire. Si la matière manque pour atteindre la longueur demandée, "
+        "faites plus court : un avis bref et exact vaut mieux qu'un avis étoffé "
+        "de vraisemblances.\n"
         "\n"
         "Règles absolues :\n"
         "- N'ajoutez aucune exigence, aucun avantage, aucune date qui ne "
         "figure pas dans la fiche de poste fournie. Un avis publié engage le "
         "cabinet : une condition inventée devient opposable.\n"
+        "- N'annoncez ni rémunération, ni type de contrat, ni durée, ni "
+        "avantage — logement, véhicule, prise en charge — que les données ne "
+        "donnent pas. C'est ce qu'un candidat lit en premier, et ce qu'il "
+        "reprochera au cabinet.\n"
+        "- Ne décrivez aucune étape de sélection que les données n'annoncent "
+        "pas : ni nombre d'entretiens, ni test, ni délai de réponse.\n"
         "- Reprenez les intitulés de pièces exactement tels qu'ils sont "
-        "donnés.\n"
+        "donnés. Quand deux pièces sont présentées au choix — « l'une ou "
+        "l'autre » —, dites-le comme un choix ; les exiger toutes deux écarte "
+        "des candidats en règle.\n"
         "- N'écrivez aucune adresse, aucun lien ni aucun numéro de téléphone "
         "qui ne figure pas dans les éléments fournis : un candidat qui écrit à "
         "une adresse inventée perd sa candidature.\n"

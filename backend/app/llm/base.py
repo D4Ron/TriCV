@@ -353,7 +353,12 @@ class LLMProvider(ABC):
         return DossierExtrait()
 
     async def rediger(
-        self, consigne: str, contexte: str, systeme: str = "", titre: str = ""
+        self,
+        consigne: str,
+        contexte: str,
+        systeme: str = "",
+        titre: str = "",
+        cloture: str = prompts.CLOTURE_SECTION,
     ) -> str:
         """Propose un paragraphe à partir de données fournies.
 
@@ -485,7 +490,12 @@ class BaseLLMProvider(LLMProvider):
             ) from exc
 
     async def rediger(
-        self, consigne: str, contexte: str, systeme: str = "", titre: str = ""
+        self,
+        consigne: str,
+        contexte: str,
+        systeme: str = "",
+        titre: str = "",
+        cloture: str = prompts.CLOTURE_SECTION,
     ) -> str:
         # `json_mode=False` : c'est de la prose qu'on demande ici. Le mode JSON
         # était armé sur tous les appels, y compris celui-ci — un modèle
@@ -494,7 +504,7 @@ class BaseLLMProvider(LLMProvider):
         # les rapports.
         raw = await self._guarded(
             systeme or prompts.REDACTION_SYSTEM,
-            prompts.redaction_user_prompt(consigne, contexte),
+            prompts.redaction_user_prompt(consigne, contexte, cloture),
             None,
             json_mode=False,
         )

@@ -443,7 +443,11 @@ async def test_la_redaction_assistee_lit_la_fiche_jointe(client, auth, monkeypat
     await client.post(f"{API}/postes/{poste_id}/fiche", data={"texte": FICHE}, headers=auth)
     avis = (await client.get(f"{API}/postes/{poste_id}/avis", headers=auth)).json()[0]
 
-    recu: dict = {}
+    # L'avis se rédige section par section : on retient tous les appels, pas
+    # le dernier. Un seul appel réclamant « l'avis complet » rendait les
+    # responsabilités recopiées en puces ; c'est ce découpage qui les fait
+    # rédiger.
+    appels: list[dict] = []
 
     class Redacteur(LLMProvider):
         async def analyze_cv(self, cv, fiche):  # pragma: no cover
@@ -452,10 +456,18 @@ async def test_la_redaction_assistee_lit_la_fiche_jointe(client, auth, monkeypat
         async def structure_fiche(self, raw_text, language="fr"):  # pragma: no cover
             return []
 
-        async def rediger(self, consigne, contexte, systeme="", titre=""):
-            recu["consigne"] = consigne
-            recu["contexte"] = contexte
-            return "AVIS DE RECRUTEMENT\nTexte proposé."
+        async def rediger(
+            self, consigne, contexte, systeme="", titre="", cloture=""
+        ):
+            appels.append(
+                {
+                    "consigne": consigne,
+                    "contexte": contexte,
+                    "titre": titre,
+                    "cloture": cloture,
+                }
+            )
+            return f"Texte proposé pour {titre}."
 
     monkeypatch.setattr(redaction_avis, "get_provider", lambda: Redacteur())
     reponse = await client.post(
@@ -464,10 +476,25 @@ async def test_la_redaction_assistee_lit_la_fiche_jointe(client, auth, monkeypat
         headers=auth,
     )
     assert reponse.status_code == 200, reponse.text
-    assert "FICHE DE POSTE FOURNIE" in recu["contexte"]
-    assert "garantit la fiabilité des comptes" in recu["contexte"]
-    assert "seuls les « ÉLÉMENTS OPPOSABLES » font foi" in recu["consigne"]
+
+    titres = [a["titre"] for a in appels]
+    assert titres == ["Contexte", "Mission et responsabilités", "Profil recherché"]
+
+    # La fiche est donnée en entier à chaque section : c'est elle qui dit ce
+    # qu'est le poste.
+    for appel in appels:
+        assert "FICHE DE POSTE FOURNIE" in appel["contexte"]
+        assert "garantit la fiabilité des comptes" in appel["contexte"]
+        assert "seuls les « ÉLÉMENTS OPPOSABLES » font foi" in appel["consigne"]
+        assert "cette section, et elle seule" in appel["cloture"]
+
+    texte = reponse.json()["texte"]
     assert reponse.json()["propose"] is True
+    # Les rubriques opposables sont écrites par le code, jamais par le modèle :
+    # un lien mal retranscrit est une candidature perdue.
+    assert "Texte proposé pour Mission et responsabilités." in texte
+    assert "Dossier de candidature" in texte
+    assert "Lettre de motivation" in texte
 
 
 def test_la_section_d_aide_est_ajoutee_si_le_modele_l_oublie():

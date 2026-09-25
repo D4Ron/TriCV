@@ -26,6 +26,7 @@ l'intitulé et quelques listes, et comblait le reste avec des généralités.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from app.domain.referentiel import PieceDossier
 from app.llm import prompts
@@ -225,7 +226,149 @@ def brouillon_manuel(
     return f"{entete}\n\n{faits(poste, avis, mandat, reglages)}"
 
 
-def _consigne(avec_fiche: bool, avec_gabarit: bool, avec_aide: bool) -> str:
+# --- l'avis, section par section --------------------------------------------
+#
+# Un seul appel demandant « l'avis complet » ne donne pas un avis complet. La
+# consigne avait beau détailler cinq sections et leur développement, le modèle
+# rendait quatre cents mots dont les responsabilités recopiées en puces — les
+# intitulés de la fiche, sans une ligne sur ce qu'ils recouvrent. Une consigne
+# longue laisse le choix de ce qu'on honore ; une consigne par appel ne le
+# laisse pas.
+#
+# C'est déjà ainsi que se produisent les rapports du cabinet, et pour la même
+# raison. L'avis suit.
+#
+# Deuxième principe, au moins aussi utile : le modèle n'écrit que ce qui se
+# **décrit**. Les pièces à fournir, la date limite, la référence, le lien de
+# candidature et l'adresse de contact sont écrits par le code, mot pour mot.
+# Ce sont eux qu'un avis publié engage, et les faire recopier par un modèle
+# était un risque pris sans rien gagner : un lien mal retranscrit est une
+# candidature perdue.
+
+
+@dataclass(frozen=True)
+class SectionAvis:
+    """Une section de l'avis, et ce qu'on demande au modèle pour elle."""
+
+    titre: str
+    consigne: str
+
+
+def _sections_redigees(comptes: dict[str, int], avec_fiche: bool) -> list[SectionAvis]:
+    # La fiche décrit, les éléments opposables exigent. Quand les deux se
+    # contredisent — une fiche qui demande un BAC+5 là où le poste enregistré
+    # exige un BAC+4 —, c'est le poste qui fait foi : c'est lui que la
+    # présélection applique, et un avis qui annonce autre chose écarterait des
+    # candidats sur une condition que personne n'a posée.
+    appui = (
+        " Servez-vous de la fiche de poste fournie : elle en dit plus long que "
+        "le résumé des éléments opposables, et c'est là qu'est la matière. "
+        "Mais pour les exigences — diplôme, années, pièces, conditions —, "
+        "seuls les « ÉLÉMENTS OPPOSABLES » font foi : si la fiche en dit "
+        "davantage ou autre chose, ne le reprenez pas."
+        if avec_fiche
+        else ""
+    )
+
+    def compte(cle: str) -> str:
+        n = comptes.get(cle, 0)
+        return "" if n == 0 else f" Les données en donnent {n} : traitez-les toutes, et seulement elles."
+
+    return [
+        SectionAvis(
+            "Contexte",
+            "Rédigez la section « Contexte » de l'avis : qui recrute, pour le "
+            "compte de quelle organisation, quel poste est à pourvoir, où il "
+            "est basé, à qui son titulaire rendra compte, et combien de postes "
+            "sont ouverts. Deux paragraphes rédigés, sans liste." + appui,
+        ),
+        SectionAvis(
+            "Mission et responsabilités",
+            "Rédigez la section « Mission et responsabilités » de l'avis. "
+            "C'est la section que lit un candidat pour savoir s'il se "
+            "reconnaît dans le poste : c'est la plus longue de l'avis.\n"
+            "Commencez par un paragraphe sur la raison d'être du poste — ce "
+            "que son titulaire aura à obtenir, pas seulement à faire.\n"
+            "Puis reprenez chaque responsabilité **une par une**, chacune dans "
+            "son propre paragraphe de deux à quatre phrases : ce qu'elle "
+            "recouvre concrètement, sur quel périmètre elle s'exerce, avec "
+            "quels interlocuteurs, et ce qui sera attendu du titulaire à ce "
+            "titre. Ne vous contentez jamais de recopier l'intitulé : il est "
+            "écrit en style de note interne, et votre texte est publié."
+            + compte("responsabilites")
+            + appui,
+        ),
+        SectionAvis(
+            "Profil recherché",
+            "Rédigez la section « Profil recherché » de l'avis.\n"
+            "Commencez par les exigences, recopiées telles quelles et sans "
+            "commentaire : niveau de diplôme, domaines de formation acceptés, "
+            "années d'expérience générale et spécifique. Ce sont des "
+            "conditions opposables — ne les reformulez pas, ne les "
+            "interprétez pas, n'en ajoutez aucune.\n"
+            "Développez ensuite les compétences techniques attendues, puis les "
+            "qualités personnelles, en phrases pleines : ce que chacune "
+            "recouvre dans l'exercice de ce poste précis."
+            + compte("techniques")
+            + compte("qualites")
+            + appui,
+        ),
+    ]
+
+
+def _section_factuelle(titre: str, lignes: list[str], introduction: str = "") -> str:
+    """Une section écrite par le code : rien n'y passe par le modèle."""
+    if not lignes:
+        return ""
+    corps = "\n".join(f"- {l}" for l in lignes)
+    tete = f"{introduction}\n" if introduction else ""
+    return f"{titre}\n{tete}{corps}"
+
+
+def _pieces_du_dossier(poste: Poste) -> list[str]:
+    """Les pièces exigées, y compris les alternatives, à l'intitulé près."""
+    lignes = [_libelle_piece(c) for c in (poste.pieces_requises or ())]
+    for groupe in poste.groupes_pieces or ():
+        codes = [_libelle_piece(c) for c in (groupe.get("codes") or ())]
+        if not codes:
+            continue
+        if (groupe.get("mode") or "TOUTES") == "AU_MOINS_UNE":
+            lignes.append(" ou ".join(codes))
+        else:
+            lignes += codes
+    return lignes
+
+
+def _denombrer(poste: Poste) -> dict[str, int]:
+    """Combien d'éléments la fiche donne, liste par liste."""
+    return {
+        "responsabilites": len(poste.responsabilites or ()),
+        "techniques": len(poste.competences_techniques or ()),
+        "qualites": len(poste.competences_comportementales or ()),
+        "missions": len(poste.missions or ()),
+    }
+
+
+def _consigne(
+    avec_fiche: bool,
+    avec_gabarit: bool,
+    avec_aide: bool,
+    comptes: dict[str, int] | None = None,
+) -> str:
+    # Sans longueur annoncée, le modèle rendait une section par intertitre et
+    # recopiait chaque responsabilité en une puce, mot pour mot. L'avis faisait
+    # alors la longueur de la fiche de poste — une note interne en style
+    # télégraphique — là où le cabinet publie un texte rédigé que des candidats
+    # lisent pour décider s'ils postulent.
+    #
+    # Le repère n'est volontairement pas un nombre de mots : un quota se tient
+    # en inventant, et un avis publié est opposable. Ce qui se tient
+    # honnêtement, c'est un nombre d'**éléments** — celui que la fiche donne,
+    # annoncé ici pour que le modèle le vérifie lui-même — assorti d'une
+    # consigne de rédaction sur chacun. La longueur suit alors la matière au
+    # lieu de la précéder : une fiche pauvre donne un avis court, et c'est
+    # exact.
+    comptes = comptes or {}
     consigne = (
         "Rédigez un avis de recrutement complet et publiable à partir des "
         "éléments ci-dessous. Structurez-le avec des intertitres : contexte, "
@@ -237,15 +380,80 @@ def _consigne(avec_fiche: bool, avec_gabarit: bool, avec_aide: bool) -> str:
         " Reprenez sans les modifier les exigences, les intitulés de pièces, les "
         "dates, les adresses et les liens."
     )
+    def _exactement(cle: str) -> str:
+        n = comptes.get(cle, 0)
+        if n == 0:
+            return ""
+        return (
+            f" La fiche en donne {n} : votre section en compte "
+            f"{'exactement un' if n == 1 else f'exactement {n}'}, "
+            f"{'ni plus ni moins' if n > 1 else 'et lui seul'}."
+        )
+
+    consigne += (
+        "\n\nDéveloppement attendu, section par section. Développer veut dire "
+        "**rédiger en phrases ce qui vous est donné en notes**, jamais ajouter "
+        "à la liste :\n"
+        "- Contexte : deux paragraphes. Qui recrute, pour le compte de qui, "
+        "quel poste et où il est basé, à qui son titulaire rend compte.\n"
+        "- Mission et responsabilités : la section la plus développée, et "
+        "rédigée en paragraphes. Une phrase d'ouverture sur la raison d'être "
+        "du poste, puis chaque responsabilité fournie reprise en une à trois "
+        "phrases pleines — ce qu'elle recouvre concrètement, sur quoi et avec "
+        "qui elle s'exerce, et ce qui sera attendu du titulaire à ce titre. "
+        "Ne recopiez pas l'intitulé tel quel : il est écrit en style de note "
+        "interne, et votre texte est publié. Quand une fiche est fournie, "
+        "c'est là qu'elle sert le plus : allez y chercher le détail des "
+        "tâches et des objectifs rattachés à chaque responsabilité."
+        + _exactement("responsabilites")
+        + "\n"
+        "- Profil recherché : le diplôme, les domaines et les durées d'abord, "
+        "recopiés tels quels et sans commentaire — ce sont des exigences. Puis "
+        "les compétences techniques, chacune rédigée en une à deux phrases "
+        "pleines plutôt qu'en puce recopiée."
+        + _exactement("techniques")
+        + " Puis les qualités attendues, de même."
+        + _exactement("qualites")
+        + "\n"
+        "- Dossier de candidature : un paragraphe qui annonce la liste, puis "
+        "la liste des pièces, à l'intitulé près.\n"
+        "- Modalités de dépôt : la date limite, la référence à rappeler, et "
+        "par où le dossier se dépose — sans rien inventer de ce qui suivra.\n"
+        "\nNe fixez pas la longueur d'avance : elle suit ce que la fiche "
+        "fournit. Une fiche qui donne trois responsabilités produit un avis "
+        "plus court qu'une fiche qui en donne dix, et c'est ainsi que cela "
+        "doit être. Allonger une liste pour étoffer l'avis décrit un autre "
+        "poste que celui qu'on recrute."
+    )
     if avec_fiche:
+        # La fiche contient presque toujours plus que ce que l'extraction en a
+        # tiré : des paragraphes de mission, le contexte de l'entité, le détail
+        # des tâches sous chaque responsabilité, les conditions d'exercice. Ces
+        # éléments-là n'ont pas de champ dans le formulaire, donc ils
+        # n'arrivaient au modèle que comme décor — et l'avis publié en disait
+        # moins sur le poste que le document dont il était tiré.
         consigne += (
             "\n\nLa fiche de poste remise par le commanditaire figure sous "
-            "« FICHE DE POSTE FOURNIE ». Appuyez-vous sur elle pour décrire le "
-            "poste — contexte, mission, responsabilités, lieu, rattachement — en "
-            "restant fidèle à ce qu'elle dit. Pour les exigences (diplôme, "
-            "expérience, pièces, conditions), seuls les « ÉLÉMENTS OPPOSABLES » "
-            "font foi : si la fiche en dit davantage ou autre chose, ne le "
-            "reprenez pas."
+            "« FICHE DE POSTE FOURNIE ». C'est votre source principale pour "
+            "**décrire** le poste, et elle contient davantage que le résumé "
+            "des éléments opposables : lisez-la en entier et servez-vous-en.\n"
+            "- Ce que le titulaire aura à faire, tâche par tâche : c'est le "
+            "coeur de l'avis, et c'est ce qu'un candidat cherche pour savoir "
+            "s'il se reconnaît dans le poste. Reprenez le détail que la fiche "
+            "donne sous chaque grande responsabilité.\n"
+            "- Ce sur quoi il sera attendu : objectifs, finalités, résultats "
+            "que la fiche associe au poste, périmètre, moyens, équipe "
+            "encadrée, interlocuteurs.\n"
+            "- Le contexte de l'entité et de la direction, les conditions "
+            "d'exercice, les normes et référentiels que la fiche nomme "
+            "expressément.\n"
+            "Restez fidèle à ce qu'elle dit : reformulez pour publier, "
+            "n'extrapolez pas. Une norme, un logiciel, un chiffre ou un "
+            "objectif qui ne figure pas dans la fiche ne figure pas dans "
+            "l'avis.\n"
+            "Pour les exigences en revanche (diplôme, expérience, pièces, "
+            "conditions), seuls les « ÉLÉMENTS OPPOSABLES » font foi : si la "
+            "fiche en dit davantage ou autre chose, ne le reprenez pas."
         )
     if avec_gabarit:
         consigne += (
@@ -271,28 +479,170 @@ async def rediger(
 ) -> str:
     """Propose le texte de l'avis. Chaîne vide si l'assistance est indisponible.
 
+    Les sections descriptives — contexte, mission et responsabilités, profil —
+    sont demandées **une par une** : un seul appel réclamant « l'avis complet »
+    rendait quatre cents mots dont les responsabilités recopiées en puces.
+
+    Les sections opposables — pièces, date limite, référence, liens, contact —
+    sont écrites ici, en Python, et ne passent jamais par le modèle. Un lien
+    mal retranscrit est une candidature perdue, et rien ne justifie de courir
+    ce risque pour du texte que le code sait produire exactement.
+
     `gabarit` est le texte du modèle imposé par le client, quand il y en a un.
-    On le donne à lire pour la présentation, jamais pour le contenu : les
-    exigences viennent des champs de la fiche, et d'eux seuls.
+    Il impose alors la présentation d'ensemble, et l'avis se rédige en un seul
+    appel — découper contre une trame imposée reviendrait à la défaire.
     """
     fiche = (poste.fiche_texte or "").strip()
-    avec_aide = bool(aide(reglages))
-
     contexte = "ÉLÉMENTS OPPOSABLES :\n---\n" + faits(poste, avis, mandat, reglages) + "\n---"
     if fiche:
         contexte += "\n\nFICHE DE POSTE FOURNIE :\n---\n" + fiche[:LONGUEUR_FICHE_MAX] + "\n---"
-    if gabarit.strip():
-        contexte += "\n\nMODÈLE IMPOSÉ :\n---\n" + gabarit.strip()[:8000] + "\n---"
 
+    if gabarit.strip():
+        return await _rediger_sur_gabarit(poste, contexte, gabarit, reglages)
+
+    fournisseur = get_provider()
+    systeme = prompts.avis_system_prompt()
+    morceaux: list[str] = [_entete(poste, avis, mandat)]
+
+    for section in _sections_redigees(_denombrer(poste), bool(fiche)):
+        try:
+            contenu = await fournisseur.rediger(
+                section.consigne,
+                contexte,
+                systeme=systeme,
+                titre=section.titre,
+                cloture=prompts.CLOTURE_AVIS_SECTION,
+            )
+        except Exception:
+            # Une section perdue fait tout abandonner, y compris les sections
+            # déjà écrites. C'est voulu : un avis auquel il manque le profil
+            # recherché ressemble à un avis fini, et se publierait comme tel.
+            # L'appelant sert alors le squelette complet des faits, que son
+            # allure inachevée désigne d'elle-même comme un brouillon.
+            logger.exception(
+                "rédaction de « %s » indisponible pour le poste %s",
+                section.titre,
+                poste.id,
+            )
+            return ""
+        contenu = _borner(contenu, section.titre)
+        if contenu:
+            morceaux.append(f"{section.titre}\n{contenu}")
+
+    if len(morceaux) == 1:
+        # Que l'en-tête : aucune section n'a rien rendu. Mieux vaut le
+        # squelette complet qu'un titre seul.
+        return ""
+
+    morceaux += _sections_factuelles(poste, avis, reglages)
+    return "\n\n".join(m for m in morceaux if m.strip())
+
+
+# Les rubriques que le code écrit lui-même. Quand le modèle les entame malgré
+# la consigne, sa section s'arrête là : ce qui suit ferait doublon avec le
+# texte exact produit plus bas, et c'est le texte exact qui doit rester.
+_RUBRIQUES_RESERVEES = (
+    "dossier de candidature",
+    "pièces à fournir",
+    "pieces à fournir",
+    "modalités de dépôt",
+    "modalites de depot",
+    TITRE_AIDE.lower(),
+)
+
+
+def _borner(contenu: str, titre: str) -> str:
+    """Coupe une section au premier titre qui ne lui appartient pas."""
+    lignes = contenu.strip().splitlines()
+    gardees: list[str] = []
+    for ligne in lignes:
+        nue = ligne.strip().strip("#*_ ").rstrip(":").lower()
+        if nue in _RUBRIQUES_RESERVEES:
+            break
+        # Le titre de la section est ajouté par le code ; s'il le réécrit en
+        # tête, on ne le garde pas deux fois.
+        if not gardees and nue == titre.lower():
+            continue
+        gardees.append(ligne)
+    return "\n".join(gardees).strip()
+
+
+def _entete(poste: Poste, avis: Avis | None, mandat: Mandat | None) -> str:
+    """Le bandeau de tête : intitulé, référence, commanditaire."""
+    lignes = ["AVIS DE RECRUTEMENT"]
+    if avis is not None and avis.reference:
+        lignes[0] += f" — Réf. {avis.reference}"
+    lignes.append(poste.intitule.upper())
+    if mandat is not None and mandat.client is not None:
+        lignes.append(f"Pour le compte de {mandat.client.nom}")
+    return "\n".join(lignes)
+
+
+def _sections_factuelles(
+    poste: Poste, avis: Avis | None, reglages: Reglages | None
+) -> list[str]:
+    """Ce que le code écrit lui-même, mot pour mot."""
+    sections: list[str] = []
+
+    pieces = _pieces_du_dossier(poste)
+    if pieces:
+        sections.append(
+            _section_factuelle(
+                "Dossier de candidature",
+                pieces,
+                "Le dossier de candidature doit comprendre les pièces suivantes :",
+            )
+        )
+        facultatives = [_libelle_piece(c) for c in (poste.pieces_facultatives or ())]
+        extras: list[str] = []
+        if facultatives:
+            extras.append(
+                "Pièces facultatives, dont l'absence ne pénalise pas le "
+                f"dossier : {', '.join(facultatives)}."
+            )
+        if poste.pieces_libres_autorisees:
+            extras.append(
+                "Tout autre document que le candidat juge utile peut être joint."
+            )
+        if extras:
+            sections[-1] += "\n" + "\n".join(extras)
+
+    depot: list[str] = []
+    if avis is not None and avis.date_cloture:
+        depot.append(
+            "Date limite de dépôt des candidatures : "
+            f"{avis.date_cloture.strftime('%d/%m/%Y')}."
+        )
+    depot += modalites(avis, reglages)
+    if depot:
+        sections.append(_section_factuelle("Modalités de dépôt", depot))
+
+    difficulte = aide(reglages)
+    if difficulte:
+        sections.append(_section_factuelle(TITRE_AIDE, difficulte))
+    return sections
+
+
+async def _rediger_sur_gabarit(
+    poste: Poste, contexte: str, gabarit: str, reglages: Reglages | None
+) -> str:
+    """Un modèle imposé par le client : sa trame commande, donc un seul appel."""
+    contexte += "\n\nMODÈLE IMPOSÉ :\n---\n" + gabarit.strip()[:8000] + "\n---"
+    consigne = _consigne(
+        bool((poste.fiche_texte or "").strip()),
+        True,
+        bool(aide(reglages)),
+        _denombrer(poste),
+    )
     try:
         texte = await get_provider().rediger(
-            _consigne(bool(fiche), bool(gabarit.strip()), avec_aide),
+            consigne,
             contexte,
             systeme=prompts.avis_system_prompt(),
+            titre="l'avis de recrutement",
+            cloture=prompts.CLOTURE_AVIS,
         )
     except Exception:
-        # Sans assistance, l'utilisateur récupère le squelette et écrit
-        # lui-même. Une panne de fournisseur ne bloque pas une publication.
         logger.exception("rédaction d'avis indisponible pour le poste %s", poste.id)
         return ""
     return completer_aide(texte, reglages)
