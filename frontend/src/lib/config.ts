@@ -53,5 +53,5 @@ export const API_BASE = `${API_URL}/api/v1`
  * tunnel means nothing to a candidate. VITE_PUBLIC_URL overrides it at build.
  */
 export const PUBLIC_URL = (
-  (import.meta.env.VITE_PUBLIC_URL as string | undefined) || 'https://recruitement.kapiconsult.tg'
+  (import.meta.env.VITE_PUBLIC_URL as string | undefined) || 'https://recrutement.kapiconsult.tg'
 ).replace(/\/$/, '')

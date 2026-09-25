@@ -582,4 +582,4 @@ def test_l_avis_dit_de_cliquer_sur_le_lien_et_d_envoyer_le_formulaire():
 def test_le_lien_candidat_pointe_par_defaut_sur_le_domaine_du_cabinet():
     from app.config import Settings
 
-    assert Settings.model_fields["url_publique"].default == "https://recruitement.kapiconsult.tg"
+    assert Settings.model_fields["url_publique"].default == "https://recrutement.kapiconsult.tg"
