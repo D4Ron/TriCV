@@ -4,6 +4,7 @@ import { recrutementApi, settingsApi } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { Callout, ErrorState, Field, PageLoader, Spinner, Toggle } from '@/components/ui'
 import PanneauUtilisateurs from '@/components/PanneauUtilisateurs'
+import AssistantMicrosoft365 from '@/components/AssistantMicrosoft365'
 
 /**
  * Paramètres du cabinet.
@@ -108,6 +109,9 @@ export default function SettingsPage() {
   const [contactCandidats, setContactCandidats] = useState('')
 
   const [onglet, setOnglet] = useState<'general' | 'courriel' | 'comptes'>('general')
+  // L'assistant s'ouvre au moment où l'on bascule sur Microsoft : c'est là
+  // qu'on a besoin de la marche à suivre, pas dans un guide à retrouver.
+  const [assistant, setAssistant] = useState(false)
 
   // Le formulaire part de l'état du serveur, pas d'une valeur inventée.
   useEffect(() => {
@@ -257,6 +261,19 @@ export default function SettingsPage() {
         ))}
       </div>
 
+      {assistant && (
+        <AssistantMicrosoft365
+          tenant={tenant}
+          clientId={clientId}
+          secretDefini={s.oauth_client_secret_defini}
+          urlPublique={urlPublique}
+          onTenant={setTenant}
+          onClientId={setClientId}
+          onSecret={setClientSecret}
+          onClose={() => setAssistant(false)}
+        />
+      )}
+
       {onglet === 'comptes' && (
         <div className="mt-5">
           <PanneauUtilisateurs />
@@ -323,7 +340,13 @@ export default function SettingsPage() {
               disabled={!estAdmin}
               titre="Microsoft 365 (Graph)"
               detail="Une boîte Exchange Online. Demande une inscription d'application dans Entra ID, et le consentement d'un administrateur du locataire."
-              onClick={() => setFournisseur('microsoft365')}
+              onClick={() => {
+                setFournisseur('microsoft365')
+                // Première bascule : on ouvre la marche à suivre. Revenir sur
+                // un réglage déjà posé ne rouvre rien — le bouton « Reprendre
+                // la marche à suivre » est là pour ça.
+                if (fournisseur !== 'microsoft365') setAssistant(true)
+              }}
             />
           </div>
         </div>
@@ -338,37 +361,13 @@ export default function SettingsPage() {
               demandent le consentement d&apos;un administrateur du locataire.
             </p>
 
-            <details className="mt-3 rounded-lg border border-ink-200 bg-ink-50 px-3 py-2">
-              <summary className="cursor-pointer text-xs font-medium text-ink-700">
-                Les étapes, côté Entra ID
-              </summary>
-              <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs leading-relaxed text-ink-600">
-                <li>
-                  Entra ID › <b>Inscriptions d&apos;applications</b> › Nouvelle inscription. Un
-                  nom suffit ; aucune URI de redirection n&apos;est nécessaire.
-                </li>
-                <li>
-                  Relevez l&apos;<b>ID d&apos;application (client)</b> et l&apos;
-                  <b>ID de l&apos;annuaire (locataire)</b> sur la page Vue d&apos;ensemble.
-                </li>
-                <li>
-                  <b>Certificats et secrets</b> › Nouveau secret client. Copiez sa{' '}
-                  <em>valeur</em> tout de suite : elle n&apos;est plus affichée ensuite.
-                </li>
-                <li>
-                  <b>API autorisées</b> › Microsoft Graph ›{' '}
-                  <b>Autorisations d&apos;application</b> : <code>Mail.ReadWrite</code> et{' '}
-                  <code>Mail.Send</code>. Puis <b>Accorder un consentement administrateur</b> —
-                  sans ce clic, rien ne fonctionne.
-                </li>
-                <li>
-                  Ces permissions portent sur <em>toutes</em> les boîtes du locataire. Pour les
-                  restreindre à la seule boîte de recrutement, un administrateur Exchange
-                  exécute <code>New-ApplicationAccessPolicy</code>. C&apos;est fortement
-                  recommandé, et le service informatique du cabinet saura le faire.
-                </li>
-              </ol>
-            </details>
+            <button
+              type="button"
+              className="btn-secondary mt-3"
+              onClick={() => setAssistant(true)}
+            >
+              Reprendre la marche à suivre
+            </button>
 
             <div className="mt-4 space-y-4">
               <Field
