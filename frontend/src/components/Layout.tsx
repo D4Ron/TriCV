@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/auth'
 import { initials } from '@/lib/format'
 import { LogoKapi, Marque } from '@/components/Marque'
+import InstallerApplication from '@/components/InstallerApplication'
 
 export { LogoKapi, Marque }
 
@@ -68,6 +69,7 @@ export default function Layout() {
             <span className="hidden text-[11px] font-medium uppercase tracking-wider text-ink-400 lg:block">
               Outil interne
             </span>
+            <InstallerApplication />
             {user && (
               <div className="flex items-center gap-2">
                 <span
