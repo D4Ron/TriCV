@@ -27,6 +27,10 @@ os.environ.update(
     LLM_LOG_PAYLOAD="false",
     PUBLIC_RATE_LIMIT_PER_HOUR="1000",
     SIGNUP_RATE_LIMIT_PER_HOUR="1000",
+    # Les limiteurs de connexion vivent le temps du processus : sans cela, les
+    # échecs volontaires de plusieurs tests s'additionneraient.
+    LOGIN_MAX_ECHECS_PAR_IP="1000",
+    LOGIN_MAX_ECHECS_PAR_COMPTE="1000",
     # Fermé par défaut : plusieurs tests vérifient qu'on l'ouvre explicitement.
     ALLOW_SELF_REGISTRATION="false",
     SIGNUP_CODE="",

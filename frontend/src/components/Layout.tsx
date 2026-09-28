@@ -1,8 +1,10 @@
+import { ADMIN_PATH } from '@/lib/config'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/auth'
 import { initials } from '@/lib/format'
 import { LogoKapi, Marque } from '@/components/Marque'
+import InstallerApplication from '@/components/InstallerApplication'
 
 export { LogoKapi, Marque }
 
@@ -67,6 +69,7 @@ export default function Layout() {
             <span className="hidden text-[11px] font-medium uppercase tracking-wider text-ink-400 lg:block">
               Outil interne
             </span>
+            <InstallerApplication />
             {user && (
               <div className="flex items-center gap-2">
                 <span
@@ -80,7 +83,7 @@ export default function Layout() {
                   className="btn-ghost px-2 py-1 text-xs"
                   onClick={() => {
                     logout()
-                    navigate('/login')
+                    navigate(ADMIN_PATH)
                   }}
                 >
                   {t('nav.logout')}

@@ -1,0 +1,16 @@
+{
+  "name": "TriCV — Kapi Consult",
+  "short_name": "TriCV",
+  "description": "Outil interne de recrutement de Kapi Consult.",
+  "lang": "fr",
+  "start_url": "/mandats",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1e2299",
+  "icons": [
+    { "src": "/icone-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icone-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icone-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

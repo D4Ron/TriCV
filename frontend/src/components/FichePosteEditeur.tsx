@@ -155,6 +155,11 @@ export default function FichePosteEditeur({
   const [complementaire, setComplementaire] = useState(
     poste.formation_complementaire_souhaitee ?? '',
   )
+  // Propositions de l'assistance, tirées de la fiche : cliquer en reprend une,
+  // rien n'est enregistré sans « Enregistrer ».
+  const suggestionsComplementaire = useMutation({
+    mutationFn: () => recrutementApi.suggererFormationComplementaire(poste.id),
+  })
   const [nombreARetenir, setNombreARetenir] = useState(poste.nombre_a_retenir ?? 0)
 
   // Ce que la fiche du client décrit sans que cela note personne : le lieu, le
@@ -412,13 +417,61 @@ export default function FichePosteEditeur({
           htmlFor="fiche-complementaire"
           hint="Figure dans l'avis. Notée seulement si le barème du poste lui accorde des points ; jamais éliminatoire."
         >
-          <input
-            id="fiche-complementaire"
-            className="input"
-            value={complementaire}
-            placeholder="certificat en passation des marchés publics"
-            onChange={(e) => setComplementaire(e.target.value)}
-          />
+          <div className="flex gap-2">
+            <input
+              id="fiche-complementaire"
+              className="input"
+              value={complementaire}
+              placeholder="certificat en passation des marchés publics"
+              onChange={(e) => setComplementaire(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn-secondary shrink-0"
+              disabled={suggestionsComplementaire.isPending}
+              title="Propose, à partir de la fiche de poste, des formations complémentaires à souhaiter."
+              onClick={() => suggestionsComplementaire.mutate()}
+            >
+              {suggestionsComplementaire.isPending && <Spinner />}
+              Suggérer (IA)
+            </button>
+          </div>
+          {suggestionsComplementaire.isError && (
+            <p className="mt-1 text-xs text-red-700">
+              {(suggestionsComplementaire.error as Error).message}
+            </p>
+          )}
+          {suggestionsComplementaire.data && (
+            <div className="mt-2">
+              {suggestionsComplementaire.data.propositions.length === 0 ? (
+                <p className="text-xs text-ink-500">
+                  La fiche ne suggère aucune formation complémentaire particulière.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {suggestionsComplementaire.data.propositions.map((proposition) => (
+                    <button
+                      key={proposition}
+                      type="button"
+                      className={`rounded-full border px-2.5 py-1 text-xs transition ${
+                        complementaire === proposition
+                          ? 'border-brand-700 bg-brand-50 text-brand-800'
+                          : 'border-ink-200 text-ink-700 hover:border-brand-400'
+                      }`}
+                      onClick={() => setComplementaire(proposition)}
+                    >
+                      {proposition}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {suggestionsComplementaire.data.justification && (
+                <p className="mt-1 text-xs text-ink-500">
+                  {suggestionsComplementaire.data.justification}
+                </p>
+              )}
+            </div>
+          )}
         </Field>
 
         <div className="rounded-lg border border-ink-200 p-3">

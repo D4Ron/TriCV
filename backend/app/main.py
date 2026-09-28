@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -32,6 +33,32 @@ from app.services.retention import run_retention_sweep
 logger = logging.getLogger(__name__)
 
 API_PREFIX = "/api/v1"
+
+# Les clés de signature livrées avec le dépôt. Elles sont publiques : quiconque
+# les connaît fabrique un jeton d'administrateur valide, sans mot de passe.
+_SECRETS_PUBLICS = {"dev-only-insecure-secret-change-me", "dev-only-secret", "change-me", "secret"}
+
+
+def _refuser_secret_public() -> None:
+    """Remplace une clé de signature connue de tous par une clé aléatoire.
+
+    Plutôt que de refuser de démarrer — ce qui couperait le service à la
+    mise à jour —, l'application signe avec une clé tirée au démarrage. Le
+    prix : les sessions ne survivent pas à un redémarrage, et chacun se
+    reconnecte. Le journal le dit en toutes lettres, pour que JWT_SECRET soit
+    enfin réglé.
+    """
+    if settings.jwt_secret.strip() in _SECRETS_PUBLICS or len(settings.jwt_secret.strip()) < 16:
+        settings.jwt_secret = secrets.token_urlsafe(48)
+        logger.critical(
+            "JWT_SECRET est absent ou vaut une valeur publique : une clé aléatoire "
+            "est utilisée à sa place, et les sessions ne survivront pas au prochain "
+            "redémarrage. Réglez JWT_SECRET dans .env (python -c \"import secrets; "
+            "print(secrets.token_urlsafe(48))\")."
+        )
+
+
+_refuser_secret_public()
 
 
 def _log_privacy_posture() -> None:
@@ -95,6 +122,33 @@ app.add_middleware(
         "X-TriCV-Ecartes",
     ],
 )
+
+
+# En-têtes de sécurité sur toutes les réponses de l'API, et plafond des
+# requêtes publiques vérifié avant lecture du corps : le formulaire de
+# candidature lisait tout le fichier en mémoire avant d'en contrôler la taille.
+_ENTETES_SECURITE = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Cross-Origin-Resource-Policy": "cross-origin",
+}
+
+
+@app.middleware("http")
+async def _garde_fous(request, call_next):
+    if request.url.path.startswith(f"{API_PREFIX}/public"):
+        taille = request.headers.get("content-length")
+        plafond = settings.public_max_request_mb * 1024 * 1024
+        if taille and taille.isdigit() and int(taille) > plafond:
+            return PlainTextResponse(
+                f"Envoi trop volumineux (plus de {settings.public_max_request_mb} Mo).",
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+    reponse = await call_next(request)
+    for nom, valeur in _ENTETES_SECURITE.items():
+        reponse.headers.setdefault(nom, valeur)
+    return reponse
 
 
 @app.get("/health", tags=["meta"])

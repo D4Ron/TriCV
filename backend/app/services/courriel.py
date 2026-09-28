@@ -17,6 +17,7 @@ import hashlib
 import imaplib
 import logging
 import re
+import unicodedata
 
 from app.services import oauth_microsoft
 from app.services.oauth_microsoft import ConfigOAuth
@@ -43,6 +44,7 @@ from app.models import (
     Poste,
     Provenance,
     SourceCandidature,
+    StatutAvis,
 )
 from app.services import doublons, extraction, storage
 from app.services.preselection import charger_candidature, evaluer_candidature
@@ -331,12 +333,28 @@ def references_du_sujet(sujet: str) -> list[str]:
     return _REFERENCE.findall(sujet or "")
 
 
-async def poste_du_message(db: AsyncSession, message: MessageEntrant) -> Poste | None:
-    """Rattache un message à un poste via la référence citée dans l'objet.
+def _normaliser(texte: str) -> str:
+    """Minuscules, sans accents ni ponctuation : « Chargé(e) d'Études » = « charge e d etudes »."""
+    sans_accents = unicodedata.normalize("NFKD", texte or "")
+    sans_accents = "".join(c for c in sans_accents if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", sans_accents.lower()).split())
 
-    Sans référence exploitable, le message n'est pas rattaché au hasard : il
+
+async def poste_du_message(db: AsyncSession, message: MessageEntrant) -> Poste | None:
+    """Rattache un message à un poste, par l'objet du courriel.
+
+    Deux formes sont reconnues :
+
+    - l'**intitulé du poste**, que les avis demandent d'écrire dans l'objet
+      (« Candidature au poste de Chargé d'études ») : un candidat retient un
+      intitulé, pas une référence ;
+    - la **référence** entre crochets (« [AVIS-2026-014] »), que demandaient
+      les avis plus anciens — ceux déjà diffusés continuent de fonctionner.
+
+    Sans correspondance certaine, le message n'est pas rattaché au hasard : il
     revient aux RH de l'affecter, ce qui vaut mieux qu'une candidature classée
-    sous le mauvais avis.
+    sous le mauvais avis. Deux postes ouverts portant le même intitulé sont
+    dans ce cas.
     """
     for reference in references_du_sujet(message.sujet):
         resultat = await db.execute(
@@ -348,6 +366,32 @@ async def poste_du_message(db: AsyncSession, message: MessageEntrant) -> Poste |
         poste = resultat.scalar_one_or_none()
         if poste is not None:
             return poste
+
+    sujet = f" {_normaliser(message.sujet)} "
+    if not sujet.strip():
+        return None
+    # Les postes dont un avis est publié, puis ceux dont l'avis vient d'être
+    # clôturé : un dossier envoyé la veille de la clôture arrive parfois après.
+    for statuts in ((StatutAvis.PUBLIE,), (StatutAvis.CLOTURE,)):
+        postes = (
+            await db.execute(
+                select(Poste)
+                .join(Avis, Avis.poste_id == Poste.id)
+                .where(Avis.statut.in_(statuts))
+                .distinct()
+            )
+        ).scalars().all()
+        trouves: dict[str, list[Poste]] = {}
+        for poste in postes:
+            intitule = _normaliser(poste.intitule)
+            if len(intitule) >= 3 and f" {intitule} " in sujet:
+                trouves.setdefault(intitule, []).append(poste)
+        if trouves:
+            # L'intitulé le plus long l'emporte : « directeur administratif et
+            # financier » plutôt que « directeur ».
+            plus_long = max(trouves, key=len)
+            candidats = trouves[plus_long]
+            return candidats[0] if len(candidats) == 1 else None
     return None
 
 

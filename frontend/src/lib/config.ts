@@ -55,3 +55,36 @@ export const API_BASE = `${API_URL}/api/v1`
 export const PUBLIC_URL = (
   (import.meta.env.VITE_PUBLIC_URL as string | undefined) || 'https://recrutement.kapiconsult.tg'
 ).replace(/\/$/, '')
+
+/**
+ * L'adresse d'entrée du cabinet. Volontairement sans rapport avec « admin » ou
+ * « login » : ces adresses-là sont les premières qu'essaient les robots. Elle
+ * se règle à la construction (VITE_ADMIN_PATH) ; chaque installation devrait
+ * choisir la sienne.
+ *
+ * Ce n'est pas un verrou — l'adresse figure dans le code servi au navigateur,
+ * et le mot de passe reste la vraie protection. C'est un filtre : ni la page
+ * publique ni une adresse devinée ne mènent à l'écran de connexion.
+ */
+export const ADMIN_PATH = `/${(
+  (import.meta.env.VITE_ADMIN_PATH as string | undefined) || 'ocre-38k'
+).replace(/^\/+|\/+$/g, '')}`
+
+/** Ce navigateur a déjà servi à se connecter : une session expirée y ramène à l'entrée. */
+const CLE_POSTE_CABINET = 'tricv.poste-cabinet'
+
+export function marquerPosteCabinet(): void {
+  try {
+    localStorage.setItem(CLE_POSTE_CABINET, '1')
+  } catch {
+    /* stockage indisponible : on retombera sur la page publique */
+  }
+}
+
+export function estPosteCabinet(): boolean {
+  try {
+    return localStorage.getItem(CLE_POSTE_CABINET) === '1'
+  } catch {
+    return false
+  }
+}

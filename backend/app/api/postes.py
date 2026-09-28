@@ -20,6 +20,7 @@ from sqlalchemy.orm import selectinload
 from app.api.mandats import get_mandat_or_404
 from app.deps import CurrentUser, DbSession
 from app.domain import Qualification, sections_entretien
+from app.domain.bareme import BAREME_PAR_DEFAUT
 from app.domain.serialisation import bareme_depuis_dict, bareme_vers_dict
 from app.models import (
     Avis,
@@ -52,7 +53,14 @@ from app.schemas.recrutement import (
     RestrictionIn,
     SeuilIn,
 )
-from app.services import audit, doublons, entretiens, parametres, redaction_avis
+from app.services import (
+    audit,
+    doublons,
+    entretiens,
+    grille_selection,
+    parametres,
+    redaction_avis,
+)
 from app.services.preselection import construire_bareme, definir_seuil, evaluer_poste
 
 router = APIRouter(tags=["postes"])
@@ -248,17 +256,133 @@ async def definir_bareme(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Barème invalide : {exc}") from exc
 
     poste.bareme = bareme_vers_dict(bareme)
+    await db.flush()
+    # Les notes suivent le barème : changer de barème sans rejouer la grille
+    # afficherait des notes calculées sur un autre.
+    reevaluees = await evaluer_poste(db, poste.id)
     await audit.record(
         db,
         action="poste.bareme",
         entity_type="poste",
         entity_id=poste.id,
         user_id=user.id,
-        details={"total_max": bareme.total_max},
+        details={"total_max": bareme.total_max, "candidatures_reevaluees": reevaluees},
     )
     await db.commit()
     await db.refresh(poste)
     return await _vers_sortie(db, poste)
+
+
+# --- grille de sélection ------------------------------------------------------
+
+
+class GrilleSelectionOut(BaseModel):
+    intitule: str
+    total: float
+    lignes: list[dict]
+    # Le barème en vigueur, et celui du cabinet pour y revenir d'un clic.
+    bareme: dict
+    bareme_cabinet: dict
+    personnalise: bool
+
+
+class ApercuGrilleIn(BaseModel):
+    bareme: dict
+
+
+class ApercuGrilleOut(BaseModel):
+    total: float
+    lignes: list[dict]
+
+
+class SuggestionBaremeOut(BaseModel):
+    bareme: dict
+    lignes: list[dict]
+    justification: str = ""
+
+
+class SuggestionComplementaireOut(BaseModel):
+    propositions: list[str]
+    justification: str = ""
+
+
+def _bareme_ou_422(donnees: dict):
+    try:
+        return bareme_depuis_dict(donnees)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Barème invalide : {exc}") from exc
+
+
+@router.get("/postes/{poste_id}/grille-selection", response_model=GrilleSelectionOut)
+async def lire_grille_selection(poste_id: str, db: DbSession, _: CurrentUser) -> GrilleSelectionOut:
+    """La grille de sélection détaillée, telle que la présélection l'applique."""
+    poste = await get_poste_or_404(db, poste_id)
+    bareme = construire_bareme(poste)
+    grille = grille_selection.vers_dict(poste, bareme)
+    return GrilleSelectionOut(
+        **grille,
+        bareme=bareme_vers_dict(bareme),
+        bareme_cabinet=bareme_vers_dict(BAREME_PAR_DEFAUT),
+        personnalise=bool(poste.bareme),
+    )
+
+
+@router.post("/postes/{poste_id}/grille-selection/apercu", response_model=ApercuGrilleOut)
+async def apercu_grille_selection(
+    poste_id: str, payload: ApercuGrilleIn, db: DbSession, _: CurrentUser
+) -> ApercuGrilleOut:
+    """La grille qu'un barème donnerait, sans rien enregistrer."""
+    poste = await get_poste_or_404(db, poste_id)
+    grille = grille_selection.vers_dict(poste, _bareme_ou_422(payload.bareme))
+    return ApercuGrilleOut(total=grille["total"], lignes=grille["lignes"])
+
+
+@router.get("/postes/{poste_id}/grille-selection.docx")
+async def grille_selection_word(poste_id: str, db: DbSession, _: CurrentUser) -> Response:
+    poste = await get_poste_or_404(db, poste_id)
+    nom = re.sub(r"[^A-Za-z0-9_-]+", "-", poste.intitule).strip("-")[:60] or "poste"
+    return Response(
+        content=grille_selection.docx(poste),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="grille-selection-{nom}.docx"'},
+    )
+
+
+@router.post("/postes/{poste_id}/bareme/suggestion", response_model=SuggestionBaremeOut)
+async def suggerer_bareme(poste_id: str, db: DbSession, _: CurrentUser) -> SuggestionBaremeOut:
+    """Une répartition proposée par l'assistance. N'enregistre rien."""
+    poste = await get_poste_or_404(db, poste_id)
+    resultat = await grille_selection.suggerer_bareme(poste)
+    if resultat is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "L'assistance n'a pas pu proposer de barème. Réessayez, ou réglez-le à la main.",
+        )
+    bareme, justification = resultat
+    return SuggestionBaremeOut(
+        bareme=bareme_vers_dict(bareme),
+        lignes=grille_selection.vers_dict(poste, bareme)["lignes"],
+        justification=justification,
+    )
+
+
+@router.post(
+    "/postes/{poste_id}/suggestions/formation-complementaire",
+    response_model=SuggestionComplementaireOut,
+)
+async def suggerer_formation_complementaire(
+    poste_id: str, db: DbSession, _: CurrentUser
+) -> SuggestionComplementaireOut:
+    """Des formations complémentaires plausibles, tirées de la fiche de poste."""
+    poste = await get_poste_or_404(db, poste_id)
+    resultat = await grille_selection.suggerer_formation_complementaire(poste)
+    if resultat is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "L'assistance n'a rien pu proposer. Réessayez, ou saisissez-la à la main.",
+        )
+    propositions, justification = resultat
+    return SuggestionComplementaireOut(propositions=propositions, justification=justification)
 
 
 class ExtrasFormationIn(BaseModel):

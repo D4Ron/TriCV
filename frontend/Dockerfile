@@ -6,10 +6,18 @@ RUN npm ci --no-audit --no-fund
 
 COPY tsconfig.json vite.config.ts tailwind.config.js postcss.config.js index.html ./
 COPY src ./src
+# Fichiers servis tels quels : manifeste, icônes et service worker qui
+# rendent le tableau de bord installable comme une application.
+COPY public ./public
 
 # The API base URL is baked in at build time (Vite inlines VITE_* at compile).
 ARG VITE_API_URL=http://localhost:8000
 ENV VITE_API_URL=$VITE_API_URL
+# L'adresse d'entrée du cabinet et celle des liens remis aux candidats.
+ARG VITE_ADMIN_PATH=
+ENV VITE_ADMIN_PATH=$VITE_ADMIN_PATH
+ARG VITE_PUBLIC_URL=
+ENV VITE_PUBLIC_URL=$VITE_PUBLIC_URL
 RUN npm run build
 
 FROM nginx:1.27-alpine

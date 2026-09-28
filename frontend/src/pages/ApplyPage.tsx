@@ -193,7 +193,10 @@ export default function ApplyPage() {
         ← Tous les postes ouverts
       </Link>
 
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight text-ink-900">{a.intitule}</h1>
+      <p className="mt-3 text-xs font-medium uppercase tracking-[0.14em] text-ink-500">
+        Candidature au poste de
+      </p>
+      <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-ink-900">{a.intitule}</h1>
       <p className="mt-1 text-sm text-ink-500">
         {a.localisation ? `${a.localisation} · ` : ''}
         {a.departement ? `${a.departement} · ` : ''}

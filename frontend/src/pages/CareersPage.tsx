@@ -67,7 +67,7 @@ export default function CareersPage() {
           {avis.data?.map((item, index) => (
             <Link
               key={item.cle_publique}
-              to={`/apply/${item.cle_publique}`}
+              to={item.code_court ? `/p/${item.code_court}` : `/apply/${item.cle_publique}`}
               className="card-interactive stagger animate-rise p-5"
               style={{ ['--delai' as string]: `${index * 30}ms` }}
             >

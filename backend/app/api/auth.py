@@ -28,7 +28,7 @@ from app.security import (
     verify_password,
 )
 from app.services import audit, parametres
-from app.services.ratelimit import signup_limiter
+from app.services.ratelimit import login_par_compte, login_par_ip, signup_limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -41,13 +41,30 @@ def _token_pair(user: User) -> TokenPair:
     )
 
 
+# Un condensat bcrypt valide, vérifié quand le compte n'existe pas : sans lui,
+# « adresse inconnue » répondait en une milliseconde et « mauvais mot de
+# passe » en deux cents, et la durée disait quelles adresses ont un compte.
+_CONDENSAT_LEURRE = hash_password("leurre-pour-un-compte-inexistant")
+
+
 @router.post("/login", response_model=TokenPair)
-async def login(payload: LoginRequest, db: DbSession) -> TokenPair:
-    result = await db.execute(select(User).where(User.email == payload.email.lower()))
+async def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
+    ip = client_ip(request)
+    email = payload.email.lower()
+    login_par_ip.verifier(ip)
+    login_par_compte.verifier(email)
+
+    result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
+    valide = verify_password(
+        payload.password, user.password_hash if user is not None else _CONDENSAT_LEURRE
+    )
     # Same response whether the address is unknown or the password is wrong.
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if user is None or not valide:
+        login_par_ip.echec(ip)
+        login_par_compte.echec(email)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+    login_par_compte.oublier(email)
     if not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This account is disabled")
     return _token_pair(user)

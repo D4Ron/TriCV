@@ -33,6 +33,16 @@ def nouvelle_cle_publique() -> str:
     return secrets.token_urlsafe(24)
 
 
+# Sans 0/O, 1/I/L ni U/V : un code lu dans un journal ou dicté au téléphone
+# ne doit pas pouvoir se recopier de travers.
+_ALPHABET_COURT = "ABCDEFGHJKMNPQRSTWXYZ23456789"
+
+
+def nouveau_code_court() -> str:
+    """Huit caractères : court à recopier, 29⁸ ≈ 5·10¹¹ possibilités."""
+    return "".join(secrets.choice(_ALPHABET_COURT) for _ in range(8))
+
+
 class Client(Base, TimestampMixin):
     """L'organisation pour laquelle le cabinet recrute."""
 
@@ -235,6 +245,11 @@ class Avis(Base, TimestampMixin):
     canaux: Mapped[list | None] = mapped_column(JsonB)
     cle_publique: Mapped[str] = mapped_column(
         sa.String(64), default=nouvelle_cle_publique, unique=True, index=True, nullable=False
+    )
+    # Le lien court, `/p/<code>`. La clé publique reste valide à côté : les
+    # avis diffusés avant le code court continuent de fonctionner.
+    code_court: Mapped[str | None] = mapped_column(
+        sa.String(16), default=nouveau_code_court, unique=True, index=True
     )
     accepte_candidatures: Mapped[bool] = mapped_column(
         sa.Boolean, default=True, nullable=False

@@ -195,7 +195,7 @@ MODELES: tuple[ModeleCourriel, ...] = (
         code="ACCUSE_RECEPTION",
         libelle="Accusé de réception",
         description="Confirme au candidat que son dossier est bien arrivé.",
-        sujet="Accusé de réception — candidature au poste de {poste}",
+        sujet="Candidature au poste de {poste} — accusé de réception",
         corps=(
             "Madame, Monsieur {nom},\n"
             "\n"

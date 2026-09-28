@@ -397,6 +397,7 @@ export interface Avis {
   date_cloture: string | null
   canaux: string[]
   cle_publique: string
+  code_court: string | null
   accepte_candidatures: boolean
 }
 
@@ -660,4 +661,53 @@ export interface Grille {
   preselectionnes: LigneGrille[]
   non_retenus: LigneGrille[]
   elimines: GroupeElimination[]
+}
+
+// --- grille de sélection -------------------------------------------------------
+
+export interface BaremeExperienceDetail {
+  points_max: number
+  points_au_seuil: number
+  points_par_annee_supplementaire: number
+  annees_supplementaires_max: number | null
+}
+
+/** Le barème tel que l'API le sérialise. Les clés inconnues sont conservées. */
+export interface BaremeDetail {
+  consistance: {
+    points_max: number
+    points_dossier_complet: number
+    points_coherence: number
+    points_appreciation: number
+    [cle: string]: unknown
+  }
+  formation: {
+    points_max: number
+    points_niveau_requis: number
+    points_par_niveau_superieur: number
+    points_par_certification: number
+    certifications_max: number
+    points_formation_complementaire: number
+  }
+  experience_generale: BaremeExperienceDetail
+  experience_specifique: BaremeExperienceDetail
+  total_max: number
+  [cle: string]: unknown
+}
+
+export interface LigneGrilleSelection {
+  numero: string
+  libelle: string
+  points: number
+  niveau: 1 | 2 | 3
+  eliminatoire: boolean
+}
+
+export interface GrilleSelection {
+  intitule: string
+  total: number
+  lignes: LigneGrilleSelection[]
+  bareme: BaremeDetail
+  bareme_cabinet: BaremeDetail
+  personnalise: boolean
 }

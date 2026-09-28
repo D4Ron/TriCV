@@ -1,3 +1,4 @@
+import { ADMIN_PATH, estPosteCabinet } from '@/lib/config'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -21,7 +22,10 @@ import { useAuthStore } from '@/store/auth'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((state) => state.accessToken)
-  if (!token) return <Navigate to="/login" replace />
+  // Un inconnu qui tape une adresse interne ne découvre pas l'entrée du
+  // cabinet : il arrive sur les postes ouverts. Un poste déjà utilisé pour se
+  // connecter, lui, retrouve l'écran de connexion à l'expiration de la session.
+  if (!token) return <Navigate to={estPosteCabinet() ? ADMIN_PATH : '/'} replace />
   return <>{children}</>
 }
 
@@ -42,8 +46,13 @@ export default function App() {
   return (
     <Routes>
       {/* Public — no auth, no chrome. Candidates never sign in. */}
+      {/* L'adresse nue est celle que voient les candidats : les postes ouverts.
+          Le cabinet entre par /admin (ou « Se connecter » sur cette page). */}
+      <Route path="/" element={<CareersPage />} />
       <Route path="/careers" element={<CareersPage />} />
       <Route path="/apply/:publicKey" element={<ApplyPage />} />
+      {/* Le lien court des avis : huit caractères au lieu d'une clé de trente-deux. */}
+      <Route path="/p/:publicKey" element={<ApplyPage />} />
       {/* Hors authentification, comme /careers et /apply : elle existe pour
           quelqu'un qui n'a pas de compte et n'en aura pas. */}
       <Route path="/aide" element={<AidePage />} />
@@ -51,7 +60,11 @@ export default function App() {
           le type de jeton : un accès client n'ouvre aucune route interne. */}
       <Route path="/espace-client" element={<EspaceClientPage />} />
       <Route path="/espace-client/activation/:jeton" element={<ActivationEspaceClient />} />
-      <Route path="/login" element={<LoginPage />} />
+      {/* L'entrée du cabinet, à une adresse qui ne se devine pas. /login et
+          /admin, les premières qu'on essaie, mènent aux postes ouverts. */}
+      <Route path={ADMIN_PATH} element={<LoginPage />} />
+      <Route path="/login" element={<Navigate to="/" replace />} />
+      <Route path="/admin" element={<Navigate to="/" replace />} />
       {/* HR self-registration. The page itself reports when it is disabled. */}
       <Route path="/signup" element={<SignupPage />} />
 
@@ -62,7 +75,6 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<Navigate to="/mandats" replace />} />
         {/* Chaîne de recrutement : mandat -> poste -> grille. */}
         <Route path="/mandats" element={<MandatsPage />} />
         <Route path="/mandats/:mandatId" element={<MandatDetailPage />} />
