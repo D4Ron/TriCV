@@ -1,3 +1,4 @@
+import { marquerPosteCabinet } from '@/lib/config'
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -42,6 +43,7 @@ export default function LoginPage() {
     setBusy(true)
     try {
       await login(email.trim(), password)
+      marquerPosteCabinet()
       navigate('/mandats')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('login.failed'))

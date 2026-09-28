@@ -1,3 +1,4 @@
+import { ADMIN_PATH } from '@/lib/config'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/auth'
@@ -80,7 +81,7 @@ export default function Layout() {
                   className="btn-ghost px-2 py-1 text-xs"
                   onClick={() => {
                     logout()
-                    navigate('/login')
+                    navigate(ADMIN_PATH)
                   }}
                 >
                   {t('nav.logout')}

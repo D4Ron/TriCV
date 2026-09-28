@@ -43,6 +43,8 @@ services:
       context: ./frontend
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        VITE_ADMIN_PATH: ${VITE_ADMIN_PATH:-}
+        VITE_PUBLIC_URL: ${VITE_PUBLIC_URL:-}
     ports:
       - "5173:80"
     depends_on:

@@ -1,3 +1,4 @@
+import { ADMIN_PATH, estPosteCabinet } from '@/lib/config'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -21,7 +22,10 @@ import { useAuthStore } from '@/store/auth'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((state) => state.accessToken)
-  if (!token) return <Navigate to="/login" replace />
+  // Un inconnu qui tape une adresse interne ne découvre pas l'entrée du
+  // cabinet : il arrive sur les postes ouverts. Un poste déjà utilisé pour se
+  // connecter, lui, retrouve l'écran de connexion à l'expiration de la session.
+  if (!token) return <Navigate to={estPosteCabinet() ? ADMIN_PATH : '/'} replace />
   return <>{children}</>
 }
 
@@ -56,7 +60,11 @@ export default function App() {
           le type de jeton : un accès client n'ouvre aucune route interne. */}
       <Route path="/espace-client" element={<EspaceClientPage />} />
       <Route path="/espace-client/activation/:jeton" element={<ActivationEspaceClient />} />
-      <Route path="/login" element={<LoginPage />} />
+      {/* L'entrée du cabinet, à une adresse qui ne se devine pas. /login et
+          /admin, les premières qu'on essaie, mènent aux postes ouverts. */}
+      <Route path={ADMIN_PATH} element={<LoginPage />} />
+      <Route path="/login" element={<Navigate to="/" replace />} />
+      <Route path="/admin" element={<Navigate to="/" replace />} />
       {/* HR self-registration. The page itself reports when it is disabled. */}
       <Route path="/signup" element={<SignupPage />} />
 
@@ -67,7 +75,6 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/admin" element={<Navigate to="/mandats" replace />} />
         {/* Chaîne de recrutement : mandat -> poste -> grille. */}
         <Route path="/mandats" element={<MandatsPage />} />
         <Route path="/mandats/:mandatId" element={<MandatDetailPage />} />

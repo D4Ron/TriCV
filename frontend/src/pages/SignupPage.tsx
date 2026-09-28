@@ -1,3 +1,4 @@
+import { ADMIN_PATH } from '@/lib/config'
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -175,7 +176,7 @@ export default function SignupPage() {
         </div>
 
         <p className="mt-6 text-center text-xs">
-          <Link to="/login" className="text-ink-500 underline-offset-2 hover:underline">
+          <Link to={ADMIN_PATH} className="text-ink-500 underline-offset-2 hover:underline">
             {t('signup.haveAccount')}
           </Link>
         </p>
