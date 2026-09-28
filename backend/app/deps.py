@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.db import get_db
 from app.models import User, UserRole
 from app.security import decode_token
@@ -52,7 +53,18 @@ AdminUser = Annotated[User, Depends(require_admin)]
 
 
 def client_ip(request: Request) -> str:
+    """L'adresse du visiteur, telle que la voit le proxy de confiance le plus proche.
+
+    X-Forwarded-For se lit **par la droite** : chaque proxy ajoute en fin de
+    liste l'adresse qui s'est présentée à lui. La première entrée, elle, vient
+    du client et se fabrique à volonté — la prendre, comme autrefois, laissait
+    quiconque changer d'adresse à chaque requête et passer sous toutes les
+    limites (connexion, formulaire public).
+    """
+    sauts = settings.trusted_proxy_hops
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    if forwarded and sauts > 0:
+        adresses = [a.strip() for a in forwarded.split(",") if a.strip()]
+        if adresses:
+            return adresses[max(len(adresses) - sauts, 0)]
     return request.client.host if request.client else "unknown"

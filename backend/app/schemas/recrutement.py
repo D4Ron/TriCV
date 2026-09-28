@@ -340,6 +340,7 @@ class AvisOut(AvisBase):
     poste_id: str
     statut: StatutAvis
     cle_publique: str
+    code_court: str | None = None
     created_at: datetime
 
 

@@ -6,6 +6,7 @@ import { Marque } from '@/components/Marque'
 import PiedPublic from '@/components/PiedPublic'
 import { EmptyState, ErrorState, PageLoader } from '@/components/ui'
 import { formatDate } from '@/lib/format'
+import { useAuthStore } from '@/store/auth'
 
 const LIBELLE_TYPE: Record<string, string> = {
   NATIONAL: 'Avis national',
@@ -21,6 +22,7 @@ const LIBELLE_TYPE: Record<string, string> = {
  */
 export default function CareersPage() {
   const avis = useQuery({ queryKey: ['avis-ouverts'], queryFn: avisPublicApi.ouverts })
+  const connecte = useAuthStore((state) => Boolean(state.accessToken))
 
   return (
     <div className="min-h-screen bg-ink-50">
@@ -28,6 +30,10 @@ export default function CareersPage() {
       <header className="border-b border-ink-200 bg-white">
         <div className="mx-auto flex h-16 max-w-3xl items-center px-4">
           <Marque sousTitre="Recrutement" />
+          {/* Pour l'équipe du cabinet : les candidats n'ont pas de compte. */}
+          <Link to="/admin" className="btn-ghost ml-auto text-sm">
+            {connecte ? 'Espace cabinet' : 'Se connecter'}
+          </Link>
         </div>
       </header>
 
@@ -67,7 +73,7 @@ export default function CareersPage() {
           {avis.data?.map((item, index) => (
             <Link
               key={item.cle_publique}
-              to={`/apply/${item.cle_publique}`}
+              to={item.code_court ? `/p/${item.code_court}` : `/apply/${item.cle_publique}`}
               className="card-interactive stagger animate-rise p-5"
               style={{ ['--delai' as string]: `${index * 30}ms` }}
             >

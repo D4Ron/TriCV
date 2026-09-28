@@ -429,8 +429,8 @@ async def test_le_brouillon_dit_ou_candidater_et_qui_ecrire(client, auth):
     assert reponse.status_code == 200, reponse.text
     texte = reponse.json()["texte"]
     assert "Lieu d'affectation : Lomé, Togo" in texte
-    assert f"https://recrutement.kapi.tg/apply/{avis['cle_publique']}" in texte
-    assert "recrutement@kapi.tg en indiquant « [RAF-2026] »" in texte
+    assert f"https://recrutement.kapi.tg/p/{avis['code_court']}" in texte
+    assert "recrutement@kapi.tg, en indiquant en objet : « Candidature au poste de Directeur Général »" in texte
     assert "En cas de difficulté" in texte
     assert "aide@kapi.tg" in texte
     assert "https://recrutement.kapi.tg/aide" in texte

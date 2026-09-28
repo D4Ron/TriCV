@@ -23,6 +23,7 @@ import ChoisirDestinataires from '@/components/ChoisirDestinataires'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
 import FichePosteEditeur from '@/components/FichePosteEditeur'
 import GrilleEntretienEditeur from '@/components/GrilleEntretienEditeur'
+import GrilleSelectionPanneau from '@/components/GrilleSelectionPanneau'
 import type { Avis, LigneGrille, Poste, PropositionFiche } from '@/types'
 import { NIVEAUX, libelleNiveau } from '@/lib/niveaux'
 
@@ -480,6 +481,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
     avertissement: string | null
   } | null>(null)
   const [modeleId, setModeleId] = useState('')
+  const [erreurRedaction, setErreurRedaction] = useState<string | null>(null)
 
   const avis = useQuery({ queryKey: ['avis', posteId], queryFn: () => recrutementApi.avis(posteId) })
   const modeles = useQuery({
@@ -554,7 +556,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
         avec_assistance: params.avecAssistance,
       }),
     onSuccess: (r, params) => {
-      setErreur(null)
+      setErreurRedaction(null)
       setRedaction({
         avisId: params.avisId,
         texte: r.texte,
@@ -562,8 +564,33 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
         avertissement: r.avertissement,
       })
     },
-    onError: (e) => setErreur(e instanceof Error ? e.message : 'Rédaction impossible'),
+    // L'erreur s'affiche dans l'éditeur, déjà ouvert : le texte en cours
+    // reste là, modifiable, quoi qu'il arrive à la proposition.
+    onError: (e) =>
+      setErreurRedaction(e instanceof Error ? e.message : 'La rédaction assistée a échoué.'),
   })
+
+  /**
+   * Ouvre l'éditeur tout de suite, sur le texte enregistré.
+   *
+   * Il ne s'ouvrait qu'une fois la proposition reçue : une réponse lente ou
+   * coupée en route ne laissait rien à l'écran, et un avis déjà rédigé ne
+   * pouvait pas être retouché sans être réécrit. Désormais on édite d'abord ;
+   * la proposition de l'IA vient remplir l'éditeur ouvert, sur demande — ou
+   * d'elle-même quand l'avis n'a pas encore de texte.
+   */
+  const ouvrirEditeur = (a: Avis) => {
+    setErreurRedaction(null)
+    setRedaction({ avisId: a.id, texte: a.texte ?? '', propose: false, avertissement: null })
+    if (!a.texte) rediger.mutate({ avisId: a.id, avecAssistance: true })
+  }
+
+  const reproposer = (avecAssistance: boolean) => {
+    if (!redaction) return
+    const saisi = redaction.texte.trim()
+    if (saisi && !window.confirm('Remplacer le texte actuel par une nouvelle proposition ?')) return
+    rediger.mutate({ avisId: redaction.avisId, avecAssistance })
+  }
 
   const enregistrerTexte = useMutation({
     mutationFn: () =>
@@ -689,11 +716,9 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
                 <button
                   type="button"
                   className="btn-ghost px-2 py-1 text-xs"
-                  disabled={rediger.isPending}
-                  onClick={() => rediger.mutate({ avisId: a.id, avecAssistance: true })}
+                  onClick={() => ouvrirEditeur(a)}
                 >
-                  {rediger.isPending && <Spinner />}
-                  {a.texte ? 'Reprendre le texte' : 'Rédiger le texte'}
+                  {a.texte ? 'Modifier le texte' : 'Rédiger le texte'}
                 </button>
               )}
               {a.statut === 'PUBLIE' && (
@@ -708,17 +733,22 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
                   <div className="w-full">
                     <CopyField
                       label="Lien de candidature"
-                      value={`${PUBLIC_URL}/apply/${a.cle_publique}`}
+                      value={a.code_court ? `${PUBLIC_URL}/p/${a.code_court}` : `${PUBLIC_URL}/apply/${a.cle_publique}`}
                     />
                   </div>
                 </>
               )}
-              {a.reference && (
-                <p className="w-full text-xs text-ink-500">
-                  Les candidatures reçues par email sont rattachées à cet avis si l'objet
-                  contient <code className="rounded bg-ink-100 px-1">[{a.reference}]</code>.
-                </p>
-              )}
+              <p className="w-full text-xs text-ink-500">
+                Les candidatures reçues par email sont rattachées à ce poste si l&apos;objet
+                contient son intitulé («&nbsp;Candidature au poste de {poste.intitule}&nbsp;»)
+                {a.reference && (
+                  <>
+                    {' '}
+                    ou la référence <code className="rounded bg-ink-100 px-1">[{a.reference}]</code>
+                  </>
+                )}
+                .
+              </p>
             </div>
           </div>
         ))}
@@ -727,6 +757,20 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
       {redaction && (
         <Modal open title="Texte de l'avis" onClose={() => setRedaction(null)}>
           <div className="space-y-4">
+            {rediger.isPending && (
+              <Callout tone="info">
+                <span className="flex items-center gap-2">
+                  <Spinner /> Rédaction en cours à partir de la fiche de poste… Cela peut prendre
+                  une minute ; le texte apparaîtra ici.
+                </span>
+              </Callout>
+            )}
+            {erreurRedaction && (
+              <Callout tone="danger">
+                {erreurRedaction} Vous pouvez écrire ou corriger le texte à la main, puis
+                l&apos;enregistrer.
+              </Callout>
+            )}
             {redaction.avertissement && <Callout tone="warning">{redaction.avertissement}</Callout>}
             {redaction.propose && (
               <Callout tone="info">
@@ -760,9 +804,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
                     type="button"
                     className="btn-ghost shrink-0 px-3 text-xs"
                     disabled={rediger.isPending}
-                    onClick={() =>
-                      rediger.mutate({ avisId: redaction.avisId, avecAssistance: true })
-                    }
+                    onClick={() => reproposer(true)}
                   >
                     Reproposer
                   </button>
@@ -773,6 +815,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
             <textarea
               className="input min-h-[24rem] font-mono text-xs"
               value={redaction.texte}
+              placeholder={rediger.isPending ? '' : "Écrivez le texte de l'avis, ou demandez une proposition à l'IA."}
               aria-label="Texte de l'avis"
               onChange={(e) => setRedaction((r) => (r ? { ...r, texte: e.target.value } : r))}
             />
@@ -782,11 +825,18 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
                 type="button"
                 className="btn-ghost text-xs"
                 disabled={rediger.isPending}
-                onClick={() =>
-                  rediger.mutate({ avisId: redaction.avisId, avecAssistance: false })
-                }
+                onClick={() => reproposer(false)}
               >
                 Repartir des seuls éléments de la fiche
+              </button>
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                disabled={rediger.isPending}
+                onClick={() => reproposer(true)}
+              >
+                {rediger.isPending && <Spinner />}
+                Rédiger avec l&apos;IA
               </button>
               <button type="button" className="btn-ghost" onClick={() => setRedaction(null)}>
                 Annuler
@@ -815,7 +865,7 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
             <Field
               label="Référence"
               htmlFor="avis-ref"
-              hint="Sert à rattacher les candidatures reçues par email, via l'objet du message. Celle-ci est proposée d'après l'intitulé du poste ; remplacez-la par la nomenclature du client s'il en impose une."
+              hint="Référence interne de l'avis (nomenclature du client s'il en impose une). Les candidats n'ont pas à la retenir : l'avis leur demande d'écrire l'intitulé du poste dans l'objet, et la boîte les rattache par l'intitulé comme par cette référence."
             >
               <input
                 id="avis-ref"
@@ -1206,6 +1256,7 @@ export default function PosteDetailPage() {
   const [selection, setSelection] = useState<string | null>(null)
   const [seuilOuvert, setSeuilOuvert] = useState(false)
   const [grilleOuverte, setGrilleOuverte] = useState(false)
+  const [baremeOuvert, setBaremeOuvert] = useState(false)
   // Les dossiers à qui écrire. Vide = aucune fenêtre d'envoi ouverte.
   const [destinataires, setDestinataires] = useState<string[]>([])
   // Fenêtre de choix de la portée, ouverte avant la rédaction.
@@ -1312,6 +1363,20 @@ export default function PosteDetailPage() {
           </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setBaremeOuvert(true)}
+            title="Voir, changer ou faire proposer le barème ; télécharger la grille de sélection."
+          >
+            <span aria-hidden className="flex h-3 w-10 overflow-hidden rounded-sm">
+              <span className="w-[10%] bg-brand-300" />
+              <span className="w-[23%] bg-brand-500" />
+              <span className="w-[17%] bg-brand-300" />
+              <span className="w-[50%] bg-brand-700" />
+            </span>
+            Barème et grille de sélection
+          </button>
           <button type="button" className="btn-ghost" onClick={() => setSeuilOuvert(true)}>
             {g.seuil > 0 ? `Seuil : ${g.seuil}/${g.total_max}` : 'Poser un seuil'}
           </button>
@@ -1629,6 +1694,10 @@ export default function PosteDetailPage() {
             setCompteRendu(compteRendu)
           }}
         />
+      )}
+
+      {baremeOuvert && (
+        <GrilleSelectionPanneau posteId={posteId} onClose={() => setBaremeOuvert(false)} />
       )}
 
       {grilleOuverte && (

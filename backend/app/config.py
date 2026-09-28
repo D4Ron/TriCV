@@ -51,6 +51,22 @@ class Settings(BaseSettings):
     allow_self_registration: bool = False
     signup_code: str = ""
     signup_rate_limit_per_hour: int = 10
+    # Échecs de connexion tolérés sur un quart d'heure, par adresse IP et par
+    # compte. Au-delà, la connexion est refusée le temps que la fenêtre passe :
+    # c'est ce qui rend un mot de passe impossible à deviner par essais.
+    login_max_echecs_par_ip: int = 20
+    login_max_echecs_par_compte: int = 8
+
+    # Combien de proxys de confiance (nginx, Cloudflare…) se tiennent devant
+    # l'API et ajoutent chacun l'adresse qu'ils voient à X-Forwarded-For. Les
+    # entrées plus à gauche viennent du client et peuvent être inventées : les
+    # croire permettait de contourner toute limite par adresse. 0 = ignorer
+    # l'en-tête (API exposée directement).
+    trusted_proxy_hops: int = 1
+
+    # Plafond d'une requête vers les routes publiques (formulaire de
+    # candidature), vérifié sur Content-Length avant toute lecture.
+    public_max_request_mb: int = 60
 
     llm_provider: Literal["gemini", "anthropic", "ollama", "openai"] = "gemini"
     # Le modèle du fournisseur principal. Chaque fournisseur peut en déclarer

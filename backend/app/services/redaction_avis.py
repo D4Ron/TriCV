@@ -25,6 +25,7 @@ l'intitulé et quelques listes, et comblait le reste avec des généralités.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -53,6 +54,10 @@ def _libelle_piece(code: str) -> str:
 def _lien_candidature(avis: Avis | None, reglages: Reglages | None) -> str:
     if avis is None or reglages is None or not reglages.url_publique:
         return ""
+    # Le lien court quand l'avis en a un : il se recopie depuis un journal.
+    code = getattr(avis, "code_court", None)
+    if code:
+        return f"{reglages.url_publique}/p/{code}"
     return f"{reglages.url_publique}/apply/{avis.cle_publique}"
 
 
@@ -62,7 +67,18 @@ def _lien_aide(reglages: Reglages | None) -> str:
     return f"{reglages.url_publique}/aide"
 
 
-def modalites(avis: Avis | None, reglages: Reglages | None) -> list[str]:
+def objet_candidature(poste: Poste) -> str:
+    """L'objet que l'avis demande d'écrire : l'intitulé complet, pas une référence.
+
+    Un candidat retient l'intitulé d'un poste, rarement un code ; c'est aussi
+    sur l'intitulé que la relève de la boîte rattache le courriel au poste.
+    """
+    return f"Candidature au poste de {poste.intitule.strip()}"
+
+
+def modalites(
+    avis: Avis | None, reglages: Reglages | None, poste: Poste | None = None
+) -> list[str]:
     """Comment candidater — les seuls canaux que le cabinet relève réellement."""
     lignes: list[str] = []
     lien = _lien_candidature(avis, reglages)
@@ -82,7 +98,12 @@ def modalites(avis: Avis | None, reglages: Reglages | None) -> list[str]:
         )
     boite = reglages.boite if reglages is not None else ""
     if boite:
-        objet = f" en indiquant « [{avis.reference}] » dans l'objet" if avis and avis.reference else ""
+        if poste is not None:
+            objet = f", en indiquant en objet : « {objet_candidature(poste)} »"
+        elif avis and avis.reference:
+            objet = f" en indiquant « [{avis.reference}] » dans l'objet"
+        else:
+            objet = ""
         lignes.append(f"Ou par courriel à {boite}{objet}.")
     return lignes
 
@@ -206,7 +227,7 @@ def faits(
                 f"{avis.date_cloture.strftime('%d/%m/%Y')}"
             )
 
-    depot = modalites(avis, reglages)
+    depot = modalites(avis, reglages, poste)
     if depot:
         lignes.append("Modalités de dépôt :")
         lignes += [f"  - {d}" for d in depot]
@@ -429,8 +450,9 @@ def _consigne(
         + "\n"
         "- Dossier de candidature : un paragraphe qui annonce la liste, puis "
         "la liste des pièces, à l'intitulé près.\n"
-        "- Modalités de dépôt : la date limite, la référence à rappeler, et "
-        "par où le dossier se dépose — sans rien inventer de ce qui suivra.\n"
+        "- Modalités de dépôt : la date limite, l'objet à indiquer (l'intitulé "
+        "complet du poste, jamais une référence), et par où le dossier se "
+        "dépose — sans rien inventer de ce qui suivra.\n"
         "\nNe fixez pas la longueur d'avance : elle suit ce que la fiche "
         "fournit. Une fiche qui donne trois responsabilités produit un avis "
         "plus court qu'une fiche qui en donne dix, et c'est ainsi que cela "
@@ -522,25 +544,35 @@ async def rediger(
     systeme = prompts.avis_system_prompt()
     morceaux: list[str] = [_entete(poste, avis, mandat)]
 
-    for section in _sections_redigees(_denombrer(poste), bool(fiche)):
-        try:
-            contenu = await fournisseur.rediger(
-                section.consigne,
-                contexte,
-                systeme=systeme,
-                titre=section.titre,
-                cloture=prompts.CLOTURE_AVIS_SECTION,
-            )
-        except Exception:
+    sections = _sections_redigees(_denombrer(poste), bool(fiche))
+
+    async def _une(section: SectionAvis) -> str:
+        return await fournisseur.rediger(
+            section.consigne,
+            contexte,
+            systeme=systeme,
+            titre=section.titre,
+            cloture=prompts.CLOTURE_AVIS_SECTION,
+        )
+
+    # Les sections se demandent en même temps. L'une après l'autre, un avis
+    # complet dépassait couramment la minute : un proxy frontal (nginx,
+    # Cloudflare) coupait alors la requête avant la réponse, et l'écran
+    # n'affichait qu'une erreur réseau. Le sémaphore des fournisseurs borne
+    # toujours le nombre d'appels simultanés.
+    resultats = await asyncio.gather(*(_une(s) for s in sections), return_exceptions=True)
+    for section, contenu in zip(sections, resultats):
+        if isinstance(contenu, BaseException):
             # Une section perdue fait tout abandonner, y compris les sections
             # déjà écrites. C'est voulu : un avis auquel il manque le profil
             # recherché ressemble à un avis fini, et se publierait comme tel.
             # L'appelant sert alors le squelette complet des faits, que son
             # allure inachevée désigne d'elle-même comme un brouillon.
-            logger.exception(
+            logger.error(
                 "rédaction de « %s » indisponible pour le poste %s",
                 section.titre,
                 poste.id,
+                exc_info=contenu,
             )
             return ""
         contenu = _borner(contenu, section.titre)
@@ -631,7 +663,7 @@ def _sections_factuelles(
             "Date limite de dépôt des candidatures : "
             f"{avis.date_cloture.strftime('%d/%m/%Y')}."
         )
-    depot += modalites(avis, reglages)
+    depot += modalites(avis, reglages, poste)
     if depot:
         sections.append(_section_factuelle("Modalités de dépôt", depot))
 

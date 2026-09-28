@@ -1,5 +1,8 @@
 import { useAuthStore } from '@/store/auth'
 import type {
+  BaremeDetail,
+  GrilleSelection,
+  LigneGrilleSelection,
   AuditEntry,
   Avis,
   Entretien,
@@ -60,6 +63,22 @@ function readDetail(body: unknown, fallback: string): string {
   return fallback
 }
 
+/**
+ * Ce que dit l'écran quand la réponse ne vient pas de l'API mais d'un
+ * intermédiaire. Un proxy frontal (nginx, Cloudflare) qui coupe une requête
+ * trop longue rend une page HTML en 502/504/524, et l'écran n'affichait que
+ * « Gateway Timeout » : rien qui dise quoi faire.
+ */
+function messageIntermediaire(status: number): string | null {
+  if (status === 504 || status === 524) {
+    return "Le serveur a mis trop de temps à répondre et la connexion a été coupée en route. Réessayez ; si cela se répète, le délai d'attente du proxy frontal est trop court pour les traitements par IA."
+  }
+  if (status === 502 || status === 503) {
+    return "Le serveur de l'application est momentanément injoignable. Réessayez dans un instant."
+  }
+  return null
+}
+
 interface RequestOptions {
   method?: string
   body?: unknown
@@ -93,12 +112,22 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       const token = useAuthStore.getState().accessToken
       if (token) headers.Authorization = `Bearer ${token}`
     }
-    return fetch(`${BASE}${path}`, {
-      method,
-      headers,
-      body: formData ?? (body !== undefined ? JSON.stringify(body) : undefined),
-      signal,
-    })
+    try {
+      return await fetch(`${BASE}${path}`, {
+        method,
+        headers,
+        body: formData ?? (body !== undefined ? JSON.stringify(body) : undefined),
+        signal,
+      })
+    } catch (error) {
+      if (signal?.aborted) throw error
+      // Aucune réponse du tout : réseau coupé, ou requête refusée par le
+      // navigateur (CORS) — typiquement une adresse absente de CORS_ORIGINS.
+      throw new ApiError(
+        0,
+        "Impossible de joindre le serveur. Vérifiez la connexion ; si elle fonctionne, l'adresse du site n'est peut-être pas autorisée côté serveur (CORS_ORIGINS).",
+      )
+    }
   }
 
   let response = await send()
@@ -118,7 +147,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     } catch {
       /* a non-JSON error body is fine — fall back to the status text */
     }
-    throw new ApiError(response.status, readDetail(payload, response.statusText))
+    throw new ApiError(
+      response.status,
+      readDetail(payload, messageIntermediaire(response.status) ?? response.statusText),
+    )
   }
 
   if (response.status === 204) return undefined as T
@@ -395,6 +427,27 @@ export const PORTEES_ENVOI: Array<{ cle: PorteeEnvoi; libelle: string; aide: str
 ]
 
 export const recrutementApi = {
+  grilleSelection: (posteId: string) =>
+    request<GrilleSelection>(`/postes/${posteId}/grille-selection`),
+  apercuGrilleSelection: (posteId: string, bareme: BaremeDetail) =>
+    request<{ total: number; lignes: LigneGrilleSelection[] }>(
+      `/postes/${posteId}/grille-selection/apercu`,
+      { method: 'POST', body: { bareme } },
+    ),
+  suggererBareme: (posteId: string) =>
+    request<{ bareme: BaremeDetail; lignes: LigneGrilleSelection[]; justification: string }>(
+      `/postes/${posteId}/bareme/suggestion`,
+      { method: 'POST' },
+    ),
+  definirBareme: (posteId: string, bareme: BaremeDetail) =>
+    request<Poste>(`/postes/${posteId}/bareme`, { method: 'PUT', body: { bareme } }),
+  telechargerGrilleSelection: (posteId: string) =>
+    telecharger(`/postes/${posteId}/grille-selection.docx`, 'grille-selection.docx'),
+  suggererFormationComplementaire: (posteId: string) =>
+    request<{ propositions: string[]; justification: string }>(
+      `/postes/${posteId}/suggestions/formation-complementaire`,
+      { method: 'POST' },
+    ),
   clients: (recherche?: string, archives = false) => {
     const query = new URLSearchParams()
     if (recherche) query.set('recherche', recherche)
@@ -952,6 +1005,7 @@ export const utilisateursApi = {
 
 export interface AvisPublicItem {
   cle_publique: string
+  code_court?: string | null
   intitule: string
   departement: string | null
   /** Le lieu d'affectation : la première question que pose un candidat. */
@@ -1669,7 +1723,10 @@ async function requestAvecJeton<T>(
     } catch {
       /* corps non JSON : le statut suffit */
     }
-    throw new ApiError(response.status, readDetail(payload, response.statusText))
+    throw new ApiError(
+      response.status,
+      readDetail(payload, messageIntermediaire(response.status) ?? response.statusText),
+    )
   }
   if (response.status === 204) return undefined as T
   return (await response.json()) as T

@@ -42,8 +42,13 @@ export default function App() {
   return (
     <Routes>
       {/* Public — no auth, no chrome. Candidates never sign in. */}
+      {/* L'adresse nue est celle que voient les candidats : les postes ouverts.
+          Le cabinet entre par /admin (ou « Se connecter » sur cette page). */}
+      <Route path="/" element={<CareersPage />} />
       <Route path="/careers" element={<CareersPage />} />
       <Route path="/apply/:publicKey" element={<ApplyPage />} />
+      {/* Le lien court des avis : huit caractères au lieu d'une clé de trente-deux. */}
+      <Route path="/p/:publicKey" element={<ApplyPage />} />
       {/* Hors authentification, comme /careers et /apply : elle existe pour
           quelqu'un qui n'a pas de compte et n'en aura pas. */}
       <Route path="/aide" element={<AidePage />} />
@@ -62,7 +67,7 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<Navigate to="/mandats" replace />} />
+        <Route path="/admin" element={<Navigate to="/mandats" replace />} />
         {/* Chaîne de recrutement : mandat -> poste -> grille. */}
         <Route path="/mandats" element={<MandatsPage />} />
         <Route path="/mandats/:mandatId" element={<MandatDetailPage />} />

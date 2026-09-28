@@ -16,7 +16,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -50,6 +50,7 @@ class PieceAttendue(BaseModel):
 
 class AvisPublicItem(BaseModel):
     cle_publique: str
+    code_court: str | None = None
     intitule: str
     client: str | None = None
     departement: str | None = None
@@ -106,7 +107,10 @@ class DepotResponse(BaseModel):
 async def _avis_par_cle(db: AsyncSession, cle: str) -> Avis:
     resultat = await db.execute(
         select(Avis)
-        .where(Avis.cle_publique == cle)
+        # Le lien court (`/p/<code>`) comme le lien d'origine (`/apply/<clé>`) :
+        # les avis diffusés avant les codes courts doivent continuer de mener
+        # au formulaire.
+        .where(or_(Avis.cle_publique == cle, Avis.code_court == cle.strip().upper()))
         .options(selectinload(Avis.poste).selectinload(Poste.mandat))
     )
     avis = resultat.scalar_one_or_none()
@@ -247,6 +251,7 @@ async def avis_ouverts(db: AsyncSession = Depends(get_db)) -> list[AvisPublicIte
         sortie.append(
             AvisPublicItem(
                 cle_publique=avis.cle_publique,
+                code_court=avis.code_court,
                 intitule=avis.poste.intitule,
                 departement=avis.poste.departement,
                 localisation=avis.poste.localisation,
