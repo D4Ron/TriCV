@@ -70,6 +70,20 @@ function readDetail(body: unknown, fallback: string): string {
  * « Gateway Timeout » : rien qui dise quoi faire.
  */
 function messageIntermediaire(status: number): string | null {
+  // Le 413 est le plus fréquent des trois sur le formulaire public : nginx
+  // refuse par défaut tout corps de requête au-delà d'un mégaoctet, et un
+  // diplôme numérisé en couleur le dépasse à lui seul. Le candidat voyait
+  // « Content Too Large » après avoir rempli le formulaire et numérisé ses
+  // pièces. Il lui faut trois choses : que rien n'a été enregistré, pourquoi,
+  // et comment s'en sortir.
+  if (status === 413) {
+    return (
+      "L'ensemble des fichiers dépasse ce que le serveur accepte en un seul " +
+      'envoi. Votre candidature n’a pas été enregistrée. Réduisez la taille ' +
+      'de vos documents — un scan en noir et blanc, en 200 ppp, pèse plusieurs ' +
+      'fois moins qu’en couleur — puis réessayez.'
+    )
+  }
   if (status === 504 || status === 524) {
     return "Le serveur a mis trop de temps à répondre et la connexion a été coupée en route. Réessayez ; si cela se répète, le délai d'attente du proxy frontal est trop court pour les traitements par IA."
   }

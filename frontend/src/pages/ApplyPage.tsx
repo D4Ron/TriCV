@@ -50,6 +50,17 @@ export default function ApplyPage() {
   const [envoi, setEnvoi] = useState(false)
   const [termine, setTermine] = useState(false)
 
+  // Le poids total de ce qui va partir.
+  //
+  // Un candidat juge la taille de ses fichiers un par un, et chacun paraît
+  // raisonnable ; c'est leur somme qui se heurte au plafond du serveur. Rien
+  // dans le formulaire ne la montrait, si bien qu'un dossier refusé l'était
+  // sans que personne puisse voir pourquoi.
+  const octetsTotal =
+    Object.values(fichiers).reduce((somme, f) => somme + f.size, 0) +
+    libres.reduce((somme, l) => somme + (l.fichier?.size ?? 0), 0)
+  const moTotal = octetsTotal / 1_048_576
+
   const enveloppe = (contenu: React.ReactNode) => (
     <div className="min-h-screen bg-ink-50">
       <div className="h-1 bg-gradient-to-r from-or-500 via-or-400 to-or-500" />
@@ -181,7 +192,18 @@ export default function ApplyPage() {
       })
       setTermine(true)
     } catch (caught) {
-      setErreurEnvoi(caught instanceof Error ? caught.message : 'Une erreur est survenue')
+      // Un dossier refusé n'est pas un dossier perdu : le candidat a tout
+      // saisi, il lui manque une issue. On lui donne la raison, puis à qui
+      // écrire — sans quoi il referme l'onglet, et le cabinet ne saura jamais
+      // qu'il a essayé.
+      const raison = caught instanceof Error ? caution(caught) : 'Une erreur est survenue.'
+      setErreurEnvoi(
+        a.contact
+          ? `${raison} Si cela se reproduit, écrivez à ${a.contact}${
+              a.reference ? ` en rappelant la référence ${a.reference}` : ''
+            } : votre dossier sera reçu par ce biais.`
+          : raison,
+      )
     } finally {
       setEnvoi(false)
     }
@@ -588,6 +610,16 @@ export default function ApplyPage() {
             )}
           </div>
 
+          {octetsTotal > 0 && (
+            <p className="text-xs text-ink-500">
+              {Object.keys(fichiers).length + libres.filter((l) => l.fichier).length} document(s)
+              joint(s), {moTotal < 1 ? 'moins d’1' : moTotal.toFixed(1)} Mo au total.
+              {moTotal > 20
+                ? ' C’est volumineux : si l’envoi échoue, numérisez en noir et blanc plutôt qu’en couleur.'
+                : ''}
+            </p>
+          )}
+
           {erreurEnvoi && <Callout tone="danger">{erreurEnvoi}</Callout>}
 
           <button type="submit" className="btn-primary w-full" disabled={envoi}>
@@ -604,6 +636,25 @@ export default function ApplyPage() {
       <EncartProbleme reference={a.reference} />
     </div>,
   )
+}
+
+/**
+ * Le message d'échec, terminé par un point.
+ *
+ * Les refus de l'API arrivent rédigés et ponctués ; ceux que le client
+ * fabrique pour un proxy muet aussi. Une panne réseau, elle, rend le message
+ * du navigateur — « Failed to fetch » —, qui ne veut rien dire pour un
+ * candidat et qu'il vaut mieux remplacer.
+ */
+function caution(erreur: Error): string {
+  const brut = erreur.message.trim()
+  if (!brut || /failed to fetch|networkerror|load failed/i.test(brut)) {
+    return (
+      'L’envoi n’a pas abouti : la connexion a été interrompue. Votre ' +
+      'candidature n’a pas été enregistrée.'
+    )
+  }
+  return /[.!?]$/.test(brut) ? brut : `${brut}.`
 }
 
 /**
