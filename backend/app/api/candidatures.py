@@ -944,6 +944,46 @@ async def requalifier(
     return _vers_sortie(await get_candidature_or_404(db, candidature_id))
 
 
+def _ce_qui_manque(reglages) -> list[str]:
+    """Ce qu'il faut encore renseigner pour relever la boîte.
+
+    Extrait de `_ouvrir_boite`, qui s'en servait pour refuser, afin que l'état
+    de la boîte puisse le dire *avant* qu'on essaie. L'écran masquait le
+    panneau entier quand la boîte n'était pas prête : le relevé manuel — celui
+    dont on a justement besoin quand quelque chose cloche — disparaissait avec
+    lui, sans un mot sur ce qui manquait.
+    """
+    if reglages.microsoft365:
+        manquants = [
+            libelle
+            for libelle, valeur in (
+                ("l'adresse de la boîte", reglages.boite),
+                ("l'identifiant du tenant", reglages.graph_utilisable or reglages.oauth_tenant),
+                ("l'identifiant de l'application", reglages.oauth_client_id),
+                ("le secret de l'application", reglages.oauth_client_secret),
+            )
+            if not valeur
+        ]
+        if not manquants and not reglages.graph_utilisable:
+            manquants = ["un identifiant de tenant d'organisation (pas « common » ni « consumers »)"]
+        return manquants
+    return [
+        libelle
+        for libelle, valeur in (
+            ("le serveur", reglages.imap_host),
+            ("l'adresse", reglages.imap_user),
+            # Un mot de passe *ou* un accès OAuth. Une boîte Microsoft n'a pas
+            # de mot de passe qui fonctionne : l'exiger la rendrait à jamais
+            # « incomplète ».
+            (
+                "le mot de passe ou l'accès Microsoft",
+                reglages.imap_password or (reglages.oauth_utilisable and "oauth"),
+            ),
+        )
+        if not valeur
+    ]
+
+
 @router.get("/courriel/etat")
 async def etat_courriel(db: DbSession, _: CurrentUser) -> dict:
     reglages = await parametres.lire(db)
@@ -951,6 +991,13 @@ async def etat_courriel(db: DbSession, _: CurrentUser) -> dict:
         "actif": reglages.courriel_utilisable,
         "boite": reglages.imap_user or None,
         "dossier": reglages.imap_folder if reglages.courriel_utilisable else None,
+        # Pourquoi ce n'est pas actif, dit en toutes lettres plutôt que laissé
+        # à deviner. `releve_desactive` se distingue d'une configuration
+        # incomplète : dans un cas on a décoché une case, dans l'autre il reste
+        # des champs à remplir.
+        "releve_desactive": not reglages.courriel_actif,
+        "manquants": _ce_qui_manque(reglages),
+        "fournisseur": "microsoft365" if reglages.microsoft365 else "imap",
     }
 
 
@@ -970,35 +1017,7 @@ async def _ouvrir_boite(db: AsyncSession):
             "Le relevé de la boîte est désactivé. Activez-le dans Paramètres › Courriel.",
         )
 
-    if reglages.microsoft365:
-        manquants = [
-            libelle
-            for libelle, valeur in (
-                ("l'adresse de la boîte", reglages.boite),
-                ("l'identifiant du tenant", reglages.graph_utilisable or reglages.oauth_tenant),
-                ("l'identifiant de l'application", reglages.oauth_client_id),
-                ("le secret de l'application", reglages.oauth_client_secret),
-            )
-            if not valeur
-        ]
-        if not manquants and not reglages.graph_utilisable:
-            manquants = ["un identifiant de tenant d'organisation (pas « common » ni « consumers »)"]
-    else:
-        manquants = [
-            libelle
-            for libelle, valeur in (
-                ("le serveur", reglages.imap_host),
-                ("l'adresse", reglages.imap_user),
-                # Un mot de passe *ou* un accès OAuth. Une boîte Microsoft n'a
-                # pas de mot de passe qui fonctionne : l'exiger la rendrait à
-                # jamais « incomplète ».
-                (
-                    "le mot de passe ou l'accès Microsoft",
-                    reglages.imap_password or (reglages.oauth_utilisable and "oauth"),
-                ),
-            )
-            if not valeur
-        ]
+    manquants = _ce_qui_manque(reglages)
     if manquants:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

@@ -481,6 +481,22 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
     avertissement: string | null
   } | null>(null)
   const [modeleId, setModeleId] = useState('')
+  const avisFichierRef = useRef<HTMLInputElement>(null)
+
+  // Reprendre un avis rédigé hors de l'application. Le document n'est pas
+  // conservé : c'est son texte qu'on veut, et il devient celui de l'avis dès
+  // lors que quelqu'un l'enregistre.
+  const importerTexte = useMutation({
+    mutationFn: (fichier: File) => fichesApi.texteDuDocument(fichier),
+    onSuccess: (r) => {
+      setErreur(null)
+      setRedaction((etat) =>
+        etat ? { ...etat, texte: r.texte, propose: false, avertissement: null } : etat,
+      )
+    },
+    onError: (e) =>
+      setErreur(e instanceof Error ? e.message : "Le document n'a pas pu être lu"),
+  })
   const [erreurRedaction, setErreurRedaction] = useState<string | null>(null)
 
   const avis = useQuery({ queryKey: ['avis', posteId], queryFn: () => recrutementApi.avis(posteId) })
@@ -820,7 +836,41 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
               onChange={(e) => setRedaction((r) => (r ? { ...r, texte: e.target.value } : r))}
             />
 
-            <div className="flex flex-wrap justify-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {/* Un avis déjà rédigé ailleurs — par le client, en réunion —
+                  se reprend tel quel plutôt que de se retaper. Le texte arrive
+                  dans le champ ci-dessus : il s'y relit et s'y corrige, et
+                  c'est « Enregistrer le texte » qui décide. */}
+              <input
+                ref={avisFichierRef}
+                type="file"
+                accept=".pdf,.docx,.doc"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) importerTexte.mutate(f)
+                  e.target.value = ''
+                }}
+              />
+              <button
+                type="button"
+                className="btn-ghost mr-auto text-xs"
+                disabled={rediger.isPending || importerTexte.isPending}
+                onClick={() => {
+                  if (
+                    redaction.texte.trim() &&
+                    !window.confirm(
+                      'Le texte actuel sera remplacé par celui du document. Continuer ?',
+                    )
+                  ) {
+                    return
+                  }
+                  avisFichierRef.current?.click()
+                }}
+              >
+                {importerTexte.isPending && <Spinner />}
+                Importer un fichier
+              </button>
               <button
                 type="button"
                 className="btn-ghost text-xs"

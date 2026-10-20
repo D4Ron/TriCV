@@ -42,6 +42,13 @@ class FicheJointeOut(BaseModel):
     proposition: PropositionOut | None = None
 
 
+class TexteDocumentOut(BaseModel):
+    """Le texte brut d'un document, pour le verser dans un champ de saisie."""
+
+    texte: str
+    nom_fichier: str
+
+
 def _vers_proposition(proposition: fiche_poste.Proposition) -> PropositionOut:
     return PropositionOut(
         valeurs=proposition.valeurs,
@@ -68,6 +75,34 @@ async def _texte_de(fichier: UploadFile | None, texte: str | None) -> tuple[str,
         status.HTTP_422_UNPROCESSABLE_ENTITY,
         "Joignez la fiche de poste (PDF ou Word) ou collez son texte.",
     )
+
+
+@router.post("/documents/texte", response_model=TexteDocumentOut)
+async def texte_du_document(
+    db: DbSession,
+    _: CurrentUser,
+    fichier: UploadFile = File(...),
+) -> TexteDocumentOut:
+    """Rend le texte d'un PDF ou d'un Word, sans rien enregistrer.
+
+    Sert à reprendre un document déjà rédigé ailleurs — un avis écrit par le
+    client, une trame arrêtée en réunion — plutôt qu'à le retaper. Le texte
+    revient à l'écran, dans le champ où il se relit et se corrige ; c'est
+    l'enregistrement du champ qui décide, pas cet appel.
+    """
+    donnees = await fichier.read()
+    await fichier.close()
+    if not donnees:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Le fichier est vide.")
+    try:
+        accepte = uploads.valider_octets(donnees, fichier.filename or "document")
+    except uploads.RejectedUpload as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    try:
+        texte, _ = await fiche_poste.lire_document(accepte.data, accepte.filename)
+    except fiche_poste.FicheIllisible as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    return TexteDocumentOut(texte=texte, nom_fichier=accepte.filename)
 
 
 @router.post("/fiches/lecture", response_model=PropositionOut)

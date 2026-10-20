@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi } from '@/lib/api'
 import { Callout, Modal, Spinner } from '@/components/ui'
@@ -81,10 +82,31 @@ export default function PanneauCourriel() {
     onError: echec,
   })
 
-  // Boîte non configurée ou relevé désactivé : le panneau disparaît plutôt
-  // que d'offrir des boutons qui refuseraient. Tout se règle dans
-  // Paramètres › Boîte de candidatures ; le dépôt manuel reste disponible.
-  if (!etat.data?.actif) return null
+  // Boîte non prête : le panneau disparaissait, et avec lui le bouton de
+  // relevé manuel — celui dont on a justement besoin le jour où le relevé
+  // automatique ne ramène rien. On ne voyait alors ni les boutons, ni la
+  // raison de leur absence : il fallait soupçonner l'existence du panneau pour
+  // aller chercher pourquoi il n'était pas là.
+  //
+  // Il reste donc affiché, et dit ce qui manque. Les boutons, eux, ne sont pas
+  // proposés : ils refuseraient.
+  if (etat.isLoading) return null
+  if (!etat.data?.actif) {
+    const pourquoi = etat.data?.releve_desactive
+      ? 'Le relevé de la boîte est désactivé.'
+      : etat.data?.manquants.length
+        ? `Boîte incomplète : il manque ${etat.data.manquants.join(' et ')}.`
+        : 'La boîte de candidatures n’est pas configurée.'
+    return (
+      <span className="text-xs text-ink-500">
+        {pourquoi}{' '}
+        <Link className="font-medium underline" to="/settings">
+          Paramètres › Courriel
+        </Link>
+        . Les dossiers se déposent à la main depuis chaque poste en attendant.
+      </span>
+    )
+  }
 
   const enCours = tester.isPending || voir.isPending || relever.isPending
 

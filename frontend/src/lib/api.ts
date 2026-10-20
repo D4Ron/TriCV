@@ -755,7 +755,16 @@ export const recrutementApi = {
   },
 
   etatCourriel: () =>
-    request<{ actif: boolean; boite: string | null; dossier: string | null }>('/courriel/etat'),
+    request<{
+      actif: boolean
+      boite: string | null
+      dossier: string | null
+      /** La case « relever la boîte » est décochée — rien à remplir, juste à cocher. */
+      releve_desactive: boolean
+      /** Ce qu'il reste à renseigner, en toutes lettres. Vide si rien ne manque. */
+      manquants: string[]
+      fournisseur: 'imap' | 'microsoft365'
+    }>('/courriel/etat'),
   testerCourriel: () =>
     request<{ boite: string; dossier: string; messages: number; non_lus: number }>(
       '/courriel/tester',
@@ -955,6 +964,22 @@ export const fichesApi = {
 
   retirer: (posteId: string) =>
     request<void>(`/postes/${posteId}/fiche`, { method: 'DELETE' }),
+
+  /**
+   * Le texte d'un document, sans rien enregistrer.
+   *
+   * Pour reprendre un avis déjà rédigé ailleurs plutôt que de le retaper. Le
+   * texte arrive dans le champ, où il se relit — c'est l'enregistrement du
+   * champ qui décide.
+   */
+  texteDuDocument: (fichier: File) => {
+    const formData = new FormData()
+    formData.append('fichier', fichier)
+    return request<{ texte: string; nom_fichier: string }>('/documents/texte', {
+      method: 'POST',
+      formData,
+    })
+  },
 }
 
 // --- misc -------------------------------------------------------------------

@@ -75,6 +75,57 @@ async def test_une_boite_incomplete_dit_ce_qui_manque(client, auth):
     assert "Paramètres" in detail
 
 
+async def test_l_etat_dit_pourquoi_le_releve_n_est_pas_possible(client, auth):
+    """L'écran masquait le panneau sans un mot : avec lui, le relevé manuel.
+
+    Le bouton de relevé à la main est précisément celui qu'on cherche le jour
+    où le relevé automatique ne ramène rien. Il disparaissait avec le reste du
+    panneau, et rien ne disait ce qui manquait — il fallait soupçonner que le
+    panneau existait pour aller en chercher la raison ailleurs.
+    """
+    etat = (await client.get(f"{API}/courriel/etat", headers=auth)).json()
+    assert etat["actif"] is False
+    assert etat["releve_desactive"] is True
+
+    # Relevé activé, mais boîte incomplète : la raison change de nature.
+    await client.patch(
+        f"{API}/settings",
+        json={"courriel_actif": True, "imap_host": "imap.gmail.com"},
+        headers=auth,
+    )
+    etat = (await client.get(f"{API}/courriel/etat", headers=auth)).json()
+    assert etat["actif"] is False
+    assert etat["releve_desactive"] is False
+    assert "l'adresse" in etat["manquants"]
+    assert etat["fournisseur"] == "imap"
+
+    # Une fois complète, plus rien ne manque.
+    await client.patch(f"{API}/settings", json=BOITE, headers=auth)
+    etat = (await client.get(f"{API}/courriel/etat", headers=auth)).json()
+    assert etat["actif"] is True
+    assert etat["manquants"] == []
+
+
+async def test_une_boite_microsoft_incomplete_nomme_les_champs_entra(client, auth):
+    """Chez Microsoft, ce ne sont pas les mêmes champs qui manquent."""
+    await client.patch(
+        f"{API}/settings",
+        json={
+            "courriel_actif": True,
+            "fournisseur_courriel": "microsoft365",
+            "imap_user": "recrutement@kapiconsult.tg",
+        },
+        headers=auth,
+    )
+    etat = (await client.get(f"{API}/courriel/etat", headers=auth)).json()
+    assert etat["fournisseur"] == "microsoft365"
+    manquants = " ".join(etat["manquants"])
+    assert "tenant" in manquants
+    assert "application" in manquants
+    # Le mot de passe IMAP n'a pas à figurer : il n'existe pas chez Microsoft.
+    assert "mot de passe" not in manquants
+
+
 async def test_la_boite_se_configure_depuis_l_application(client, auth):
     reponse = await client.patch(f"{API}/settings", json=BOITE, headers=auth)
     assert reponse.status_code == 200, reponse.text
