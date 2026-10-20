@@ -115,7 +115,11 @@ async def lire_fiche(
     """Propose les champs d'un poste à partir d'une fiche. N'enregistre rien."""
     contenu, _ = await _texte_de(fichier, texte)
     try:
-        proposition = await fiche_poste.proposer(contenu, avec_assistance=avec_assistance)
+        proposition = await fiche_poste.proposer(
+            contenu,
+            avec_assistance=avec_assistance,
+            nom_fichier=(fichier.filename or "") if fichier is not None else "",
+        )
     except fiche_poste.FicheIllisible as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     return _vers_proposition(proposition)
@@ -179,7 +183,11 @@ async def joindre_fiche(
     if proposer:
         try:
             proposition = _vers_proposition(
-                await fiche_poste.proposer(contenu, avec_assistance=avec_assistance)
+                await fiche_poste.proposer(
+                    contenu,
+                    avec_assistance=avec_assistance,
+                    nom_fichier=poste.fiche_nom_fichier or "",
+                )
             )
         except fiche_poste.FicheIllisible as exc:
             proposition = PropositionOut(avertissement=str(exc))

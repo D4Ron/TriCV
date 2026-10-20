@@ -289,6 +289,54 @@ async def test_lire_un_texte_colle(client, auth):
     assert reponse.json()["valeurs"]["annees_experience_min"] == 8
 
 
+async def test_un_document_intitule_job_description_ne_nomme_pas_le_poste_ainsi(client, auth):
+    """Cas réel : un poste s'est appelé « JOB DESCRIPTION » en production.
+
+    La fiche s'annonçait par son titre anglais, que la liste des en-têtes à
+    ignorer ne couvrait pas — elle ne connaissait que les tournures
+    françaises. Le nom du fichier, lui, portait le poste.
+    """
+    document = _docx(
+        "JOB DESCRIPTION\nService : HSE\nRESPONSABILITES\n"
+        "- Veiller a la securite des installations\n- Animer les causeries"
+    )
+    reponse = await client.post(
+        f"{API}/fiches/lecture",
+        files={
+            "fichier": (
+                "Job description _Chargé Qualité et Méthodes.docx",
+                document,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+        data={"avec_assistance": "false"},
+        headers=auth,
+    )
+    assert reponse.status_code == 200, reponse.text
+    assert reponse.json()["valeurs"]["intitule"] == "Chargé Qualité et Méthodes"
+
+
+async def test_l_intitule_ecrit_dans_la_fiche_prime_sur_le_nom_du_fichier():
+    """Le document qui se nomme lui-même ne se laisse pas renommer par un fichier."""
+    texte = (
+        "JOB DESCRIPTION\nIntitulé du poste : Chef Comptable\n"
+        "RESPONSABILITES\n- Tenir la comptabilite"
+    ).replace("\n", chr(10))
+    proposition = await fiche_poste.proposer(
+        texte, avec_assistance=False, nom_fichier="Job description _Autre chose.docx"
+    )
+    assert proposition.valeurs["intitule"] == "Chef Comptable"
+
+
+async def test_un_nom_de_fichier_generique_laisse_lire_le_corps():
+    """« fiche.docx » ne nomme aucun poste : mieux vaut ce que dit le corps."""
+    texte = ("Chargé HSE\nService : HSE\nRESPONSABILITES\n- Veiller").replace("\n", chr(10))
+    proposition = await fiche_poste.proposer(
+        texte, avec_assistance=False, nom_fichier="fiche.docx"
+    )
+    assert proposition.valeurs["intitule"] == "Chargé HSE"
+
+
 async def test_le_texte_d_un_document_se_reprend_sans_rien_enregistrer(client, auth):
     """Reprendre un avis rédigé ailleurs plutôt que de le retaper.
 

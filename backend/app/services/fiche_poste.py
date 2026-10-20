@@ -394,13 +394,99 @@ def _identification(lignes: list[str]) -> dict[str, object]:
     return trouve
 
 
+# Les façons dont un document s'annonce lui-même. Ce ne sont pas des intitulés
+# de poste : ce sont les mots qu'on écrit en tête d'une fiche pour dire ce
+# qu'elle est. La liste ne retenait que les tournures françaises, et un
+# document intitulé « JOB DESCRIPTION » a donné un poste nommé « JOB
+# DESCRIPTION » — l'avis, les exports et la grille le portaient tel quel.
+_ENTETES_DE_DOCUMENT = (
+    "fiche de poste",
+    "fiche poste",
+    "fiche descriptive",
+    "fiche de fonction",
+    "description de poste",
+    "description du poste",
+    "description de fonction",
+    "profil de poste",
+    "profil du poste",
+    "definition de fonction",
+    "termes de reference",
+    "job description",
+    "job profile",
+    "position description",
+    "role description",
+    "job title",
+)
+
+
+def _est_entete_de_document(ligne: str) -> bool:
+    return _sans_accents(ligne).lstrip("#*_ -").startswith(_ENTETES_DE_DOCUMENT)
+
+
+# Ce qu'on trouve dans un nom de fichier et qui ne nomme personne.
+_NOMS_GENERIQUES = frozenset(
+    {
+        "fiche", "poste", "postes", "document", "doc", "final", "finale",
+        "version", "vf", "v1", "v2", "v3", "copie", "draft", "brouillon",
+        "jd", "job", "description", "profil", "nouveau", "nouvelle", "modele",
+    }
+)
+
+
+def _intitule_du_fichier(nom_fichier: str) -> str | None:
+    """L'intitulé que porte le nom du fichier, l'en-tête ôtée.
+
+    « Job description _Chargé Qualité et Méthodes.docx » nomme le poste
+    là où le document ne le nomme pas : son premier paragraphe n'est qu'un
+    titre de document. Quelqu'un a pris la peine de l'écrire dans le nom du
+    fichier ; c'est une source plus sûre qu'une ligne de corps prise au hasard.
+
+    Rend None quand il ne reste rien d'utile — « fiche.docx », « document
+    final v3.docx » —, auquel cas la lecture du corps reprend la main.
+    """
+    tronc = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", (nom_fichier or "").strip())
+    if not tronc:
+        return None
+    nu = _sans_accents(tronc)
+    for entete in _ENTETES_DE_DOCUMENT:
+        if nu.startswith(entete):
+            tronc = tronc[len(entete) :]
+            break
+    # Ce qui sépare l'en-tête du nom : tiret, blanc souligné, deux-points.
+    tronc = tronc.strip(" \t-–—_:·.").strip()
+    if len(tronc) < 3 or not any(c.isalpha() for c in tronc):
+        return None
+    # Un nom resté générique n'apprend rien : « fiche.docx » ne nomme aucun
+    # poste, et le retenir vaudrait moins que la lecture du corps.
+    nu = _sans_accents(tronc).strip()
+    if nu in _NOMS_GENERIQUES or all(mot in _NOMS_GENERIQUES for mot in nu.split()):
+        return None
+    return tronc[:512]
+
+
+def _etiquette_intitule(texte: str) -> bool:
+    """Le document écrit-il « Intitulé du poste : … » ?
+
+    C'est la seule source qui nomme le poste sans ambiguïté. Tout le reste —
+    nom du fichier, première ligne du corps — n'est qu'un pis-aller, et doit
+    lui céder le pas.
+    """
+    motif = dict(_ETIQUETTES)["intitule"]
+    return any(motif.match(l.strip()) for l in texte.splitlines()[:40])
+
+
 def _intitule_par_defaut(texte: str) -> str | None:
-    """Faute d'étiquette, la première ligne utile qui n'est pas le titre du document."""
+    """Faute de mieux, la première ligne utile qui n'est pas un titre de document."""
     for brute in texte.splitlines()[:8]:
         ligne = brute.strip()
         if not ligne or len(ligne) > 120:
             continue
-        if _sans_accents(ligne).startswith(("fiche de poste", "fiche poste", "description de poste")):
+        if _est_entete_de_document(ligne):
+            continue
+        # Une puce est un élément de liste, jamais un intitulé de poste. Sans
+        # ce test, une fiche dont l'en-tête est écartée rendait sa première
+        # responsabilité comme nom du poste.
+        if _PUCE.match(ligne):
             continue
         if _titre_rubrique(ligne) is not None or ":" in ligne:
             continue
@@ -689,8 +775,15 @@ async def _assistance(texte: str) -> dict[str, object]:
     return propose
 
 
-async def proposer(texte: str, *, avec_assistance: bool = True) -> Proposition:
-    """La proposition de préremplissage pour ce texte de fiche."""
+async def proposer(
+    texte: str, *, avec_assistance: bool = True, nom_fichier: str = ""
+) -> Proposition:
+    """La proposition de préremplissage pour ce texte de fiche.
+
+    `nom_fichier` sert d'appoint pour l'intitulé : certains documents ne se
+    nomment qu'en tête de page — « JOB DESCRIPTION » — et portent le poste
+    dans leur nom de fichier.
+    """
     texte = extraction.normalise(texte or "")
     if len(texte) < TEXTE_MINIMUM:
         raise FicheIllisible(
@@ -698,8 +791,24 @@ async def proposer(texte: str, *, avec_assistance: bool = True) -> Proposition:
             "entière, ou déposez le document."
         )
 
+    trame = lire_trame(texte)
+
+    # Trois sources pour l'intitulé, dans cet ordre :
+    #
+    #   « Intitulé du poste : … »   le document le nomme — rien ne le discute ;
+    #   le nom du fichier           quelqu'un l'a écrit exprès ;
+    #   la première ligne du corps  un pis-aller, et il se trompe.
+    #
+    # Le pis-aller passait avant le nom du fichier : une fiche s'annonçant
+    # « JOB DESCRIPTION », dont le fichier portait pourtant le poste, a donné
+    # en production un poste nommé « JOB DESCRIPTION » — repris tel quel par
+    # l'avis, les exports et la grille.
+    du_fichier = _intitule_du_fichier(nom_fichier)
+    if du_fichier and not _etiquette_intitule(texte):
+        trame["intitule"] = du_fichier
+
     proposition = Proposition(texte=texte)
-    for champ, valeur in lire_trame(texte).items():
+    for champ, valeur in trame.items():
         proposition.valeurs[champ] = valeur
         proposition.origines[champ] = "document"
 
