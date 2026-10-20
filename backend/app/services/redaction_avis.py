@@ -540,7 +540,19 @@ async def rediger(
     if gabarit.strip():
         return await _rediger_sur_gabarit(poste, contexte, gabarit, reglages)
 
-    fournisseur = get_provider()
+    # `get_provider` construit la chaîne, et elle lève quand aucun fournisseur
+    # n'est utilisable — clé absente, adresse vide. Cet appel était à
+    # l'intérieur du `try` tant que la rédaction tenait en un appel ; le
+    # découpage en sections l'a sorti, et l'exception est alors remontée
+    # jusqu'à l'API, qui a répondu 500. Sur une installation où le modèle n'est
+    # pas encore configuré — le cas d'une mise en service —, demander un avis
+    # cassait donc l'écran au lieu de rendre le squelette.
+    try:
+        fournisseur = get_provider()
+    except Exception:
+        logger.exception("aucun fournisseur de rédaction pour le poste %s", poste.id)
+        return ""
+
     systeme = prompts.avis_system_prompt()
     morceaux: list[str] = [_entete(poste, avis, mandat)]
 

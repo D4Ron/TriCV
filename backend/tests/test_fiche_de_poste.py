@@ -12,7 +12,7 @@ import io
 import docx
 import pytest
 
-from app.llm.base import LLMProvider
+from app.llm.base import LLMConfigError, LLMProvider
 from app.services import fiche_poste, redaction_avis
 from app.services.parametres import FOURNISSEUR_IMAP, _defauts
 
@@ -495,6 +495,38 @@ async def test_la_redaction_assistee_lit_la_fiche_jointe(client, auth, monkeypat
     assert "Texte proposé pour Mission et responsabilités." in texte
     assert "Dossier de candidature" in texte
     assert "Lettre de motivation" in texte
+
+
+async def test_sans_modele_configure_l_avis_rend_le_squelette_pas_une_erreur(
+    client, auth, monkeypatch
+):
+    """Une installation sans modèle doit rendre le squelette, jamais un 500.
+
+    `get_provider` construit la chaîne de fournisseurs et lève quand aucun
+    n'est utilisable — clé absente, adresse vide. C'est l'état normal d'une
+    mise en service. L'appel était hors du `try` depuis que la rédaction se
+    fait section par section, et l'écran recevait alors une erreur serveur là
+    où il attendait de quoi écrire l'avis à la main.
+    """
+    poste_id = await monter_poste(client, auth)
+    avis = (await client.get(f"{API}/postes/{poste_id}/avis", headers=auth)).json()[0]
+
+    def sans_modele():
+        raise LLMConfigError("Aucun fournisseur utilisable.")
+
+    monkeypatch.setattr(redaction_avis, "get_provider", sans_modele)
+
+    reponse = await client.post(
+        f"{API}/postes/{poste_id}/avis/redaction",
+        json={"avis_id": avis["id"], "avec_assistance": True},
+        headers=auth,
+    )
+    assert reponse.status_code == 200, reponse.text
+    charge = reponse.json()
+    assert charge["propose"] is False
+    # Le squelette porte les faits : de quoi écrire l'avis sans assistance.
+    assert "AVIS DE RECRUTEMENT" in charge["texte"]
+    assert charge["avertissement"]
 
 
 def test_la_section_d_aide_est_ajoutee_si_le_modele_l_oublie():

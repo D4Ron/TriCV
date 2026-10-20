@@ -1392,7 +1392,17 @@ async def rediger_sections(
     main. Une panne du fournisseur ne doit jamais empêcher de produire un
     rapport — elle rend seulement le travail plus long.
     """
-    fournisseur = get_provider() if avec_assistance else None
+    # Même garde que pour l'avis : une chaîne de fournisseurs qu'on ne peut pas
+    # construire ne doit pas faire échouer la génération. Les sections arrivent
+    # alors vides, avec leur titre et leur consigne — ce que la docstring
+    # promet déjà pour une panne de fournisseur, et qui valait aussi pour une
+    # configuration absente.
+    fournisseur = None
+    if avec_assistance:
+        try:
+            fournisseur = get_provider()
+        except Exception:
+            logger.exception("aucun fournisseur : les sections arriveront vides")
     contexte = _contexte_textuel(donnees, TRAME[0])
 
     sections = []
