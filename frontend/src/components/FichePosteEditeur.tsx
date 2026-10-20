@@ -133,12 +133,15 @@ function fusion(poste: Poste, proposition: PropositionFiche | null | undefined):
 export default function FichePosteEditeur({
   poste: enregistre,
   proposition,
+  surLIntitule = false,
   onClose,
   onEnregistre,
 }: {
   poste: Poste
   /** Ce qu'une fiche jointe propose, a relire avant d'etre enregistre. */
   proposition?: PropositionFiche | null
+  /** Ouvert pour renommer : le curseur se pose sur l'intitulé. */
+  surLIntitule?: boolean
   onClose: () => void
   onEnregistre: (compteRendu: string) => void
 }) {
@@ -313,11 +316,20 @@ export default function FichePosteEditeur({
             poste.
           </Callout>
         )}
-        <Field label="Intitulé du poste" htmlFor="fiche-intitule">
+        <Field
+          label="Intitulé du poste"
+          htmlFor="fiche-intitule"
+          hint={
+            surLIntitule
+              ? "Le changer renomme le poste partout : dans les listes, les exports et les rapports. Les avis déjà publiés gardent le texte sous lequel ils ont paru."
+              : undefined
+          }
+        >
           <input
             id="fiche-intitule"
             className="input"
             value={intitule}
+            autoFocus={surLIntitule}
             onChange={(e) => setIntitule(e.target.value)}
           />
         </Field>

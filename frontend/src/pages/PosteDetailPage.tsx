@@ -1314,6 +1314,9 @@ export default function PosteDetailPage() {
   // Quel document tableur exporter : le choix se fait avant, pas après.
   const [choixExport, setChoixExport] = useState(false)
   const [ficheOuverte, setFicheOuverte] = useState(false)
+  // Ouverte par « Renommer » : le formulaire met alors l'intitulé sous le
+  // curseur, plutôt que de laisser chercher le champ parmi vingt autres.
+  const [renommer, setRenommer] = useState(false)
   // Ce qu'une fiche jointe propose. Non nul = le formulaire s'ouvre dessus ;
   // rien n'est enregistré tant que personne n'a relu.
   const [proposition, setProposition] = useState<PropositionFiche | null>(null)
@@ -1406,7 +1409,26 @@ export default function PosteDetailPage() {
 
       <div className="mb-5 mt-2 flex flex-wrap items-start gap-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight text-ink-900">{p.intitule}</h1>
+          {/* L'intitulé se change depuis « Modifier la fiche », où il est le
+              premier champ — mais rien ne le disait, et personne n'allait
+              chercher un renommage derrière un bouton qui annonce une fiche.
+              Le titre porte donc son propre crayon, qui ouvre le même
+              formulaire : une seule façon d'enregistrer, deux façons d'y
+              arriver. */}
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-semibold tracking-tight text-ink-900">{p.intitule}</h1>
+            <button
+              type="button"
+              className="shrink-0 text-xs text-ink-400 underline transition hover:text-ink-700"
+              title="Changer l'intitulé du poste"
+              onClick={() => {
+                setRenommer(true)
+                setFicheOuverte(true)
+              }}
+            >
+              Renommer
+            </button>
+          </div>
           <p className="mt-1 text-sm text-ink-500">
             {g.client_nom}
             {g.date_reference ? ` · clôture le ${formatDate(g.date_reference, 'fr')}` : ''}
@@ -1758,9 +1780,11 @@ export default function PosteDetailPage() {
         <FichePosteEditeur
           poste={p}
           proposition={proposition}
+          surLIntitule={renommer}
           onClose={() => {
             setFicheOuverte(false)
             setProposition(null)
+            setRenommer(false)
           }}
           onEnregistre={(compteRendu) => {
             setErreur(null)

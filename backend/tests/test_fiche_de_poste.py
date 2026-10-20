@@ -289,6 +289,51 @@ async def test_lire_un_texte_colle(client, auth):
     assert reponse.json()["valeurs"]["annees_experience_min"] == 8
 
 
+async def test_le_texte_d_un_document_se_reprend_sans_rien_enregistrer(client, auth):
+    """Reprendre un avis rédigé ailleurs plutôt que de le retaper.
+
+    L'appel ne touche à rien : il rend le texte, qui arrive dans le champ où
+    il se relit. C'est l'enregistrement du champ qui décide.
+    """
+    document = _docx("AVIS DE RECRUTEMENT\nLe cabinet recrute un Chef Comptable.")
+    reponse = await client.post(
+        f"{API}/documents/texte",
+        files={
+            "fichier": (
+                "avis-du-client.docx",
+                document,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+        headers=auth,
+    )
+    assert reponse.status_code == 200, reponse.text
+    charge = reponse.json()
+    assert "Chef Comptable" in charge["texte"]
+    assert charge["nom_fichier"] == "avis-du-client.docx"
+
+
+async def test_un_document_illisible_est_refuse_en_disant_pourquoi(client, auth):
+    """Un refus utile nomme le fichier et dit ce qu'il aurait fallu."""
+    reponse = await client.post(
+        f"{API}/documents/texte",
+        files={"fichier": ("photo.png", b"\x89PNG\r\n\x1a\n" + b"0" * 64, "image/png")},
+        headers=auth,
+    )
+    assert reponse.status_code == 422
+    detail = reponse.json()["detail"]
+    assert "photo.png" in detail
+
+
+async def test_un_document_vide_est_refuse(client, auth):
+    reponse = await client.post(
+        f"{API}/documents/texte",
+        files={"fichier": ("vide.docx", b"", "application/octet-stream")},
+        headers=auth,
+    )
+    assert reponse.status_code == 422
+
+
 async def test_un_fichier_qui_n_est_pas_une_fiche_est_refuse(client, auth):
     reponse = await client.post(
         f"{API}/fiches/lecture",
