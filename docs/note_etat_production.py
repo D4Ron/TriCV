@@ -39,7 +39,9 @@ def contenu() -> list:
     h.append(
         para(
             "La mise à jour est bien déployée et le site fonctionne. Quatre points "
-            "restent ouverts, relevés en testant le site en ligne le 26/10/2026."
+            "restent ouverts : ce sont des réglages à poser, non des anomalies "
+            "de l'application. Chacun a été constaté sur le site en ligne, "
+            "compte administrateur ouvert, le 26/10/2026."
         )
     )
 
@@ -50,7 +52,8 @@ def contenu() -> list:
                 [
                     "<b>1. Aucune candidature ne passe.</b> Le serveur refuse tout "
                     "envoi de plus d'1 Mo. Un seul diplôme numérisé en couleur "
-                    "dépasse cette taille. Mesuré : accepté à 900 Ko, refusé à 1 Mo.",
+                    "dépasse cette taille. <i>Constaté : accepté à 900 Ko ; refusé à "
+                    "1 Mo, 2 Mo et 5 Mo — page d'erreur nginx.</i>",
                     "Sur le serveur frontal (nginx), dans le bloc "
                     "<font face='Courier'>server</font> — voir les commandes "
                     "ci-dessous. Effet immédiat, aucun déploiement.",
@@ -58,14 +61,17 @@ def contenu() -> list:
                 [
                     "<b>2. Pas de rédaction assistée.</b> La clé du modèle Gemini "
                     "n'est pas sur le serveur. Les avis et rapports arrivent en "
-                    "squelette, à rédiger à la main. Ce n'est plus une erreur.",
+                    "squelette, à rédiger à la main — ce n'est plus une erreur. "
+                    "<i>Constaté : demande refusée en moins d'une seconde, donc "
+                    "clé absente et non quota dépassé.</i>",
                     "Ajouter <font face='Courier'>GEMINI_API_KEY</font> au fichier "
                     "<font face='Courier'>.env</font>, puis redémarrer.",
                 ],
                 [
                     "<b>3. Aucun courriel, ni reçu ni envoyé.</b> Les identifiants "
                     "Microsoft manquent (tenant, application, secret) et les deux "
-                    "interrupteurs sont fermés.",
+                    "interrupteurs sont fermés. <i>Constaté : le test d'envoi répond "
+                    "« L'envoi de courriels n'est pas configuré ».</i>",
                     "<b>Paramètres › Courriel</b>, choix « Microsoft 365 » : une "
                     "fenêtre déroule la marche à suivre. Puis cocher "
                     "<i>Relever la boîte</i> et <i>Envoyer les courriels</i>.",
