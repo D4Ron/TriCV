@@ -73,10 +73,12 @@ def contenu() -> list:
                 [
                     "<b>4. La référence de l'avis est l'intitulé du poste</b> — "
                     "long, et avec une espace avant la virgule. C'est elle que les "
-                    "candidats recopient dans l'objet de leur courriel.",
-                    "Sur le poste, <b>Modifier le texte</b> de l'avis n'y touche "
-                    "pas : la référence se change à la création d'un avis. Une "
-                    "forme courte convient mieux.",
+                    "candidats recopient dans l'objet de leur courriel. "
+                    "<i>Le moins pressé des quatre : le rattachement se fait aussi "
+                    "sur l'intitulé, et aucun courriel n'est relevé aujourd'hui.</i>",
+                    "Un avis publié ne permet plus de la changer. Laisser celui-ci "
+                    "tel quel ; au prochain avis, garder la référence courte — "
+                    "l'écran en propose une d'après l'intitulé.",
                 ],
             ],
             [84 * mm, 81 * mm],
