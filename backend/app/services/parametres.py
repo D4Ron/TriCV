@@ -396,3 +396,43 @@ async def ecrire(db: AsyncSession, modifications: dict[str, object]) -> list[str
         changees.append(cle)
     await db.flush()
     return changees
+
+
+def ce_qui_manque(reglages: Reglages) -> list[str]:
+    """Ce qu'il faut encore renseigner pour relever la boîte.
+
+    Extrait de `_ouvrir_boite`, qui s'en servait pour refuser, afin que l'état
+    de la boîte puisse le dire *avant* qu'on essaie. L'écran masquait le
+    panneau entier quand la boîte n'était pas prête : le relevé manuel — celui
+    dont on a justement besoin quand quelque chose cloche — disparaissait avec
+    lui, sans un mot sur ce qui manquait.
+    """
+    if reglages.microsoft365:
+        manquants = [
+            libelle
+            for libelle, valeur in (
+                ("l'adresse de la boîte", reglages.boite),
+                ("l'identifiant du tenant", reglages.graph_utilisable or reglages.oauth_tenant),
+                ("l'identifiant de l'application", reglages.oauth_client_id),
+                ("le secret de l'application", reglages.oauth_client_secret),
+            )
+            if not valeur
+        ]
+        if not manquants and not reglages.graph_utilisable:
+            manquants = ["un identifiant de tenant d'organisation (pas « common » ni « consumers »)"]
+        return manquants
+    return [
+        libelle
+        for libelle, valeur in (
+            ("le serveur", reglages.imap_host),
+            ("l'adresse", reglages.imap_user),
+            # Un mot de passe *ou* un accès OAuth. Une boîte Microsoft n'a pas
+            # de mot de passe qui fonctionne : l'exiger la rendrait à jamais
+            # « incomplète ».
+            (
+                "le mot de passe ou l'accès Microsoft",
+                reglages.imap_password or (reglages.oauth_utilisable and "oauth"),
+            ),
+        )
+        if not valeur
+    ]

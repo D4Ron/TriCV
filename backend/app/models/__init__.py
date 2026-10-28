@@ -49,6 +49,7 @@ from app.models.recrutement import (
     Poste,
     nouvelle_cle_publique,
 )
+from app.models.frequentation import EVENEMENTS, Frequentation
 from app.models.user import User
 
 # Effet de bord : enregistre la table `parametre` dans les metadata.
@@ -97,6 +98,8 @@ __all__ = [
     "StatutRapport",
     "TypeEchange",
     "UsageModele",
+    "EVENEMENTS",
+    "Frequentation",
     "Parametre",
     "User",
     "UserRole",

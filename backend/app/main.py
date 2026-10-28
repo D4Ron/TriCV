@@ -22,6 +22,7 @@ from app.api import (
     public,
     public_avis,
     rapports,
+    sante,
     sessions,
     stats,
     vivier,
@@ -211,6 +212,8 @@ for router in (
     candidates.router,
     exports.router,
     stats.router,
+    # L'état de l'application et les signaux de fréquentation.
+    sante.router,
     public.router,
 ):
     app.include_router(router, prefix=API_PREFIX)
