@@ -207,9 +207,9 @@ def contenu() -> list:
     )
     h.append(
         para(
-            "Comptez une vingtaine de minutes. Il faut deux choses : un accès administrateur "
-            "au compte Google de l'adresse de recrutement, et un compte <b>administrateur</b> "
-            "dans TriCV — un compte recruteur voit les paramètres sans pouvoir les modifier."
+            "Comptez une vingtaine de minutes. Il faut deux choses : un administrateur du "
+            "Microsoft 365 du cabinet (Entra ID), et un compte <b>administrateur</b> dans "
+            "TriCV — un compte recruteur voit les paramètres sans pouvoir les modifier."
         )
     )
 
@@ -221,9 +221,9 @@ def contenu() -> list:
                 "recrutement@kapiconsult.tg. Pas la boîte personnelle d'un collaborateur : "
                 "l'application marque les messages comme lus et les traite, ce qui n'a pas sa "
                 "place dans une messagerie privée.",
-                "<b>De quoi ouvrir la boîte</b> — et cela dépend du fournisseur : un mot de "
-                "passe d'application chez Google, un accès OAuth chez Microsoft. La section "
-                "suivante dit lequel vous concerne.",
+                "<b>Une boîte Microsoft 365</b> : TriCV la lit et écrit depuis elle par "
+                "Microsoft Graph, avec un accès d'application déclaré dans Entra ID — partie "
+                "A. Aucun mot de passe n'intervient.",
                 "<b>Un compte administrateur TriCV.</b> Pour le vérifier : ouvrez "
                 "« Paramètres ». Si les champs sont grisés et que la page indique « Réservé "
                 "aux administrateurs », votre compte est un compte recruteur.",
@@ -233,56 +233,8 @@ def contenu() -> list:
         )
     )
 
-    # --- quel fournisseur ----------------------------------------------------
-    h.append(para("Quel est votre fournisseur ? La suite en dépend", "section"))
-    h.append(
-        para(
-            "Les deux grands fournisseurs ne se configurent plus de la même façon, et la "
-            "différence n'est pas un détail de réglage : <b>chez Microsoft, aucun mot de "
-            "passe ne fonctionne</b>. Repérez votre cas avant d'aller plus loin."
-        )
-    )
-    h.append(
-        tableau(
-            ["Votre adresse", "Ce qu'il faut", "Où aller"],
-            [
-                [
-                    "…@outlook.com, @hotmail.com, @live.com, ou une adresse de votre domaine "
-                    "hébergée chez <b>Microsoft 365</b>",
-                    "Un <b>accès OAuth</b> : identifiant d'application, tenant, secret. "
-                    "Aucun mot de passe, pas même un « mot de passe d'application ».",
-                    "Partie A-Microsoft",
-                ],
-                [
-                    "…@gmail.com, ou une adresse de votre domaine hébergée chez "
-                    "<b>Google Workspace</b>",
-                    "Un <b>mot de passe d'application</b> Google.",
-                    "Partie A-Google",
-                ],
-                [
-                    "Une adresse hébergée ailleurs (serveur du cabinet, hébergeur local)",
-                    "Le mot de passe de la boîte, en général.",
-                    "Partie B directement",
-                ],
-            ],
-            [52 * mm, 68 * mm, 38 * mm],
-        )
-    )
-    h.extend(
-        encadre(
-            "Microsoft a supprimé les mots de passe sur IMAP",
-            "Ce n'est pas un réglage à trouver ni une option à activer. La documentation de "
-            "Microsoft est explicite : « Basic authentication is now disabled in all "
-            "tenants », et personne — pas même le support Microsoft — ne peut la "
-            "réactiver. Les « mots de passe d'application » reposaient dessus et ont "
-            "disparu avec elle. Pour les adresses personnelles (outlook.com, hotmail.com, "
-            "live.com), la bascule a eu lieu le 16 septembre 2024. Chercher un mot de "
-            "passe qui marcherait est une heure perdue : il n'y en a pas.",
-        )
-    )
-
     # --- partie A Microsoft --------------------------------------------------
-    h.append(para("Partie A-Microsoft — Déclarer TriCV auprès de Microsoft", "section"))
+    h.append(para("Partie A — Déclarer TriCV auprès de Microsoft", "section"))
     h.append(
         para(
             "Le principe : on déclare TriCV comme une application auprès de Microsoft, on lui "
@@ -293,15 +245,18 @@ def contenu() -> list:
     )
     h.append(
         para(
-            "<b>Deux cas, et il faut trancher avant de commencer.</b> Une adresse "
-            "professionnelle (Microsoft 365, votre domaine, un administrateur) permet le "
-            "flux dit « application » : TriCV s'authentifie seul, sans qu'aucun humain ne se "
-            "connecte, et cela ne s'interrompt jamais. Une adresse personnelle outlook.com "
-            "n'y a pas droit : Microsoft y exige un consentement humain, une fois, qui "
-            "produit un jeton de rafraîchissement. Cela marche, mais ce jeton peut être "
-            "révoqué — changement de mot de passe, expiration — et il faut alors "
-            "recommencer. <b>Pour une boîte de recrutement qui doit tourner sans "
-            "surveillance, une adresse professionnelle est nettement préférable.</b>"
+            "<b>Il faut une adresse professionnelle</b> (Microsoft 365, domaine du "
+            "cabinet). TriCV s'authentifie seul, sans qu'aucun humain ne se connecte, et "
+            "cela ne s'interrompt jamais. Une adresse personnelle outlook.com ne convient "
+            "pas : Microsoft n'y autorise pas ce mode d'accès."
+        )
+    )
+    h.append(
+        para(
+            "<b>Dans TriCV, une fenêtre déroule ces étapes</b> : elle s'ouvre d'elle-même "
+            "la première fois qu'un administrateur ouvre Paramètres › Courriel, et fabrique "
+            "le lien de consentement à mesure qu'on tape. Ce qui suit en est la version "
+            "papier, à transmettre à qui administre Entra ID."
         )
     )
 
@@ -313,9 +268,7 @@ def contenu() -> list:
                 "<b>Inscriptions d'applications</b> → <b>Nouvelle inscription</b>.",
                 "Nom : <font face='Courier'>TriCV — boîte de candidatures</font>. "
                 "Le nom n'a d'importance que pour vous y retrouver.",
-                "Types de comptes : <b>ce répertoire organisationnel uniquement</b> pour une "
-                "adresse professionnelle ; <b>comptes Microsoft personnels</b> pour une "
-                "adresse outlook.com.",
+                "Types de comptes : <b>ce répertoire organisationnel uniquement</b>.",
                 "Après création, relevez <b>ID d'application (client)</b> et <b>ID "
                 "d'annuaire (tenant)</b> sur la page « Vue d'ensemble ». Ce sont deux des "
                 "trois valeurs à saisir dans TriCV.",
@@ -340,9 +293,8 @@ def contenu() -> list:
     h.append(para("Étape M3 — Autoriser l'accès à la boîte", "etape"))
     h.append(
         para(
-            "Pour une adresse <b>professionnelle</b>, un administrateur Microsoft 365 doit "
-            "faire les deux gestes suivants. Sans le second, le jeton est délivré mais la "
-            "boîte reste fermée."
+            "Un administrateur Microsoft 365 doit faire les deux gestes suivants. Sans le "
+            "premier, le jeton est délivré mais la boîte reste fermée."
         )
     )
     h.append(
@@ -371,31 +323,6 @@ def contenu() -> list:
             "corps",
         )
     )
-    h.extend(
-        encadre(
-            "Pourquoi Graph plutôt qu'IMAP",
-            "Les deux chemins mènent à la boîte, et ils ne coûtent pas la même chose à "
-            "ouvrir. Graph demande ce qui précède, et rien d'autre. La voie IMAP — "
-            "<font face='Courier'>IMAP.AccessAsApp</font>, "
-            "<font face='Courier'>SMTP.SendAsApp</font> — exige en plus de <b>réactiver "
-            "SMTP AUTH</b> sur le tenant, puis de créer un principal de service et de le "
-            "rattacher à la boîte en PowerShell "
-            "(<font face='Courier'>New-ServicePrincipal</font>, puis "
-            "<font face='Courier'>Add-MailboxPermission</font>). TriCV sait faire les deux, "
-            "et le choix se fait à l'écran : <b>Paramètres → Courriel → Par où passe le "
-            "courriel</b>. Une installation neuve part sur Graph.",
-        )
-    )
-    h.append(
-        para(
-            "Pour une adresse <b>personnelle</b> outlook.com, il n'y a pas d'administrateur : "
-            "la permission se demande au titulaire de la boîte par un consentement dans le "
-            "navigateur, qui renvoie un <b>jeton de rafraîchissement</b>. C'est ce jeton, et "
-            "non un secret, qui se colle dans TriCV. La personne qui installe l'application "
-            "doit être devant l'écran pour ce geste."
-        )
-    )
-
     h.append(para("Étape M4 — Ce qu'il faut demander à l'administrateur", "etape"))
     h.append(
         para(
@@ -433,100 +360,6 @@ def contenu() -> list:
             "d'application (client)</b> et <b>la valeur du secret</b> — et non son ID.",
         )
     )
-    h.extend(
-        encadre(
-            "Si votre organisation impose IMAP plutôt que Graph",
-            "Remplacez le point 3 par les permissions "
-            "<font face='Courier'>IMAP.AccessAsApp</font> et "
-            "<font face='Courier'>SMTP.SendAsApp</font> sur Office 365 Exchange Online, et "
-            "le point 4 par la création d'un principal de service rattaché à la boîte "
-            "(<font face='Courier'>New-ServicePrincipal</font>, puis "
-            "<font face='Courier'>Add-MailboxPermission</font>) — en sachant que SMTP AUTH "
-            "doit alors être réactivé sur le tenant. Côté TriCV, il suffit de renseigner "
-            "<font face='Courier'>outlook.office365.com</font> et "
-            "<font face='Courier'>smtp.office365.com</font>.",
-            ton=DISCRET,
-            fond=FOND,
-        )
-    )
-
-    # --- partie A Google -----------------------------------------------------
-    h.append(para("Partie A-Google — Préparer le compte Google", "section"))
-    h.append(
-        para(
-            "Gmail n'accepte plus le mot de passe habituel d'un compte pour ce type de "
-            "connexion. Il faut créer un « mot de passe d'application » : un mot de passe "
-            "distinct, réservé à TriCV, révocable seul et sans effet sur le reste du compte. "
-            "Les trois étapes qui suivent servent à l'obtenir."
-        )
-    )
-
-    h.append(para("Étape 1 — Activer la validation en deux étapes", "etape"))
-    h.append(
-        puces(
-            [
-                "Connectez-vous au compte Google de l'adresse de recrutement.",
-                "Ouvrez <b>myaccount.google.com</b> → onglet <b>Sécurité</b>.",
-                "Section « Comment vous connecter à Google » → <b>Validation en deux "
-                "étapes</b> → suivez la procédure (Google demandera un numéro de téléphone).",
-            ]
-        )
-    )
-    h.extend(
-        encadre(
-            "Cette étape n'est pas contournable",
-            "L'option « Mots de passe des applications » n'existe tout simplement pas tant "
-            "que la validation en deux étapes n'est pas active. Si vous ne la trouvez pas à "
-            "l'étape 2, c'est presque toujours que l'étape 1 n'est pas terminée.",
-        )
-    )
-
-    h.append(para("Étape 2 — Créer le mot de passe d'application", "etape"))
-    h.append(
-        puces(
-            [
-                "Toujours dans <b>Sécurité</b>, cherchez « Mots de passe des applications » "
-                "(la barre de recherche du compte Google y mène directement).",
-                "Créez-en un et nommez-le <b>TriCV</b> — le nom ne sert qu'à vous y "
-                "retrouver le jour où vous voudrez le révoquer.",
-                "Google affiche <b>seize lettres, présentées par groupes de quatre</b>. "
-                "Copiez-les.",
-            ]
-        )
-    )
-    h.extend(
-        encadre(
-            "Il ne sera plus jamais affiché",
-            "Google ne le remontre pas après la fermeture de la fenêtre. Si vous le perdez, "
-            "il faut en créer un autre — ce qui est sans conséquence, l'ancien se supprime. "
-            "Les espaces entre les groupes de quatre n'ont pas d'importance : TriCV les "
-            "retire automatiquement.",
-        )
-    )
-
-    h.append(para("Étape 3 — Activer IMAP dans Gmail", "etape"))
-    h.append(
-        puces(
-            [
-                "Ouvrez <b>Gmail</b> avec ce compte → roue dentée → <b>Afficher tous les "
-                "paramètres</b>.",
-                "Onglet <b>Transfert et POP/IMAP</b> → section « Accès IMAP » → <b>Activer "
-                "IMAP</b>.",
-                "<b>Enregistrer les modifications</b> en bas de la page.",
-            ]
-        )
-    )
-    h.extend(
-        encadre(
-            "Compte Google Workspace : vérifiez la politique de l'organisation",
-            "Si l'adresse appartient à un espace de travail Google d'entreprise, un "
-            "administrateur peut avoir désactivé IMAP ou interdit les mots de passe "
-            "d'application pour tout le domaine. Dans ce cas les réglages ci-dessus sont "
-            "absents ou sans effet, et il faut passer par l'administrateur du domaine. Une "
-            "adresse Gmail ordinaire n'est pas concernée.",
-        )
-    )
-
     # --- partie B -----------------------------------------------------------
     h.append(PageBreak())
     h.append(para("Partie B — Renseigner TriCV", "section"))
@@ -540,22 +373,9 @@ def contenu() -> list:
     )
     h.append(
         para(
-            "La première question de l'onglet est <b>par où passe le courriel</b> : "
-            "« IMAP et SMTP » ou « Microsoft 365 (Graph) ». Ce choix commande la suite — "
-            "il fait apparaître les champs qui comptent et disparaître ceux qui ne servent "
-            "à rien chez le fournisseur retenu. Choisissez-le avant de remplir quoi que ce "
-            "soit, sans quoi vous renseignerez un serveur IMAP que personne n'interrogera."
-        )
-    )
-    h.extend(
-        encadre(
-            "Microsoft : les champs IMAP disparaissent, et c'est voulu",
-            "Sous « Microsoft 365 (Graph) », l'écran ne demande plus ni serveur, ni port, "
-            "ni mot de passe : Graph n'en emploie aucun. Restent l'adresse de la boîte, le "
-            "dossier à relever, l'adresse d'expédition, et les trois valeurs de "
-            "l'inscription Entra ID — tenant, ID d'application, secret. Le bouton "
-            "« Les étapes, côté Entra ID » rappelle sur place la marche à suivre décrite "
-            "en partie A.",
+            "Si aucun accès Microsoft n'est encore réglé, la fenêtre de la marche à suivre "
+            "s'ouvre : elle reprend la partie A et sert à y coller les trois valeurs. Le "
+            "bouton « Reprendre la marche à suivre » la rouvre à tout moment."
         )
     )
 
@@ -564,6 +384,21 @@ def contenu() -> list:
         tableau(
             ["Champ", "Valeur", "Remarque"],
             [
+                [
+                    "ID du locataire (tenant)",
+                    "l'ID d'annuaire (étape M1)",
+                    "Le domaine — kapiconsult.onmicrosoft.com — est accepté aussi.",
+                ],
+                [
+                    "ID de l'application",
+                    "l'ID d'application (étape M1)",
+                    "Visible en permanence sur la page « Vue d'ensemble ».",
+                ],
+                [
+                    "Secret client",
+                    "la <b>valeur</b> du secret (étape M2)",
+                    "Pas l'« ID du secret », affiché juste à côté.",
+                ],
                 [
                     "Relever la boîte depuis l'application",
                     "coché",
@@ -575,56 +410,16 @@ def contenu() -> list:
                     "Celle qui figure dans les avis publiés.",
                 ],
                 [
-                    "Mot de passe",
-                    "les 16 lettres de l'étape 2 — <b>Google seulement</b>",
-                    "Le mot de passe d'application, jamais celui du compte. "
-                    "<b>À laisser vide pour une boîte Microsoft</b>, qui n'en accepte aucun.",
-                ],
-                [
-                    "Serveur IMAP",
-                    "<font face='Courier'>outlook.office365.com</font> (Microsoft)<br/>"
-                    "<font face='Courier'>imap.gmail.com</font> (Google)",
-                    "Le même serveur pour une adresse Microsoft 365 et pour une adresse "
-                    "outlook.com personnelle.",
-                ],
-                ["Port", "993", "Valeur par défaut, à ne changer que sur consigne."],
-                [
                     "Dossier à relever",
-                    "INBOX",
-                    "La boîte de réception. Un libellé Gmail s'écrit tel quel, à la lettre.",
-                ],
-            ],
-            [46 * mm, 52 * mm, 67 * mm],
-        )
-    )
-    h.append(Spacer(1, 8))
-    h.append(
-        para(
-            "<b>Pour une boîte Microsoft uniquement</b>, trois champs de plus, relevés en "
-            "partie A-Microsoft. Ils remplacent le mot de passe ; ils ne s'y ajoutent pas.",
-            "corps",
-        )
-    )
-    h.append(
-        tableau(
-            ["Champ", "Valeur", "Remarque"],
-            [
-                [
-                    "Tenant",
-                    "l'ID d'annuaire (étape M1)",
-                    "Pour une adresse outlook.com personnelle, écrivez "
-                    "<font face='Courier'>consumers</font>.",
+                    "inbox",
+                    "La boîte de réception. Un autre dossier s'écrit sous son nom "
+                    "affiché dans Outlook.",
                 ],
                 [
-                    "ID d'application",
-                    "l'ID d'application (étape M1)",
-                    "Visible en permanence sur la page « Vue d'ensemble ».",
-                ],
-                [
-                    "Secret",
-                    "la <b>valeur</b> du secret (étape M2)",
-                    "Pas l'« ID du secret », affiché juste à côté. Pour une adresse "
-                    "personnelle, c'est le jeton de rafraîchissement qui se colle ici.",
+                    "Envoyer les courriels depuis l'application",
+                    "coché",
+                    "Les messages partent de la boîte et restent dans ses éléments "
+                    "envoyés.",
                 ],
             ],
             [46 * mm, 52 * mm, 67 * mm],
@@ -634,11 +429,12 @@ def contenu() -> list:
     h.append(para("Cliquez sur <b>Enregistrer</b>.", "corps"))
     h.extend(
         encadre(
-            "Le mot de passe ne se réaffiche jamais",
+            "Le secret ne se réaffiche jamais",
             "Une fois enregistré, il ne ressort plus du serveur : le champ indiquera « déjà "
             "défini » et restera vide. C'est voulu. Pour modifier un autre réglage — le "
-            "dossier, par exemple — laissez ce champ vide et le mot de passe existant est "
-            "conservé. Ne le remplissez que pour le remplacer.",
+            "dossier, par exemple — laissez ce champ vide et le secret existant est "
+            "conservé. Ne le remplissez que pour le remplacer. Un secret Entra expire : "
+            "notez sa date d'échéance.",
         )
     )
 
@@ -718,7 +514,7 @@ def contenu() -> list:
             [
                 [
                     "<b>Seuls les messages non lus</b> sont relevés.",
-                    "Si quelqu'un ouvre la boîte dans Gmail et lit les messages avant le "
+                    "Si quelqu'un ouvre la boîte dans Outlook et lit les messages avant le "
                     "relevé, TriCV les ignorera. Convenez d'une règle : soit on consulte "
                     "cette boîte sans l'ouvrir, soit on remet les messages en « non lu » "
                     "avant de relever.",
@@ -759,60 +555,38 @@ def contenu() -> list:
             ["Message affiché", "Cause et correction"],
             [
                 [
-                    "« … n'accepte plus aucun mot de passe en IMAP »",
-                    "Boîte Microsoft configurée avec un mot de passe. Il n'en existe aucun "
-                    "qui fonctionnerait : renseignez le tenant, l'ID d'application et le "
-                    "secret (partie A-Microsoft) et laissez le mot de passe vide.",
-                ],
-                [
                     "« Le secret de l'application est refusé »",
                     "C'est l'<b>ID</b> du secret qui a été collé au lieu de sa "
                     "<b>valeur</b> — Entra affiche les deux côte à côte. La valeur ne se "
                     "réaffiche pas : créez-en un nouveau et copiez-le tout de suite.",
                 ],
                 [
-                    "« … refusé le jeton … IMAP.AccessAsApp »",
-                    "Le jeton est délivré mais la boîte reste fermée : il manque l'étape M3. "
-                    "L'administrateur doit accorder la permission <i>et</i> autoriser le "
-                    "principal de service sur cette boîte précise.",
+                    "« Le secret de l'application a expiré »",
+                    "Un secret Entra a une date de fin. Créez-en un nouveau (étape M2) et "
+                    "collez sa valeur dans Paramètres › Courriel.",
                 ],
                 [
-                    "« Une adresse outlook.com personnelle n'accepte pas le flux "
-                    "application »",
-                    "Microsoft réserve ce flux aux comptes professionnels. Il faut le "
-                    "consentement humain et le jeton de rafraîchissement (fin de la partie "
-                    "A-Microsoft), ou passer sur une adresse professionnelle.",
+                    "« L'application n'a pas accès à la boîte… »",
+                    "Le jeton est délivré mais la boîte reste fermée : les permissions "
+                    "Mail.ReadWrite et Mail.Send manquent, ou le consentement "
+                    "administrateur n'a pas été donné (étape M3). Si l'accès a été "
+                    "restreint à certaines boîtes, celle-ci doit en faire partie.",
                 ],
                 [
-                    "« Le consentement a expiré ou a été révoqué »",
-                    "Adresse personnelle : le jeton de rafraîchissement ne vaut plus — mot "
-                    "de passe changé, ou trop de temps écoulé. Refaites le consentement. "
-                    "C'est la faiblesse de ce flux, et la raison de préférer une adresse "
-                    "professionnelle.",
-                ],
-                [
-                    "« Gmail a refusé la connexion… »",
-                    "Le mot de passe saisi est celui du compte, et non un mot de passe "
-                    "d'application. Reprenez les étapes 1 et 2.",
-                ],
-                [
-                    "« Identifiants refusés par… »",
-                    "Adresse ou mot de passe incorrect, ou mot de passe d'application "
-                    "révoqué. À noter : changer le mot de passe du compte Google, ou "
-                    "désactiver la validation en deux étapes, <b>révoque tous les mots de "
-                    "passe d'application</b>. Il faut alors en créer un nouveau.",
+                    "« Microsoft ne trouve pas la boîte… »",
+                    "L'adresse est mal saisie, ou c'est un alias ou un groupe : il faut "
+                    "une vraie boîte de l'organisation.",
                 ],
                 [
                     "« Le dossier « … » n'existe pas »",
                     "Le nom du dossier est mal orthographié. Pour la boîte de réception, "
-                    "écrivez exactement INBOX. Un libellé Gmail s'écrit tel qu'il apparaît "
-                    "dans Gmail, accents et majuscules compris.",
+                    "écrivez inbox. Un autre dossier s'écrit tel qu'il apparaît dans "
+                    "Outlook, accents et majuscules compris.",
                 ],
                 [
-                    "« Impossible de joindre imap.gmail.com:993 »",
-                    "Le serveur n'est pas joignable : coupure réseau, ou pare-feu de "
-                    "l'entreprise qui bloque le port 993 en sortie. À voir avec la personne "
-                    "qui gère le réseau.",
+                    "« Impossible de joindre Microsoft… »",
+                    "Le serveur ne sort pas vers Internet en HTTPS (port 443) : coupure "
+                    "réseau ou pare-feu. À voir avec la personne qui gère le serveur.",
                 ],
                 [
                     "« Le relevé de la boîte est désactivé »",
@@ -825,8 +599,8 @@ def contenu() -> list:
                 ],
                 [
                     "La connexion réussit mais aucun message n'est trouvé",
-                    "IMAP n'est probablement pas activé côté Gmail (étape 3), ou tous les "
-                    "messages ont déjà été lus (voir le tableau ci-dessus).",
+                    "Tous les messages ont probablement déjà été lus (voir le tableau "
+                    "ci-dessus), ou le dossier relevé n'est pas celui où ils arrivent.",
                 ],
                 [
                     "Les champs des paramètres sont grisés",
@@ -834,16 +608,10 @@ def contenu() -> list:
                     "modifie ces réglages — voir ci-dessous.",
                 ],
                 [
-                    "L'écran ne montre ni serveur ni mot de passe",
-                    "L'onglet Courriel est réglé sur « Microsoft 365 (Graph) », qui n'en "
-                    "emploie pas. Si votre boîte est chez Google ou chez un hébergeur "
-                    "classique, choisissez « IMAP et SMTP » : les champs reviennent.",
-                ],
-                [
                     "« Tester la connexion » reste grisé",
                     "Le bouton porte sur les réglages <i>enregistrés</i>, et il attend que "
                     "la configuration soit complète : boîte cochée, adresse renseignée, et "
-                    "de quoi ouvrir une session. Enregistrez d'abord.",
+                    "les trois valeurs Microsoft. Enregistrez d'abord.",
                 ],
             ],
             [52 * mm, 113 * mm],
@@ -952,9 +720,9 @@ def contenu() -> list:
         KeepTogether(
             puces(
                 [
-                    "Validation en deux étapes activée sur le compte Google.",
-                    "Mot de passe d'application créé et copié.",
-                    "IMAP activé dans les paramètres Gmail.",
+                    "Application inscrite dans Entra ID, secret créé et copié.",
+                    "Permissions Mail.ReadWrite et Mail.Send accordées, consentement "
+                    "administrateur donné, accès restreint à la boîte de recrutement.",
                     "Champs renseignés dans TriCV, case « Relever la boîte » cochée, "
                     "réglages enregistrés.",
                     "« Tester la connexion » renvoie le nombre de messages.",

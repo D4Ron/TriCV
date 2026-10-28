@@ -161,7 +161,7 @@ async def test_l_avis_demande_l_intitule_en_objet_et_non_la_reference():
     poste = SimpleNamespace(intitule="Assistant(e) Administratif(ve)")
     avis = SimpleNamespace(cle_publique="abc", reference="AVIS-2026-014")
     lignes = redaction_avis.modalites(
-        avis, _reglages(imap_user="recrutement@kapiconsult.tg"), poste
+        avis, _reglages(adresse_boite="recrutement@kapiconsult.tg"), poste
     )
     courriel = lignes[-1]
     assert "« Candidature au poste de Assistant(e) Administratif(ve) »" in courriel

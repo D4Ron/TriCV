@@ -144,21 +144,23 @@ async def test_un_recruteur_ne_peut_pas_modifier_les_reglages(client, auth):
 
 async def test_un_reglage_hors_bornes_est_refuse(client, auth):
     assert (
-        await client.patch(f"{API}/settings", json={"imap_port": 70000}, headers=auth)
+        await client.patch(
+            f"{API}/settings", json={"adresse_boite": "x" * 300}, headers=auth
+        )
     ).status_code == 422
     assert (
-        await client.patch(f"{API}/settings", json={"smtp_port": 0}, headers=auth)
+        await client.patch(f"{API}/settings", json={"envoi_actif": "peut-être"}, headers=auth)
     ).status_code == 422
 
 
 async def test_une_valeur_illisible_en_base_retombe_sur_le_defaut(client, auth):
     """Une base abîmée ne doit pas empêcher l'application de fonctionner."""
     async with SessionLocal() as db:
-        db.add(parametres.Parametre(cle=parametres.IMAP_PORT, valeur="pas un nombre"))
+        db.add(parametres.Parametre(cle=parametres.ENVOI_ACTIF, valeur="pas un booléen"))
         await db.commit()
 
         reglages = await parametres.lire(db)
-        assert reglages.imap_port == 993
+        assert reglages.envoi_actif is False
 
 
 async def test_la_modification_est_journalisee(client, auth):

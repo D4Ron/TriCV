@@ -1,19 +1,9 @@
 """La boîte de recrutement chez Microsoft 365, par Microsoft Graph.
 
-Deux chemins mènent à une boîte Microsoft, et ils ne coûtent pas la même chose
-à mettre en service.
-
-IMAP en XOAUTH2 — ce que couvre `test_boite_outlook.py` — suppose que
-l'administrateur réactive SMTP AUTH sur le tenant, crée un principal de service
-et le rattache à la boîte en PowerShell Exchange. Graph ne demande qu'une
+C'est la seule voie : l'application relève et envoie par Graph, avec une
 inscription d'application, deux permissions d'application (Mail.ReadWrite et
-Mail.Send) et un consentement administrateur. Pour un cabinet qui a déjà Entra
-ID, c'est la seule des deux voies qui tienne en une réunion.
-
-Ce fichier vérifie donc le client Graph — relevé, marquage, envoi — et surtout
-**l'aiguillage** : que `messagerie` choisit bien Graph ou SMTP selon le
-fournisseur réglé. Cet aiguillage a déjà été cassé une fois de façon invisible,
-voir plus bas.
+Mail.Send) et un consentement administrateur. Ce fichier vérifie le client
+Graph — relevé, marquage, envoi — et ce que l'envoi exige avant de partir.
 """
 
 from __future__ import annotations
@@ -23,14 +13,10 @@ import email.message
 import httpx
 import pytest
 
-from app.services import graph_microsoft, messagerie, oauth_microsoft, parametres
+from app.services import graph_microsoft, messagerie, oauth_microsoft
 from app.services.graph_microsoft import BoiteGraph, ErreurGraph
 from app.services.oauth_microsoft import ConfigOAuth
-from app.services.parametres import (
-    FOURNISSEUR_IMAP,
-    FOURNISSEUR_MICROSOFT365,
-    _defauts,
-)
+from app.services.parametres import _defauts
 
 pytestmark = pytest.mark.anyio
 
@@ -95,7 +81,7 @@ def _mime(sujet: str, message_id: str) -> bytes:
 
 
 def test_le_releve_rend_les_messages_non_lus_au_format_mime(monkeypatch):
-    """Graph rend du MIME comme l'IMAP : le même lecteur sert pour les deux.
+    """Le message est lu au format MIME brut.
 
     C'est tout l'intérêt de passer par `/$value` plutôt que par le JSON du
     message : pièces jointes comprises, `courriel.depuis_message` n'a pas à
@@ -227,83 +213,58 @@ def test_l_envoi_passe_par_sendmail_et_garde_une_trace(monkeypatch):
     assert envoi["message"]["toRecipients"][0]["emailAddress"]["address"] == "kwami@example.tg"
 
 
-# --- l'aiguillage, et la panne qu'il a déjà causée ---------------------------
+# --- l'envoi depuis l'application ------------------------------------------
 
 
-def _reglages(fournisseur: str):
+def _reglages():
     reglages = _defauts()
-    reglages.fournisseur_courriel = fournisseur
     reglages.oauth_tenant = CONFIG.tenant
     reglages.oauth_client_id = CONFIG.client_id
     reglages.oauth_client_secret = CONFIG.client_secret
-    reglages.smtp_actif = True
-    reglages.smtp_host = "smtp.office365.com"
-    reglages.smtp_port = 587
-    reglages.smtp_user = BOITE
-    reglages.smtp_expediteur = BOITE
-    reglages.imap_user = BOITE
+    reglages.envoi_actif = True
+    reglages.adresse_boite = BOITE
     return reglages
 
 
-async def test_microsoft365_envoie_par_graph_et_non_par_smtp(monkeypatch):
+async def test_l_application_envoie_par_graph_depuis_la_boite(monkeypatch):
     graph = Graph({("POST", "/sendMail"): _reponse({}, code=202)})
     _brancher(monkeypatch, graph)
 
-    def pas_de_smtp(*_a, **_k):  # pragma: no cover - ne doit pas être appelé
-        raise AssertionError("SMTP ne doit pas servir en Microsoft 365")
-
-    monkeypatch.setattr(messagerie, "_expedier_smtp", pas_de_smtp)
-
     await messagerie.envoyer(
-        messagerie.Message(
-            destinataire="kwami@example.tg", sujet="Objet", corps="Corps"
-        ),
-        _reglages(FOURNISSEUR_MICROSOFT365),
+        messagerie.Message(destinataire="kwami@example.tg", sujet="Objet", corps="Corps"),
+        _reglages(),
     )
 
-    assert any(url.endswith("/sendMail") for _m, url, _o in graph.appels)
+    envois = [url for _m, url, _o in graph.appels if url.endswith("/sendMail")]
+    # Sans adresse d'expédition réglée, c'est la boîte de recrutement qui écrit.
+    assert envois and f"/users/{BOITE}/" in envois[0].replace("%40", "@")
 
 
-async def test_le_chemin_smtp_dispose_de_ses_dependances():
-    """Régression : l'envoi Outlook par SMTP levait `NameError`.
+async def test_l_envoi_desactive_ne_part_pas(monkeypatch):
+    graph = Graph({})
+    _brancher(monkeypatch, graph)
+    reglages = _reglages()
+    reglages.envoi_actif = False
 
-    `messagerie` appelait `oauth_microsoft.jeton`, `.chaine_xoauth2`,
-    `.ErreurOAuth` et `_est_microsoft` sans les importer. Le code se chargeait
-    sans broncher — rien n'est évalué à l'import — et ne cassait qu'au moment
-    d'envoyer un message depuis une boîte Outlook, c'est-à-dire en
-    exploitation. Les tests du relevé ne touchaient pas cette branche.
-
-    Ce test ne vérifie pas un comportement mais une présence : que les noms
-    dont dépend la branche SMTP existent bien dans le module.
-    """
-    for nom in ("oauth_microsoft", "graph_microsoft", "_est_microsoft"):
-        assert hasattr(messagerie, nom), f"{nom} manque à messagerie"
-
-    assert callable(messagerie._est_microsoft)
-    assert messagerie._est_microsoft("smtp.office365.com")
-    assert not messagerie._est_microsoft("smtp.gmail.com")
+    with pytest.raises(messagerie.ErreurEnvoi, match="pas configuré"):
+        await messagerie.envoyer(
+            messagerie.Message(destinataire="kwami@example.tg", sujet="Objet", corps="Corps"),
+            reglages,
+        )
+    assert graph.appels == []
 
 
-# --- le fournisseur par défaut -----------------------------------------------
+def test_il_ne_reste_ni_imap_ni_smtp():
+    """Les voies IMAP et SMTP ont été retirées : rien ne doit y renvoyer."""
+    from app.services import courriel
 
-
-def test_une_installation_imap_existante_ne_bascule_pas(monkeypatch):
-    """Un cabinet déjà en IMAP ne doit pas se réveiller en Microsoft 365.
-
-    Le fournisseur par défaut se décide à la lecture des réglages, d'après ce
-    que porte le fichier de configuration — pas d'après l'objet `Reglages`, qui
-    est déjà construit à ce moment-là.
-    """
-    monkeypatch.setattr(parametres.settings, "imap_host", "imap.gmail.com")
-    monkeypatch.setattr(parametres.settings, "smtp_host", "")
-    assert _defauts().fournisseur_courriel == FOURNISSEUR_IMAP
-
-
-def test_une_installation_neuve_part_sur_microsoft365(monkeypatch):
-    """Sans rien de réglé, c'est la messagerie que le cabinet emploie."""
-    monkeypatch.setattr(parametres.settings, "imap_host", "")
-    monkeypatch.setattr(parametres.settings, "smtp_host", "")
-    assert _defauts().fournisseur_courriel == FOURNISSEUR_MICROSOFT365
+    for module, noms in (
+        (messagerie, ("smtplib", "_expedier_smtp", "_ouvrir_smtp")),
+        (courriel, ("imaplib", "BoiteImap", "ConfigBoite")),
+        (oauth_microsoft, ("chaine_xoauth2", "PORTEE_DELEGUEE")),
+    ):
+        for nom in noms:
+            assert not hasattr(module, nom), f"{module.__name__}.{nom} existe encore"
 
 
 def test_le_tenant_commun_ne_suffit_pas_a_graph():
@@ -312,7 +273,7 @@ def test_le_tenant_commun_ne_suffit_pas_a_graph():
     Un compte personnel outlook.com ne peut pas servir de boîte de cabinet par
     ce chemin, et l'écran doit le dire plutôt que de laisser essayer.
     """
-    reglages = _reglages(FOURNISSEUR_MICROSOFT365)
+    reglages = _reglages()
     for tenant in ("common", "consumers", ""):
         reglages.oauth_tenant = tenant
         assert not reglages.graph_utilisable

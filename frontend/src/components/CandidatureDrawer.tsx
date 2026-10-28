@@ -4,6 +4,7 @@ import { ApiError, rapportsApi, recrutementApi } from '@/lib/api'
 import { LIBELLE_PIECE, libellePiece } from '@/lib/pieces'
 import { Callout, ErrorState, Spinner } from '@/components/ui'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
+import RattacherPoste from '@/components/RattacherPoste'
 import { formatDateTime, formatMois } from '@/lib/format'
 import type { Elimination, Provenance } from '@/types'
 
@@ -584,16 +585,78 @@ function SupprimerDossier({
   )
 }
 
+/**
+ * Ranger le dossier sous un autre poste.
+ *
+ * Un courriel qui citait le mauvais avis, un dépôt fait depuis le mauvais
+ * poste : le dossier est juste, c'est sa place qui ne l'est pas. Le supprimer
+ * puis le redéposer perdait les vérifications déjà faites ; le déplacer les
+ * garde, et le note selon le nouveau poste.
+ */
+function ChangerDePoste({
+  candidatureId,
+  posteId,
+  nom,
+  onDeplace,
+}: {
+  candidatureId: string
+  posteId: string
+  nom: string
+  onDeplace: (compteRendu: string) => void
+}) {
+  const [ouvert, setOuvert] = useState(false)
+
+  if (!ouvert) {
+    return (
+      <div className="border-t border-ink-100 pt-4">
+        <button
+          type="button"
+          className="text-xs font-medium text-ink-500 hover:text-brand-700 hover:underline"
+          onClick={() => setOuvert(true)}
+        >
+          Changer de poste
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-ink-200 bg-ink-50/60 p-4">
+      <p className="text-sm font-semibold text-ink-900">Changer de poste</p>
+      <p className="mt-1 mb-3 text-xs text-ink-600">
+        Pour un dossier rangé sous le mauvais poste. Il garde ses pièces et ses vérifications,
+        et il est noté à nouveau selon le poste choisi.
+      </p>
+      <RattacherPoste
+        candidatureId={candidatureId}
+        posteActuel={posteId}
+        libelle="Déplacer"
+        onRattache={(intitule) => onDeplace(`Dossier de ${nom} déplacé vers « ${intitule} ».`)}
+      />
+      <button
+        type="button"
+        className="btn-ghost mt-2 px-3 py-1.5 text-xs"
+        onClick={() => setOuvert(false)}
+      >
+        Annuler
+      </button>
+    </div>
+  )
+}
+
 export default function CandidatureDrawer({
   candidatureId,
   posteId,
   onClose,
   onSupprime,
+  onDeplace,
 }: {
   candidatureId: string
   posteId: string
   onClose: () => void
   onSupprime?: (compteRendu: string) => void
+  /** Le dossier a quitté ce poste pour un autre : la fenêtre se referme. */
+  onDeplace?: (compteRendu: string) => void
 }) {
   const queryClient = useQueryClient()
   const fichierRef = useRef<HTMLInputElement>(null)
@@ -1068,6 +1131,18 @@ export default function CandidatureDrawer({
                 )}
               </dl>
             </section>
+
+            <ChangerDePoste
+              candidatureId={candidatureId}
+              posteId={posteId}
+              nom={`${c.candidat.nom.toUpperCase()} ${c.candidat.prenom}`}
+              onDeplace={(compteRendu) => {
+                void queryClient.invalidateQueries({ queryKey: ['grille', posteId] })
+                void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
+                onDeplace?.(compteRendu)
+                onClose()
+              }}
+            />
 
             <SupprimerDossier
               candidatureId={candidatureId}

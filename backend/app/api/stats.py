@@ -128,26 +128,28 @@ async def deployment_settings(db: DbSession, _: CurrentUser) -> SettingsOut:
         allow_self_registration=reglages.allow_self_registration,
         candidatures_spontanees=reglages.candidatures_spontanees,
         courriel_actif=reglages.courriel_actif,
-        imap_host=reglages.imap_host,
-        imap_port=reglages.imap_port,
-        imap_user=reglages.imap_user,
-        imap_folder=reglages.imap_folder,
-        # Le secret lui-même ne sort jamais de la machine.
-        imap_password_defini=bool(reglages.imap_password),
+        adresse_boite=reglages.adresse_boite,
+        dossier_boite=reglages.dossier_boite,
         courriel_utilisable=reglages.courriel_utilisable,
-        smtp_actif=reglages.smtp_actif,
-        smtp_host=reglages.smtp_host,
-        smtp_port=reglages.smtp_port,
-        smtp_user=reglages.smtp_user,
-        smtp_tls=reglages.smtp_tls,
-        smtp_expediteur=reglages.smtp_expediteur,
-        smtp_password_defini=bool(reglages.smtp_password),
+        envoi_actif=reglages.envoi_actif,
+        adresse_expediteur=reglages.adresse_expediteur,
         envoi_utilisable=reglages.envoi_utilisable,
         url_publique=reglages.url_publique,
-        fournisseur_courriel=reglages.fournisseur_courriel,
         oauth_tenant=reglages.oauth_tenant,
         oauth_client_id=reglages.oauth_client_id,
+        # Les secrets eux-mêmes ne sortent jamais de la machine.
         oauth_client_secret_defini=bool(reglages.oauth_client_secret),
+        ia_fournisseur_ecran=reglages.llm_provider,
+        ia_modele_ecran=reglages.llm_model,
+        ia_adresse_openai=reglages.llm_base_url,
+        ia_adresse_ollama=reglages.ollama_base_url,
+        ia_cles={
+            nom: parametres.source_cle(reglages, cle)
+            for nom, cle in parametres.CLE_DU_FOURNISSEUR.items()
+        },
+        ia_regle_ecran=any(
+            getattr(reglages, cle) for cle in parametres.CLES_IA
+        ),
         contact_candidats=reglages.contact_candidats,
         contact_effectif=reglages.contact,
     )
@@ -159,8 +161,10 @@ async def modifier_reglages(
 ) -> SettingsOut:
     """Réservé aux administrateurs : ces réglages valent pour tout le cabinet.
 
-    Le fournisseur de modèle, le stockage et les secrets restent hors de
-    portée — ils appartiennent au déploiement, pas à l'écran.
+    Le stockage reste hors de portée — il appartient au déploiement, pas à
+    l'écran. Le modèle d'IA, lui, se choisit ici, clés comprises : c'est le
+    réglage qu'on change le plus souvent, et le seul qui demandait jusqu'ici
+    un accès au serveur. Ce qui est réglé ici prime sur le .env.
     """
     changees = await parametres.ecrire(db, payload.model_dump(exclude_unset=True))
     if any(cle.startswith("oauth_") for cle in changees):
@@ -177,4 +181,27 @@ async def modifier_reglages(
             details={"reglages": sorted(changees)},
         )
     await db.commit()
+    # Après l'enregistrement, pas avant : une clé mise en service puis
+    # perdue par un enregistrement qui échoue servirait sans être réglée.
+    if set(changees) & set(parametres.CLES_IA):
+        parametres.appliquer_ia(await parametres.lire(db))
+    return await deployment_settings(db, user)
+
+
+@router.delete("/settings/ia", response_model=SettingsOut)
+async def revenir_au_serveur(db: DbSession, user: AdminUser) -> SettingsOut:
+    """Oublie le modèle réglé à l'écran : le .env reprend la main."""
+    retirees = await parametres.effacer(db, parametres.CLES_IA)
+    if retirees:
+        await audit.record(
+            db,
+            action="parametres.update",
+            entity_type="parametres",
+            entity_id=None,
+            user_id=user.id,
+            details={"reglages": sorted(retirees), "retire": True},
+        )
+    await db.commit()
+    if retirees:
+        parametres.appliquer_ia(await parametres.lire(db))
     return await deployment_settings(db, user)

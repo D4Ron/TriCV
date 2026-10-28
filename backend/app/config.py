@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -129,45 +129,29 @@ class Settings(BaseSettings):
     )
     public_rate_limit_per_hour: int = 20
 
-    # Boîte de candidatures : amorçage seulement.
+    # Boîte de recrutement Microsoft 365 : amorçage seulement. Le réglage
+    # courant vit en base et se change depuis Paramètres › Courriel.
     #
-    # Ces valeurs servent de point de départ à une installation neuve. Le
-    # réglage courant vit en base et se change depuis Paramètres › Boîte de
-    # candidatures : l'adresse de recrutement change avec les campagnes, et un
-    # mot de passe d'application se révoque sans prévenir. Modifier ce fichier
-    # après le premier démarrage n'a plus d'effet.
-    imap_host: str = ""
-    imap_port: int = 993
-    imap_user: str = ""
-    imap_password: str = ""
-    imap_folder: str = "INBOX"
+    # Le cabinet est sur Microsoft 365 : la boîte se lit et l'envoi se fait par
+    # Microsoft Graph, et rien d'autre. Les voies IMAP et SMTP ont été retirées.
+    # IMAP_USER et SMTP_EXPEDITEUR restent lus sous leur ancien nom : un .env
+    # écrit avant ce retrait garde son adresse.
+    boite_recrutement: str = Field(
+        default="", validation_alias=AliasChoices("boite_recrutement", "imap_user")
+    )
+    expediteur_courriel: str = Field(
+        default="", validation_alias=AliasChoices("expediteur_courriel", "smtp_expediteur")
+    )
 
-    # Accès Microsoft, pour la réception comme pour l'envoi. Microsoft a
-    # supprimé l'authentification par mot de passe sur IMAP, POP et SMTP : une
-    # boîte Outlook ne s'ouvre qu'avec un jeton, et ces trois valeurs servent à
-    # l'obtenir.
+    # Accès Microsoft, pour la réception comme pour l'envoi : de quoi obtenir
+    # un jeton d'application pour Graph.
     #
     # Elles se posent au déploiement, avec le reste de la configuration
-    # serveur : contrairement à un mot de passe d'application, elles ne se
-    # révoquent pas toutes seules et n'ont pas à être changées en cours
-    # d'exploitation. L'écran Paramètres permet malgré tout de les corriger
-    # sans rouvrir un accès à la machine — et ce qui y est enregistré prime.
+    # serveur. L'écran Paramètres permet de les corriger sans rouvrir un accès
+    # à la machine — et ce qui y est enregistré prime.
     oauth_tenant: str = ""
     oauth_client_id: str = ""
     oauth_client_secret: str = ""
-    # Comptes personnels outlook.com seulement : Microsoft n'y autorise pas le
-    # flux application. Inutile avec une adresse Microsoft 365.
-    oauth_refresh_token: str = ""
-
-    # Envoi. Même logique d'amorçage que la réception : le réglage courant vit
-    # en base. Vide par défaut, et un envoi sans configuration échoue de façon
-    # explicite plutôt que d'être silencieusement perdu.
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_tls: bool = True
-    smtp_expediteur: str = ""
 
     # Adresse publique de l'application, pour les liens envoyés par courriel
     # (activation d'un accès client, page d'un avis). Sans elle, les messages

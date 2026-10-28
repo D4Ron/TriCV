@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-
 from typing import Literal
+
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -59,40 +59,42 @@ class SettingsOut(BaseModel):
     storage_backend: str
     spacy_models_loaded: list[str] = Field(default_factory=list)
 
-    # --- boîte de candidatures ---------------------------------------------
-    # Le mot de passe n'est jamais renvoyé, même à un administrateur : l'écran
-    # a seulement besoin de savoir s'il est renseigné pour afficher « défini »
-    # plutôt qu'un champ vide qui laisserait croire à une boîte inconfigurée.
+    # --- boîte de candidatures (Microsoft 365) ------------------------------
     courriel_actif: bool = False
-    imap_host: str = ""
-    imap_port: int = 993
-    imap_user: str = ""
-    imap_folder: str = "INBOX"
-    imap_password_defini: bool = False
+    adresse_boite: str = ""
+    dossier_boite: str = "inbox"
     courriel_utilisable: bool = False
 
     # --- envoi -------------------------------------------------------------
-    smtp_actif: bool = False
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_tls: bool = True
-    smtp_expediteur: str = ""
-    smtp_password_defini: bool = False
+    envoi_actif: bool = False
+    adresse_expediteur: str = ""
     envoi_utilisable: bool = False
     # Adresse à laquelle l'application est jointe de l'extérieur : elle sert à
     # construire les liens envoyés par courriel, que le serveur ne peut pas
     # deviner depuis sa propre adresse d'écoute.
     url_publique: str = ""
 
-    # --- fournisseur et accès Microsoft 365 ------------------------------
-    # « microsoft365 » : lecture et envoi par Microsoft Graph ; « imap » : tout
-    # autre fournisseur. Le secret de l'application ne sort jamais, comme les
-    # mots de passe.
-    fournisseur_courriel: str = "imap"
+    # --- accès Microsoft 365 -----------------------------------------------
+    # Le secret n'est jamais renvoyé, même à un administrateur : l'écran a
+    # seulement besoin de savoir s'il est renseigné pour afficher « défini »
+    # plutôt qu'un champ vide qui laisserait croire à une boîte inconfigurée.
     oauth_tenant: str = ""
     oauth_client_id: str = ""
     oauth_client_secret_defini: bool = False
+
+    # --- modèle d'IA -------------------------------------------------------
+    # `llm_provider` et `llm_model` (plus haut) disent ce qui sert. Ceux-ci
+    # disent ce que l'écran règle — vide : le .env décide.
+    ia_fournisseur_ecran: str = ""
+    ia_modele_ecran: str = ""
+    ia_adresse_openai: str = ""
+    ia_adresse_ollama: str = ""
+    # Les clés ne sortent jamais. Pour chacune, d'où vient celle qui sert :
+    # « ecran » (collée dans Paramètres), « serveur » (le .env), ou vide.
+    ia_cles: dict[str, str] = Field(default_factory=dict)
+    # Vrai quand l'écran impose quoi que ce soit : le bouton de retour au
+    # réglage du serveur n'a de sens qu'alors.
+    ia_regle_ecran: bool = False
 
     # --- aide aux candidats ------------------------------------------------
     # L'adresse réglée, et celle qui sera réellement affichée : vide, c'est la
@@ -108,31 +110,29 @@ class ReglagesIn(BaseModel):
     allow_self_registration: bool | None = None
     candidatures_spontanees: bool | None = None
 
-    # Boîte de candidatures. Un mot de passe vide vaut « inchangé » : le
-    # formulaire ne peut pas réafficher le secret, donc enregistrer sans y
-    # toucher ne doit pas déconnecter la boîte.
+    # Boîte de candidatures et envoi, sur Microsoft 365.
     courriel_actif: bool | None = None
-    imap_host: str | None = Field(default=None, max_length=255)
-    imap_port: int | None = Field(default=None, ge=1, le=65535)
-    imap_user: str | None = Field(default=None, max_length=255)
-    imap_password: str | None = Field(default=None, max_length=255)
-    imap_folder: str | None = Field(default=None, max_length=255)
-
-    # Envoi. Même règle pour le mot de passe : vide vaut « inchangé ».
-    smtp_actif: bool | None = None
-    smtp_host: str | None = Field(default=None, max_length=255)
-    smtp_port: int | None = Field(default=None, ge=1, le=65535)
-    smtp_user: str | None = Field(default=None, max_length=255)
-    smtp_password: str | None = Field(default=None, max_length=255)
-    smtp_tls: bool | None = None
-    smtp_expediteur: str | None = Field(default=None, max_length=255)
+    adresse_boite: str | None = Field(default=None, max_length=255)
+    dossier_boite: str | None = Field(default=None, max_length=255)
+    envoi_actif: bool | None = None
+    adresse_expediteur: str | None = Field(default=None, max_length=255)
     url_publique: str | None = Field(default=None, max_length=512)
 
-    fournisseur_courriel: Literal["microsoft365", "imap"] | None = None
     oauth_tenant: str | None = Field(default=None, max_length=255)
     oauth_client_id: str | None = Field(default=None, max_length=255)
-    # Vide vaut « inchangé », comme les mots de passe.
+    # Vide vaut « inchangé » : le formulaire ne peut pas réafficher le secret,
+    # donc enregistrer sans y toucher ne doit pas déconnecter la boîte.
     oauth_client_secret: str | None = Field(default=None, max_length=255)
+
+    # Le modèle d'IA. Les clés suivent la même règle : vide vaut « inchangé ».
+    # Le fournisseur vide laisse le .env décider.
+    llm_provider: Literal["", "gemini", "anthropic", "openai", "ollama"] | None = None
+    llm_model: str | None = Field(default=None, max_length=128)
+    gemini_api_key: str | None = Field(default=None, max_length=255)
+    anthropic_api_key: str | None = Field(default=None, max_length=255)
+    llm_api_key: str | None = Field(default=None, max_length=255)
+    llm_base_url: str | None = Field(default=None, max_length=255)
+    ollama_base_url: str | None = Field(default=None, max_length=255)
 
     contact_candidats: str | None = Field(default=None, max_length=255)
 

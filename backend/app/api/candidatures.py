@@ -949,23 +949,19 @@ async def etat_courriel(db: DbSession, _: CurrentUser) -> dict:
     reglages = await parametres.lire(db)
     return {
         "actif": reglages.courriel_utilisable,
-        "boite": reglages.imap_user or None,
-        "dossier": reglages.imap_folder if reglages.courriel_utilisable else None,
+        "boite": reglages.boite or None,
+        "dossier": reglages.dossier_boite if reglages.courriel_utilisable else None,
         # Pourquoi ce n'est pas actif, dit en toutes lettres plutôt que laissé
         # à deviner. `releve_desactive` se distingue d'une configuration
         # incomplète : dans un cas on a décoché une case, dans l'autre il reste
         # des champs à remplir.
         "releve_desactive": not reglages.courriel_actif,
         "manquants": parametres.ce_qui_manque(reglages),
-        "fournisseur": "microsoft365" if reglages.microsoft365 else "imap",
     }
 
 
 async def _ouvrir_boite(db: AsyncSession):
-    """La boîte de candidatures, prête à relever — ou un refus qui dit quoi faire.
-
-    Microsoft 365 se lit par Graph, tout autre fournisseur par IMAP. Les deux
-    boîtes ont la même interface : le relevé ne sait pas laquelle il lit.
+    """La boîte Microsoft 365, prête à relever — ou un refus qui dit quoi faire.
 
     Tout se règle depuis Paramètres › Courriel : le message renvoie donc à
     l'écran, pas au fichier de configuration du serveur.
@@ -986,25 +982,8 @@ async def _ouvrir_boite(db: AsyncSession):
         )
 
     try:
-        if reglages.microsoft365:
-            return graph_microsoft.BoiteGraph(
-                graph_microsoft.config_graph(
-                    reglages.oauth_tenant,
-                    reglages.oauth_client_id,
-                    reglages.oauth_client_secret,
-                ),
-                reglages.boite,
-                reglages.imap_folder,
-            )
-        return courriel.BoiteImap(
-            courriel.ConfigBoite(
-                hote=reglages.imap_host,
-                port=reglages.imap_port,
-                utilisateur=reglages.imap_user,
-                mot_de_passe=reglages.imap_password,
-                dossier=reglages.imap_folder,
-                oauth=reglages.config_oauth if reglages.oauth_utilisable else None,
-            )
+        return graph_microsoft.BoiteGraph(
+            reglages.config_oauth, reglages.boite, reglages.dossier_boite
         )
     except courriel.ErreurBoite as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc

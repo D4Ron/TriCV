@@ -14,7 +14,7 @@ import pytest
 
 from app.llm.base import LLMConfigError, LLMProvider
 from app.services import fiche_poste, redaction_avis
-from app.services.parametres import FOURNISSEUR_IMAP, _defauts
+from app.services.parametres import _defauts
 
 from tests.test_api_recrutement import API, monter_poste
 
@@ -494,7 +494,6 @@ async def test_un_poste_se_cree_avec_son_seul_intitule(client, auth):
 
 def _reglages(**valeurs):
     reglages = _defauts()
-    reglages.fournisseur_courriel = FOURNISSEUR_IMAP
     for cle, valeur in valeurs.items():
         setattr(reglages, cle, valeur)
     return reglages
@@ -506,7 +505,7 @@ async def test_le_brouillon_dit_ou_candidater_et_qui_ecrire(client, auth):
         f"{API}/settings",
         json={
             "url_publique": "https://recrutement.kapi.tg",
-            "imap_user": "recrutement@kapi.tg",
+            "adresse_boite": "recrutement@kapi.tg",
             "contact_candidats": "aide@kapi.tg",
         },
         headers=auth,
@@ -637,9 +636,9 @@ def test_la_section_d_aide_n_est_pas_dupliquee():
 
 
 def test_le_contact_retombe_sur_la_boite_de_recrutement():
-    assert _reglages(imap_user="recrutement@kapi.tg").contact == "recrutement@kapi.tg"
+    assert _reglages(adresse_boite="recrutement@kapi.tg").contact == "recrutement@kapi.tg"
     assert (
-        _reglages(imap_user="recrutement@kapi.tg", contact_candidats="aide@kapi.tg").contact
+        _reglages(adresse_boite="recrutement@kapi.tg", contact_candidats="aide@kapi.tg").contact
         == "aide@kapi.tg"
     )
 

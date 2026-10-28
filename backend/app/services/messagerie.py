@@ -11,9 +11,9 @@ Trois précautions structurent ce module :
 1. **Rien ne part sans relecture.** `preparer()` rend le message rédigé ;
    `envoyer()` ne fait qu'expédier ce qui lui est donné. L'appelant montre
    toujours le texte avant. Un courriel n'est pas rattrapable.
-2. **Un envoi raté se voit.** Les erreurs SMTP remontent en `ErreurEnvoi`
-   plutôt que d'être avalées : un candidat non convoqué parce que le serveur
-   refusait la connexion est une faute grave, silencieuse.
+2. **Un envoi raté se voit.** Les refus de Microsoft remontent en
+   `ErreurEnvoi` plutôt que d'être avalés : un candidat non convoqué parce
+   que l'envoi était refusé est une faute grave, silencieuse.
 3. **Les modèles sont modifiables.** Les formulations changent d'un cabinet à
    l'autre et d'une campagne à l'autre ; celles d'ici sont des points de départ
    enregistrés en base au premier démarrage, pas des constantes.
@@ -22,16 +22,10 @@ Trois précautions structurent ce module :
 from __future__ import annotations
 
 import asyncio
-import base64
 import re
-import smtplib
-import ssl
 from dataclasses import dataclass, field
-from email.message import EmailMessage
-from email.utils import formataddr
 
-from app.services import graph_microsoft, oauth_microsoft
-from app.services.courriel import _est_microsoft
+from app.services import graph_microsoft
 from app.services.parametres import Reglages
 
 
@@ -263,89 +257,10 @@ def preparer(
 
 
 # --- expédition ------------------------------------------------------------
-
-
-def _construire(message: Message, expediteur: str, nom_expediteur: str) -> EmailMessage:
-    courriel = EmailMessage()
-    courriel["From"] = formataddr((nom_expediteur or "", expediteur))
-    courriel["To"] = formataddr((message.nom_destinataire or "", message.destinataire))
-    if message.copie:
-        courriel["Cc"] = ", ".join(message.copie)
-    courriel["Subject"] = message.sujet
-    courriel.set_content(message.corps)
-    return courriel
-
-
-def _authentifier(serveur: smtplib.SMTP, reglages: Reglages) -> None:
-    """Ouvre la session : jeton Microsoft si l'accès OAuth est réglé, sinon mot de passe."""
-    if reglages.oauth_utilisable:
-        # Microsoft a retiré l'authentification par mot de passe sur SMTP AUTH
-        # comme sur IMAP. Le jeton se présente en base64, après AUTH XOAUTH2.
-        acces = oauth_microsoft.jeton(reglages.config_oauth, reglages.smtp_user)
-        chaine = oauth_microsoft.chaine_xoauth2(reglages.smtp_user, acces)
-        code, reponse = serveur.docmd(
-            "AUTH", "XOAUTH2 " + base64.b64encode(chaine.encode()).decode()
-        )
-        if code != 235:
-            raise ErreurEnvoi(
-                f"Le serveur d'envoi a refusé le jeton Microsoft "
-                f"(code {code}) : {reponse.decode(errors='replace')[:200]}"
-            )
-    elif reglages.smtp_user:
-        serveur.login(reglages.smtp_user, reglages.smtp_password)
-
-
-def _ouvrir_smtp(reglages: Reglages, timeout: int) -> smtplib.SMTP:
-    """Une session SMTP chiffrée et authentifiée, à fermer par l'appelant."""
-    contexte = ssl.create_default_context()
-    if reglages.smtp_port == 465:
-        # Port historique : la session est chiffrée dès l'ouverture, il n'y a
-        # pas de STARTTLS à négocier.
-        serveur: smtplib.SMTP = smtplib.SMTP_SSL(
-            reglages.smtp_host, reglages.smtp_port, timeout=timeout, context=contexte
-        )
-    else:
-        serveur = smtplib.SMTP(reglages.smtp_host, reglages.smtp_port, timeout=timeout)
-    try:
-        if reglages.smtp_port != 465 and reglages.smtp_tls:
-            serveur.starttls(context=contexte)
-        _authentifier(serveur, reglages)
-    except BaseException:
-        serveur.close()
-        raise
-    return serveur
-
-
-def _refus_identifiants(reglages: Reglages) -> str:
-    if _est_microsoft(reglages.smtp_host):
-        return (
-            "Le serveur d'envoi a refusé les identifiants. Microsoft n'accepte plus "
-            "de mot de passe sur SMTP, ni de « mot de passe d'application » : "
-            "choisissez « Microsoft 365 » dans Paramètres › Courriel."
-        )
-    return (
-        "Le serveur d'envoi a refusé les identifiants. Vérifiez le compte et le mot "
-        "de passe ; certains fournisseurs exigent un « mot de passe d'application » "
-        "plutôt que le mot de passe du compte."
-    )
-
-
-def _expedier_smtp(message: Message, reglages: Reglages, nom_expediteur: str) -> None:
-    """L'envoi par SMTP. Bloquant : appelé dans un fil séparé."""
-    courriel = _construire(message, reglages.expediteur, nom_expediteur)
-    try:
-        with _ouvrir_smtp(reglages, timeout=30) as serveur:
-            serveur.send_message(courriel)
-    except oauth_microsoft.ErreurOAuth as exc:
-        raise ErreurEnvoi(str(exc)) from exc
-    except smtplib.SMTPAuthenticationError as exc:
-        raise ErreurEnvoi(_refus_identifiants(reglages)) from exc
-    except smtplib.SMTPRecipientsRefused as exc:
-        raise ErreurEnvoi(
-            f"Adresse refusée par le serveur : {message.destinataire}"
-        ) from exc
-    except (smtplib.SMTPException, OSError, ssl.SSLError) as exc:
-        raise ErreurEnvoi(f"Envoi impossible : {exc}") from exc
+#
+# Tout part de la boîte Microsoft 365, par Microsoft Graph : le message est
+# enregistré dans ses éléments envoyés, là où le cabinet le cherchera s'il doit
+# prouver un envoi.
 
 
 def _config_graph(reglages: Reglages):
@@ -354,7 +269,7 @@ def _config_graph(reglages: Reglages):
     )
 
 
-def _expedier_graph(message: Message, reglages: Reglages, nom_expediteur: str) -> None:
+def _expedier(message: Message, reglages: Reglages, nom_expediteur: str) -> None:
     """L'envoi par Microsoft Graph. Bloquant : appelé dans un fil séparé."""
     try:
         graph_microsoft.envoyer(
@@ -374,16 +289,15 @@ def _expedier_graph(message: Message, reglages: Reglages, nom_expediteur: str) -
 async def envoyer(message: Message, reglages: Reglages, nom_expediteur: str = "") -> None:
     """Expédie un message déjà relu.
 
-    L'envoi est synchrone et bloque le temps de la connexion ; l'exécuter dans
-    un fil évite de figer la boucle pendant qu'un serveur lent répond.
+    L'envoi est synchrone et bloque le temps de l'appel ; l'exécuter dans un
+    fil évite de figer la boucle pendant que Microsoft répond.
     """
     if not reglages.envoi_utilisable:
         raise ErreurEnvoi(
             "L'envoi de courriels n'est pas configuré. Renseignez-le dans "
             "Paramètres › Courriel."
         )
-    expedier = _expedier_graph if reglages.microsoft365 else _expedier_smtp
-    await asyncio.to_thread(expedier, message, reglages, nom_expediteur)
+    await asyncio.to_thread(_expedier, message, reglages, nom_expediteur)
 
 
 async def verifier(reglages: Reglages) -> None:
@@ -391,23 +305,10 @@ async def verifier(reglages: Reglages) -> None:
     if not reglages.envoi_utilisable:
         raise ErreurEnvoi("L'envoi de courriels n'est pas configuré.")
 
-    def _tester_graph() -> None:
+    def _tester() -> None:
         try:
             graph_microsoft.verifier_envoi(_config_graph(reglages), reglages.expediteur)
         except graph_microsoft.ErreurGraph as exc:
             raise ErreurEnvoi(str(exc)) from exc
 
-    def _tester_smtp() -> None:
-        # Même ouverture de session que l'envoi réel, jeton Microsoft compris :
-        # un test qui s'authentifie autrement que l'envoi ne prouverait rien.
-        try:
-            with _ouvrir_smtp(reglages, timeout=20):
-                pass
-        except oauth_microsoft.ErreurOAuth as exc:
-            raise ErreurEnvoi(str(exc)) from exc
-        except smtplib.SMTPAuthenticationError as exc:
-            raise ErreurEnvoi(_refus_identifiants(reglages)) from exc
-        except (smtplib.SMTPException, OSError, ssl.SSLError) as exc:
-            raise ErreurEnvoi(f"Connexion impossible : {exc}") from exc
-
-    await asyncio.to_thread(_tester_graph if reglages.microsoft365 else _tester_smtp)
+    await asyncio.to_thread(_tester)

@@ -7,20 +7,18 @@ l'état civil est *deviné* depuis l'en-tête — donc marqué EXTRAIT_IA, ce qu
 suffit à empêcher toute élimination automatique tant qu'un humain n'a pas relu.
 
 La boîte est derrière un protocole (`SourceCourriel`) : le relevé se teste avec
-une fausse boîte, sans serveur IMAP ni réseau.
+une fausse boîte, sans Microsoft ni réseau. La vraie est la boîte Microsoft
+365 de `graph_microsoft`.
 """
 
 from __future__ import annotations
 
 import email
 import hashlib
-import imaplib
 import logging
 import re
 import unicodedata
 
-from app.services import oauth_microsoft
-from app.services.oauth_microsoft import ConfigOAuth
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.header import decode_header, make_header
@@ -130,197 +128,6 @@ def depuis_message(brut: bytes) -> MessageEntrant:
 
 class ErreurBoite(Exception):
     """Un problème de boîte, formulé pour être lisible par les RH."""
-
-
-@dataclass(slots=True)
-class ConfigBoite:
-    """Les coordonnées de la boîte, telles que réglées dans l'application.
-
-    Passées en argument plutôt que lues dans la configuration globale : c'est
-    ce qui permet de changer d'adresse depuis l'écran des paramètres, sans
-    redémarrer le serveur ni éditer un fichier sur la machine.
-    """
-
-    hote: str
-    port: int = 993
-    utilisateur: str = ""
-    mot_de_passe: str = ""
-    dossier: str = "INBOX"
-    # L'accès Microsoft, quand la boîte en est une. Microsoft a supprimé
-    # l'authentification par mot de passe sur IMAP : sans jeton, une boîte
-    # Outlook ne se relève pas du tout. Voir `app.services.oauth_microsoft`.
-    oauth: ConfigOAuth | None = None
-
-    @property
-    def par_jeton(self) -> bool:
-        return self.oauth is not None and self.oauth.utilisable
-
-
-def _est_microsoft(hote: str) -> bool:
-    """Reconnaît un serveur Microsoft à son nom.
-
-    Sert uniquement au diagnostic : dire « votre mot de passe est refusé » à
-    quelqu'un dont le fournisseur n'accepte plus aucun mot de passe l'enverrait
-    en chercher un meilleur pendant une heure.
-    """
-    reduit = (hote or "").lower()
-    return any(
-        marque in reduit
-        for marque in ("outlook", "office365", "hotmail", "live.com", "microsoft")
-    )
-
-
-def _diagnostiquer(exc: Exception, config: ConfigBoite) -> ErreurBoite:
-    """Traduit l'échec IMAP en quelque chose d'actionnable.
-
-    « AUTHENTICATIONFAILED » ne dit rien à personne, alors que la cause est
-    presque toujours la même chez Gmail : un mot de passe de compte au lieu
-    d'un mot de passe d'application.
-    """
-    message = str(exc)
-    hote = config.hote
-    if "AUTHENTICATIONFAILED" in message.upper() or "Invalid credentials" in message:
-        if _est_microsoft(hote) and not config.par_jeton:
-            # Le cas où un message générique ferait perdre le plus de temps :
-            # il n'existe aucun mot de passe qui marcherait, pas même un « mot
-            # de passe d'application ». Microsoft les a supprimés avec
-            # l'authentification de base.
-            return ErreurBoite(
-                f"{hote} a refusé la connexion : Microsoft n'accepte plus aucun mot de "
-                "passe en IMAP, et les « mots de passe d'application » ne fonctionnent "
-                "plus non plus. Cette boîte demande un accès OAuth : renseignez "
-                "l'identifiant d'application, le tenant et le secret dans Paramètres › "
-                "Boîte de candidatures. Voir le guide de configuration."
-            )
-        if "gmail" in hote.lower():
-            return ErreurBoite(
-                f"Gmail a refusé la connexion pour {config.utilisateur}. Gmail n'accepte "
-                "plus le mot de passe du compte en IMAP : activez la validation en deux "
-                "étapes, puis créez un « mot de passe d'application » et collez-le dans "
-                "le champ « Mot de passe » des paramètres."
-            )
-        if config.par_jeton:
-            return ErreurBoite(
-                f"{hote} a refusé le jeton pour {config.utilisateur}. Vérifiez que le "
-                "principal de service est autorisé sur cette boîte et que la permission "
-                "« IMAP.AccessAsApp » a bien été accordée par un administrateur."
-            )
-        return ErreurBoite(f"Identifiants refusés par {hote} pour {config.utilisateur}.")
-    if "NONEXISTENT" in message.upper() or "does not exist" in message.lower():
-        return ErreurBoite(
-            f"Le dossier « {config.dossier} » n'existe pas sur {hote}. "
-            "Chez Gmail, un libellé s'écrit tel quel ; la boîte principale est INBOX."
-        )
-    if isinstance(exc, OSError):
-        return ErreurBoite(f"Impossible de joindre {hote}:{config.port} ({exc}).")
-    return ErreurBoite(f"Erreur IMAP : {message}")
-
-
-class BoiteImap:
-    """Boîte IMAP réelle, sur une connexion unique.
-
-    La connexion est ouverte une fois et réutilisée : marquer chaque message
-    lu par une nouvelle session ouvrait autant de connexions que de dossiers,
-    ce qu'un fournisseur comme Gmail finit par refuser.
-    """
-
-    def __init__(self, config: ConfigBoite) -> None:
-        if not config.hote:
-            raise ErreurBoite(
-                "Renseignez le serveur de la boîte dans Paramètres › Boîte de candidatures."
-            )
-        self.config = config
-        self.host = config.hote
-        self.port = config.port
-        self.utilisateur = config.utilisateur
-        self.mot_de_passe = config.mot_de_passe
-        self.dossier = config.dossier
-        self._connexion: imaplib.IMAP4_SSL | None = None
-        # message-id -> identifiant IMAP, pour marquer sans refaire de recherche.
-        self._identifiants: dict[str, bytes] = {}
-
-    # --- connexion ---------------------------------------------------------
-
-    def _session(self) -> imaplib.IMAP4_SSL:
-        if self._connexion is not None:
-            return self._connexion
-        try:
-            connexion = imaplib.IMAP4_SSL(self.host, self.port)
-            if self.config.par_jeton:
-                # Microsoft n'accepte plus que ceci sur IMAP. `authenticate`
-                # réclame un octet brut : la chaîne porte des 0x01 comme
-                # séparateurs, elle n'est pas du texte.
-                acces = oauth_microsoft.jeton(self.config.oauth, self.utilisateur)
-                chaine = oauth_microsoft.chaine_xoauth2(self.utilisateur, acces)
-                connexion.authenticate("XOAUTH2", lambda _: chaine.encode())
-            else:
-                connexion.login(self.utilisateur, self.mot_de_passe)
-            connexion.select(self.dossier)
-        except oauth_microsoft.ErreurOAuth as exc:
-            # Le refus vient de Microsoft, pas du serveur IMAP : le message est
-            # déjà écrit pour être lu par les RH, on ne le retraduit pas.
-            raise ErreurBoite(str(exc)) from exc
-        except (imaplib.IMAP4.error, OSError) as exc:
-            raise _diagnostiquer(exc, self.config) from exc
-        self._connexion = connexion
-        return connexion
-
-    def fermer(self) -> None:
-        if self._connexion is None:
-            return
-        try:
-            self._connexion.close()
-            self._connexion.logout()
-        except (imaplib.IMAP4.error, OSError):  # pragma: no cover - fermeture
-            pass
-        finally:
-            self._connexion = None
-
-    def __enter__(self) -> BoiteImap:
-        self._session()
-        return self
-
-    def __exit__(self, *_exc) -> None:
-        self.fermer()
-
-    # --- lecture -----------------------------------------------------------
-
-    def verifier(self) -> dict:
-        """Teste la connexion et compte les messages, sans rien lire."""
-        connexion = self._session()
-        _, tous = connexion.search(None, "ALL")
-        _, non_lus = connexion.search(None, "UNSEEN")
-        return {
-            "boite": self.utilisateur,
-            "dossier": self.dossier,
-            "messages": len(tous[0].split()) if tous and tous[0] else 0,
-            "non_lus": len(non_lus[0].split()) if non_lus and non_lus[0] else 0,
-        }
-
-    def relever(self, limite: int = 50) -> list[MessageEntrant]:
-        connexion = self._session()
-        _, reponse = connexion.search(None, "UNSEEN")
-        identifiants = reponse[0].split()[:limite] if reponse and reponse[0] else []
-
-        messages: list[MessageEntrant] = []
-        for identifiant in identifiants:
-            # BODY.PEEK : ne pas marquer lu avant d'avoir réussi à traiter.
-            _, donnees = connexion.fetch(identifiant, "(BODY.PEEK[])")
-            for element in donnees:
-                if isinstance(element, tuple):
-                    message = depuis_message(element[1])
-                    self._identifiants[message.message_id] = identifiant
-                    messages.append(message)
-        return messages
-
-    def marquer_traite(self, message_id: str) -> None:
-        identifiant = self._identifiants.get(message_id)
-        if identifiant is None:
-            return
-        try:
-            self._session().store(identifiant, "+FLAGS", "\\Seen")
-        except (imaplib.IMAP4.error, OSError) as exc:  # pragma: no cover
-            logger.warning("marquage impossible pour %s : %s", message_id, exc)
 
 
 # --- rattachement au poste --------------------------------------------------

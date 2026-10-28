@@ -1,21 +1,14 @@
 """La boîte de recrutement sur Microsoft 365, par Microsoft Graph.
 
-**Pourquoi Graph plutôt qu'IMAP/SMTP.** Les deux voies passent par un jeton
-OAuth — Microsoft n'accepte plus aucun mot de passe. Mais la voie IMAP/SMTP
-exige, en plus de l'application déclarée dans Entra, deux gestes côté Exchange
-qu'un administrateur de petite structure ne connaît pas : inscrire le principal
-de service de l'application en PowerShell (`New-ServicePrincipal`,
-`Add-MailboxPermission`), et rouvrir SMTP AUTH sur la boîte, que les réglages
-de sécurité par défaut ferment. Graph n'en demande aucun : deux permissions
-d'application (`Mail.ReadWrite`, `Mail.Send`) et le consentement de
-l'administrateur, dans le même écran d'Entra.
+**Pourquoi Graph.** C'est la seule voie : Microsoft n'accepte plus aucun mot
+de passe, et Graph ne demande que deux permissions d'application
+(`Mail.ReadWrite`, `Mail.Send`) et le consentement de l'administrateur, dans
+le même écran d'Entra — rien à régler côté Exchange.
 
-**Ce que fait le module.** Exactement ce que fait `BoiteImap`, avec la même
-interface — `verifier`, `relever`, `marquer_traite`, `fermer` — pour que le
-relevé ne sache pas quelle voie il emprunte. Le message est récupéré au format
-MIME brut (`/$value`) et passe par le même `depuis_message` que l'IMAP : une
-candidature reçue par Graph est lue par exactement le même code qu'une
-candidature reçue par IMAP.
+**Ce que fait le module.** La boîte — `verifier`, `relever`, `marquer_traite`,
+`fermer` — telle que le relevé l'attend (`courriel.SourceCourriel`). Le
+message est récupéré au format MIME brut (`/$value`) et passe par
+`depuis_message`, qui en tire l'expéditeur, l'objet et les pièces jointes.
 
 S'y ajoute l'envoi, par `sendMail`.
 
@@ -35,15 +28,14 @@ import httpx
 
 from app.services import oauth_microsoft
 from app.services.courriel import ErreurBoite, MessageEntrant, depuis_message
-from app.services.oauth_microsoft import ConfigOAuth
+from app.services.oauth_microsoft import PORTEE_GRAPH, ConfigOAuth
 
 logger = logging.getLogger(__name__)
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-PORTEE_GRAPH = "https://graph.microsoft.com/.default"
 
 # Les dossiers que Graph connaît par leur nom, quelle que soit la langue de la
-# boîte. « INBOX » est le nom IMAP de la boîte de réception : on l'accepte, les
+# boîte. « INBOX », l'ancien nom de la boîte de réception, reste accepté : des
 # réglages existants l'emploient.
 _DOSSIERS_CONNUS = {
     "inbox": "inbox",
@@ -60,8 +52,6 @@ class ErreurGraph(ErreurBoite):
 
 
 def config_graph(tenant: str, client_id: str, client_secret: str) -> ConfigOAuth:
-    # Pas de jeton de rafraîchissement : Graph se joint par le flux
-    # application, sans personne pour consentir à chaque relevé.
     return ConfigOAuth(
         tenant=tenant.strip(), client_id=client_id.strip(), client_secret=client_secret.strip()
     )
@@ -110,7 +100,7 @@ def _expliquer(reponse: httpx.Response, boite: str) -> str:
 
 
 class ClientGraph:
-    """Les appels à Graph pour une boîte donnée. Synchrone, comme `BoiteImap`."""
+    """Les appels à Graph pour une boîte donnée. Synchrone : appelé dans un fil."""
 
     def __init__(self, config: ConfigOAuth, boite: str) -> None:
         if not boite.strip():
@@ -148,7 +138,7 @@ class ClientGraph:
 
 
 class BoiteGraph:
-    """La boîte de recrutement Microsoft 365. Même interface que `BoiteImap`."""
+    """La boîte de recrutement Microsoft 365."""
 
     def __init__(self, config: ConfigOAuth, boite: str, dossier: str = "inbox") -> None:
         self.client = ClientGraph(config, boite)
@@ -223,8 +213,8 @@ class BoiteGraph:
         messages: list[MessageEntrant] = []
         for element in liste.get("value") or []:
             identifiant = element["id"]
-            # Le message entier, au format MIME : c'est ce que l'IMAP rend, et
-            # donc ce que `depuis_message` sait lire, pièces jointes comprises.
+            # Le message entier, au format MIME : ce que `depuis_message` sait
+            # lire, pièces jointes comprises.
             brut = self.client.appeler("GET", f"/messages/{quote(identifiant)}/$value").content
             message = depuis_message(brut)
             self._identifiants[message.message_id] = identifiant
@@ -291,7 +281,7 @@ def envoyer(
 def verifier_envoi(config: ConfigOAuth, expediteur: str) -> None:
     """S'assure qu'on peut obtenir un jeton et atteindre la boîte, sans rien envoyer.
 
-    Graph n'a pas d'équivalent à « ouvrir une session SMTP » : on lit les
+    Graph n'a pas d'équivalent à « ouvrir une session » : on lit les
     propriétés de la boîte d'envoi, ce qui valide le jeton, l'adresse et la
     permission de lecture. `Mail.Send` lui-même ne se vérifie qu'en envoyant.
     """

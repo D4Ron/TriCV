@@ -56,8 +56,7 @@ async def test_une_boite_microsoft_incomplete_nomme_les_champs(client, auth):
         f"{API}/settings",
         json={
             "courriel_actif": True,
-            "fournisseur_courriel": "microsoft365",
-            "imap_user": "recrutement@kapiconsult.tg",
+            "adresse_boite": "recrutement@kapiconsult.tg",
         },
         headers=auth,
     )

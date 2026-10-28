@@ -15,6 +15,7 @@ import {
 } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 import { NIVEAUX } from '@/lib/niveaux'
+import DossiersSansPoste from '@/components/DossiersSansPoste'
 
 /**
  * Le vivier : les profils déjà passés par le cabinet.
@@ -273,6 +274,8 @@ export default function VivierPage() {
           parcours et notes obtenues. Seuls les fichiers disparaissent.
         </p>
       </div>
+
+      <DossiersSansPoste />
 
       <section className="card mb-5 p-4">
         <form

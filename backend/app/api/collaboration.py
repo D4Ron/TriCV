@@ -390,7 +390,7 @@ async def historique_messages(
 
 @router.post("/messagerie/test")
 async def tester_envoi(db: DbSession, user: CurrentUser) -> dict:
-    """Ouvre une session SMTP sans rien envoyer.
+    """Vérifie l'accès à la boîte d'envoi sans rien envoyer.
 
     À utiliser au branchement : une erreur d'identifiants doit se découvrir ici,
     pas au moment où trente convocations partent.

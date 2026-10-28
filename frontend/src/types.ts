@@ -168,6 +168,8 @@ export interface AuditEntry {
   created_at: string
 }
 
+export type FournisseurIa = 'gemini' | 'anthropic' | 'openai' | 'ollama'
+
 export interface DeploymentSettings {
   llm_provider: string
   llm_model: string
@@ -179,39 +181,35 @@ export interface DeploymentSettings {
   allow_self_registration: boolean
   /** Les dossiers reçus hors de tout avis rejoignent-ils le vivier ? */
   candidatures_spontanees: boolean
-  /** Boîte de candidatures. Le mot de passe ne sort jamais du serveur. */
+  /** Boîte de candidatures Microsoft 365, relevée par Graph. */
   courriel_actif: boolean
-  imap_host: string
-  imap_port: number
-  imap_user: string
-  imap_folder: string
-  imap_password_defini: boolean
+  adresse_boite: string
+  dossier_boite: string
   courriel_utilisable: boolean
-  /** Envoi. Serveur distinct de la réception : on relève sur la boîte de
-   *  candidatures et on peut écrire depuis l'adresse générale du cabinet. */
-  smtp_actif: boolean
-  smtp_host: string
-  smtp_port: number
-  smtp_user: string
-  smtp_tls: boolean
-  smtp_expediteur: string
-  smtp_password_defini: boolean
+  /** Envoi, depuis la même boîte (ou l'adresse d'expédition réglée). */
+  envoi_actif: boolean
+  adresse_expediteur: string
   envoi_utilisable: boolean
   /** Adresse publique de l'application, pour les liens envoyés par courriel. */
   url_publique: string
 
-  // --- par où passe le courriel ----------------------------------------------
-  /**
-   * `imap` (IMAP + SMTP) ou `microsoft365` (Graph).
-   *
-   * Microsoft a fermé l'authentification par mot de passe sur les boîtes
-   * professionnelles : là où elle est fermée, IMAP échoue quel que soit le mot
-   * de passe saisi, et rien dans l'écran ne l'expliquait.
-   */
-  fournisseur_courriel: 'imap' | 'microsoft365'
+  /** Accès Microsoft 365. Le secret ne sort jamais du serveur. */
   oauth_tenant: string
   oauth_client_id: string
   oauth_client_secret_defini: boolean
+
+  /** Le modèle d'IA réglé à l'écran. Vide : le fichier du serveur décide. */
+  ia_fournisseur_ecran: '' | FournisseurIa
+  ia_modele_ecran: string
+  ia_adresse_openai: string
+  ia_adresse_ollama: string
+  /**
+   * Pour chaque clé, d'où vient celle qui sert : collée dans Paramètres
+   * (`ecran`), le fichier du serveur (`serveur`), ou aucune (`''`). Les clés
+   * elles-mêmes ne sortent jamais du serveur.
+   */
+  ia_cles: Partial<Record<'gemini' | 'anthropic' | 'openai', '' | 'ecran' | 'serveur'>>
+  ia_regle_ecran: boolean
 
   /** L'adresse que les candidats écrivent en cas de difficulté. */
   contact_candidats: string

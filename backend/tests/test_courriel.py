@@ -273,7 +273,7 @@ async def test_rejouer_le_releve_ne_duplique_pas():
         await db.commit()
         assert premier.crees == 1
 
-        # Une boîte neuve : le message n'a pas été marqué du point de vue IMAP.
+        # Une boîte neuve : le message n'a pas été marqué lu dans la boîte.
         second = await courriel.relever(db, BoiteFactice(messages))
         await db.commit()
         assert second.crees == 0

@@ -2,7 +2,8 @@
 
     python docs/note_correctifs.py
 
-Une page, sans explication : les commandes et les écrans, dans l'ordre.
+Une page, sans explication : les commandes et les écrans, dans l'ordre. La
+limite de taille de nginx, réglée sur le serveur le 28/10, n'y figure plus.
 """
 
 from __future__ import annotations
@@ -47,40 +48,25 @@ def contenu() -> list:
         )
     )
 
-    h.append(para("2. Lever la limite de taille des envois (nginx)", "section"))
-    h.extend(
-        bloc_code(
-            [
-                "# dans le bloc server { … }",
-                "client_max_body_size 0;",
-                "",
-                "nginx -t && systemctl reload nginx",
-            ]
-        )
-    )
-
-    h.append(para("3. Ajouter la clé du modèle d'IA", "section"))
-    h.extend(
-        bloc_code(
-            [
-                "# dans le fichier .env",
-                "GEMINI_API_KEY=la-clé-fournie-par-Google",
-                "",
-                "docker compose up -d",
-            ]
-        )
-    )
-
-    h.append(para("4. Brancher la boîte de recrutement", "section"))
+    h.append(para("2. Choisir le modèle d'IA et coller sa clé", "section"))
     h.append(
         para(
-            "<b>Paramètres › Courriel</b> › « Microsoft 365 » : suivre la fenêtre. "
-            "Puis cocher <i>Relever la boîte</i> et <i>Envoyer les courriels</i>, "
-            "et enregistrer."
+            "<b>Paramètres › Général › Modèle d'IA</b> : fournisseur « Google Gemini », "
+            "coller la clé (aistudio.google.com › Get API key), enregistrer. Aucun "
+            "accès au serveur."
         )
     )
 
-    h.append(para("5. Contrôler", "section"))
+    h.append(para("3. Brancher la boîte de recrutement", "section"))
+    h.append(
+        para(
+            "<b>Paramètres › Courriel</b> : la fenêtre de la marche à suivre s'ouvre ; "
+            "la suivre. Puis cocher <i>Relever la boîte</i> et <i>Envoyer les "
+            "courriels</i>, et enregistrer."
+        )
+    )
+
+    h.append(para("4. Contrôler", "section"))
     h.append(
         para(
             "<b>Paramètres › État</b> : chaque ligne doit afficher « En place ». "

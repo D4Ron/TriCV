@@ -3,17 +3,14 @@
 Le trajet éprouvé est celui d'un vrai candidat : un courriel avec un CV en
 pièce jointe arrive dans la boîte, et « Relever la boîte » doit en faire une
 candidature. L'envoi passe par la boîte d'envoi réglée dans l'application
-(Paramètres › Courriel) — SMTP ou Microsoft 365 —, avec le même code de
-connexion que les convocations. Un envoi qui aboutit ici valide donc aussi
-les identifiants dont se sert l'application.
+(Paramètres › Courriel), par Microsoft Graph, avec les mêmes identifiants
+que les convocations. Un envoi qui aboutit ici valide donc aussi l'accès
+dont se sert l'application.
 
     cd backend
     python -m tools.envoyer_cv_test                    # vers recrutement@kapiconsult.tg
     python -m tools.envoyer_cv_test --reference DRH-01 # rattaché à un avis
     python -m tools.envoyer_cv_test --eml cv-test.eml  # écrit le message sans l'envoyer
-
-`--smtp-host` et `--smtp-port` remplacent le serveur réglé, sans chiffrement ni
-authentification : c'est ainsi qu'on vise un serveur de capture local.
 """
 
 from __future__ import annotations
@@ -128,20 +125,6 @@ def _envoyer_graph(reglages, destinataire: str, reference: str, pdf: bytes) -> N
         client.fermer()
 
 
-def _envoyer_smtp(reglages, courriel: EmailMessage, hote: str, port: int) -> None:
-    import smtplib
-
-    from app.services import messagerie
-
-    if hote:
-        # Serveur de capture local : ni chiffrement ni authentification.
-        with smtplib.SMTP(hote, port, timeout=30) as serveur:
-            serveur.send_message(courriel)
-        return
-    with messagerie._ouvrir_smtp(reglages, timeout=30) as serveur:
-        serveur.send_message(courriel)
-
-
 async def _reglages():
     from app.db import SessionLocal
     from app.services import parametres
@@ -155,13 +138,11 @@ def main() -> int:
     arguments.add_argument("--a", dest="destinataire", default=DESTINATAIRE)
     arguments.add_argument("--reference", default="", help="référence d'avis à mettre dans l'objet")
     arguments.add_argument("--eml", type=Path, help="écrire le message dans ce fichier, sans l'envoyer")
-    arguments.add_argument("--smtp-host", default="", help="serveur de capture local")
-    arguments.add_argument("--smtp-port", type=int, default=1025)
     arguments.add_argument("--de", default="", help="expéditeur, à défaut celui de l'application")
     options = arguments.parse_args()
 
     pdf = cv_test()
-    if options.eml or options.smtp_host:
+    if options.eml:
         reglages = None
         expediteur = options.de or "test.candidat@example.com"
     else:
@@ -181,13 +162,8 @@ def main() -> int:
         print(f"Message écrit dans {options.eml} ({len(pdf)} octets de PDF joints).")
         return 0
 
-    if reglages is not None and reglages.microsoft365:
-        _envoyer_graph(reglages, options.destinataire, options.reference, pdf)
-        voie = "Microsoft 365"
-    else:
-        _envoyer_smtp(reglages, courriel, options.smtp_host, options.smtp_port)
-        voie = f"SMTP {options.smtp_host}:{options.smtp_port}" if options.smtp_host else "SMTP"
-    print(f"CV « Test » envoyé à {options.destinataire} depuis {expediteur} ({voie}).")
+    _envoyer_graph(reglages, options.destinataire, options.reference, pdf)
+    print(f"CV « Test » envoyé à {options.destinataire} depuis {expediteur} (Microsoft 365).")
     return 0
 
 

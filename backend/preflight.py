@@ -322,7 +322,7 @@ async def controler_courriel(rapport: Rapport) -> None:
         return
 
     if reglages.courriel_utilisable:
-        rapport.ajouter(OK, f"Boîte de candidatures configurée ({reglages.imap_user}).")
+        rapport.ajouter(OK, f"Boîte de candidatures configurée ({reglages.boite}).")
     elif reglages.courriel_actif:
         rapport.ajouter(
             A_VOIR,
@@ -350,7 +350,7 @@ async def controler_envoi(rapport: Rapport) -> None:
 
     if reglages.envoi_utilisable:
         rapport.ajouter(OK, f"Envoi de courriels configuré ({reglages.expediteur}).")
-    elif reglages.smtp_actif:
+    elif reglages.envoi_actif:
         rapport.ajouter(
             A_VOIR,
             "Envoi activé mais incomplet.",

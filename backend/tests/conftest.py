@@ -34,10 +34,11 @@ os.environ.update(
     # Fermé par défaut : plusieurs tests vérifient qu'on l'ouvre explicitement.
     ALLOW_SELF_REGISTRATION="false",
     SIGNUP_CODE="",
-    # Aucune boîte : un test ne doit jamais ouvrir de connexion IMAP réelle.
-    IMAP_HOST="",
-    IMAP_USER="",
-    IMAP_PASSWORD="",
+    # Aucune boîte : un test ne doit jamais joindre Microsoft.
+    BOITE_RECRUTEMENT="",
+    OAUTH_TENANT="",
+    OAUTH_CLIENT_ID="",
+    OAUTH_CLIENT_SECRET="",
 )
 
 import httpx  # noqa: E402

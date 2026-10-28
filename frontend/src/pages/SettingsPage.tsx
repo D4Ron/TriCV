@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi, settingsApi } from '@/lib/api'
+import type { DeploymentSettings, FournisseurIa } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { Callout, ErrorState, Field, PageLoader, Spinner, Toggle } from '@/components/ui'
 import PanneauUtilisateurs from '@/components/PanneauUtilisateurs'
@@ -11,49 +12,207 @@ import EtatApplication from '@/components/EtatApplication'
  * Paramètres du cabinet.
  *
  * Uniquement ce qui se règle : expurgation des données sensibles, inscription
- * libre, candidatures spontanées, boîtes de courriel. La configuration du
- * déploiement — fournisseur de modèle, stockage, modèles de reconnaissance —
- * n'est pas affichée : elle se change dans le fichier de configuration du
- * serveur, et l'exposer en lecture seule n'aidait personne à agir.
+ * libre, candidatures spontanées, clé du modèle d'IA, boîte Microsoft 365. Le
+ * reste du déploiement — choix du fournisseur de modèle, stockage, modèles de
+ * reconnaissance — n'est pas affiché : il se change dans le fichier de
+ * configuration du serveur, et l'exposer en lecture seule n'aidait personne.
  *
  * Le seuil de présélection n'y figure plus. Il variait trop d'un mandat à
  * l'autre pour qu'une valeur d'établissement ait un sens, et le fixer avant
  * d'avoir vu la distribution des notes revenait à décider à l'aveugle. Il se
  * trace maintenant sur la grille du poste, une fois les dossiers notés.
  *
- * Les boîtes font exception à la règle « pas de secret dans un écran » : leurs
- * mots de passe se règlent ici parce que l'adresse de recrutement change avec
- * les campagnes et qu'un mot de passe d'application se révoque. Ils partent
- * vers le serveur et n'en reviennent jamais — le champ affiche « déjà défini »,
- * pas la valeur.
+ * Deux secrets font exception à la règle « pas de secret dans un écran » : le
+ * secret de l'application Microsoft et la clé du modèle d'IA. Les coller ici
+ * évite un accès au serveur à chaque renouvellement. Ils partent vers le
+ * serveur et n'en reviennent jamais — le champ affiche « déjà défini », pas la
+ * valeur.
  */
-/** Un choix exclusif présenté en toutes lettres, pas en liste déroulante. */
-function Choix({
-  actif,
-  titre,
-  detail,
-  disabled,
-  onClick,
+
+const FOURNISSEURS: Array<{ cle: FournisseurIa; libelle: string; aide: string }> = [
+  { cle: 'gemini', libelle: 'Google Gemini', aide: 'Clé sur aistudio.google.com › Get API key.' },
+  { cle: 'anthropic', libelle: 'Anthropic (Claude)', aide: 'Clé sur console.anthropic.com › API keys.' },
+  {
+    cle: 'openai',
+    libelle: 'Compatible OpenAI',
+    aide: 'Groq, Mistral, OpenRouter, OpenAI… : l’adresse de l’API, la clé et le nom du modèle.',
+  },
+  { cle: 'ollama', libelle: 'Ollama (modèle local)', aide: 'Un modèle installé sur le serveur, sans clé.' },
+]
+
+const LIBELLE_FOURNISSEUR: Record<string, string> = Object.fromEntries(
+  FOURNISSEURS.map((f) => [f.cle, f.libelle]),
+)
+
+/**
+ * Le modèle d'IA : le fournisseur et ses clés, réglés sans toucher au serveur.
+ *
+ * Ce qui est réglé ici prime sur le fichier du serveur, quoi qu'il porte. Une
+ * clé collée sans choisir de fournisseur fait servir le sien. « Celui du
+ * serveur » rend la main au fichier.
+ */
+function PanneauIa({
+  s,
+  estAdmin,
+  fournisseur,
+  onFournisseur,
+  modele,
+  onModele,
+  adresseOpenai,
+  onAdresseOpenai,
+  adresseOllama,
+  onAdresseOllama,
+  cles,
+  onCle,
+  revenirServeur,
 }: {
-  actif: boolean
-  titre: string
-  detail: string
-  disabled?: boolean
-  onClick: () => void
+  s: DeploymentSettings
+  estAdmin: boolean
+  fournisseur: '' | FournisseurIa
+  onFournisseur: (v: '' | FournisseurIa) => void
+  modele: string
+  onModele: (v: string) => void
+  adresseOpenai: string
+  onAdresseOpenai: (v: string) => void
+  adresseOllama: string
+  onAdresseOllama: (v: string) => void
+  cles: { gemini: string; anthropic: string; openai: string }
+  onCle: (nom: 'gemini' | 'anthropic' | 'openai', valeur: string) => void
+  revenirServeur: { isPending: boolean; mutate: () => void }
 }) {
+  // Les champs suivent le fournisseur retenu ; « celui du serveur » montre
+  // ceux du fournisseur en service, pour pouvoir y coller une clé.
+  const vise: FournisseurIa = (fournisseur || s.llm_provider) as FournisseurIa
+  const aide = FOURNISSEURS.find((f) => f.cle === vise)?.aide
+  const source = (nom: 'gemini' | 'anthropic' | 'openai') => s.ia_cles[nom] ?? ''
+  const indication = (nom: 'gemini' | 'anthropic' | 'openai') =>
+    source(nom) === 'ecran'
+      ? 'Une clé est enregistrée ici. Laissez vide pour la conserver ; collez-en une autre pour la remplacer.'
+      : source(nom) === 'serveur'
+        ? 'La clé du serveur est en service. En coller une ici la remplace.'
+        : `Aucune clé. ${aide ?? ''}`
+
+  const champCle = (nom: 'gemini' | 'anthropic' | 'openai', libelle: string) => (
+    <Field label={libelle} htmlFor={`cle-${nom}`} hint={indication(nom)}>
+      <input
+        id={`cle-${nom}`}
+        type="password"
+        className="input"
+        value={cles[nom]}
+        disabled={!estAdmin}
+        autoComplete="off"
+        spellCheck={false}
+        placeholder={source(nom) ? '•••••••• (inchangée)' : ''}
+        onChange={(e) => onCle(nom, e.target.value)}
+      />
+    </Field>
+  )
+
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      aria-pressed={actif}
-      className={`w-full rounded-lg border px-4 py-3 text-left transition disabled:opacity-60 ${
-        actif ? 'border-brand-400 bg-brand-50' : 'border-ink-200 bg-white hover:border-ink-300'
-      }`}
-    >
-      <span className="block text-sm font-semibold text-ink-900">{titre}</span>
-      <span className="mt-0.5 block text-xs leading-relaxed text-ink-500">{detail}</span>
-    </button>
+    <div className="mt-6 border-t border-ink-100 pt-5">
+      <h2 className="text-sm font-semibold text-ink-900">Modèle d&apos;IA</h2>
+      <p className="mt-1 text-xs text-ink-500">
+        Ce qui rédige les avis et les rapports et dépouille les dossiers. Réglé ici, il sert
+        tout de suite, sans redémarrage, et prime sur le fichier de configuration du serveur.
+      </p>
+      <p className="mt-2 text-xs text-ink-700">
+        En service : <strong>{LIBELLE_FOURNISSEUR[s.llm_provider] ?? s.llm_provider}</strong>
+        {s.llm_model && !s.llm_model.startsWith('(') ? ` · ${s.llm_model}` : ''}
+        {s.ia_regle_ecran ? ' — réglé ici' : ' — réglé sur le serveur'}
+      </p>
+
+      <div className="mt-4 space-y-3">
+        <Field
+          label="Fournisseur"
+          htmlFor="ia-fournisseur"
+          hint="« Celui du serveur » laisse le fichier de configuration décider. Une clé collée sans choisir fait servir son fournisseur."
+        >
+          <select
+            id="ia-fournisseur"
+            className="input"
+            value={fournisseur}
+            disabled={!estAdmin}
+            onChange={(e) => onFournisseur(e.target.value as '' | FournisseurIa)}
+          >
+            <option value="">Celui du serveur</option>
+            {FOURNISSEURS.map((f) => (
+              <option key={f.cle} value={f.cle}>
+                {f.libelle}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        {vise === 'gemini' && champCle('gemini', 'Clé de l’API Gemini')}
+        {vise === 'anthropic' && champCle('anthropic', 'Clé de l’API Anthropic')}
+        {vise === 'openai' && (
+          <>
+            <Field
+              label="Adresse de l'API"
+              htmlFor="ia-adresse-openai"
+              hint="Celle que donne le fournisseur, se terminant d'ordinaire par /v1."
+            >
+              <input
+                id="ia-adresse-openai"
+                className="input"
+                value={adresseOpenai}
+                disabled={!estAdmin}
+                placeholder="https://api.groq.com/openai/v1"
+                onChange={(e) => onAdresseOpenai(e.target.value)}
+              />
+            </Field>
+            {champCle('openai', 'Clé de l’API')}
+          </>
+        )}
+        {vise === 'ollama' && (
+          <Field label="Adresse d'Ollama" htmlFor="ia-adresse-ollama">
+            <input
+              id="ia-adresse-ollama"
+              className="input"
+              value={adresseOllama}
+              disabled={!estAdmin}
+              placeholder="http://ollama:11434"
+              onChange={(e) => onAdresseOllama(e.target.value)}
+            />
+          </Field>
+        )}
+
+        <Field
+          label={vise === 'openai' ? 'Modèle' : 'Modèle (facultatif)'}
+          htmlFor="ia-modele"
+          hint={
+            vise === 'openai'
+              ? 'Obligatoire pour ce fournisseur : il n’a pas de modèle par défaut.'
+              : 'Vide : le modèle par défaut du fournisseur.'
+          }
+        >
+          <input
+            id="ia-modele"
+            className="input"
+            value={modele}
+            disabled={!estAdmin}
+            spellCheck={false}
+            onChange={(e) => onModele(e.target.value)}
+          />
+        </Field>
+
+        {estAdmin && s.ia_regle_ecran && (
+          <button
+            type="button"
+            className="btn-ghost px-3 py-1.5 text-xs"
+            disabled={revenirServeur.isPending}
+            onClick={() => revenirServeur.mutate()}
+          >
+            {revenirServeur.isPending && <Spinner />}
+            Revenir au réglage du serveur
+          </button>
+        )}
+        <p className="text-xs text-ink-500">
+          Après l&apos;enregistrement, l&apos;onglet « État » vérifie la clé : bouton
+          « Essayer » sur la ligne Modèle d&apos;IA.
+        </p>
+      </div>
+    </div>
   )
 }
 
@@ -81,43 +240,50 @@ export default function SettingsPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
 
-  // Boîte de candidatures (réception).
+  // Boîte de candidatures Microsoft 365 (réception).
   const [courriel, setCourriel] = useState(false)
-  const [hote, setHote] = useState('')
-  const [port, setPort] = useState('993')
   const [adresse, setAdresse] = useState('')
-  const [motDePasse, setMotDePasse] = useState('')
-  const [dossier, setDossier] = useState('INBOX')
+  const [dossier, setDossier] = useState('inbox')
   const [testResultat, setTestResultat] = useState<string | null>(null)
   const [testErreur, setTestErreur] = useState<string | null>(null)
 
-  // Envoi. Serveur distinct : on relève sur la boîte de candidatures et on peut
-  // vouloir écrire depuis l'adresse générale du cabinet.
+  // Envoi, depuis la même boîte sauf adresse d'expédition réglée.
   const [envoi, setEnvoi] = useState(false)
-  const [smtpHote, setSmtpHote] = useState('')
-  const [smtpPort, setSmtpPort] = useState('587')
-  const [smtpUser, setSmtpUser] = useState('')
-  const [smtpMotDePasse, setSmtpMotDePasse] = useState('')
-  const [smtpTls, setSmtpTls] = useState(true)
   const [expediteur, setExpediteur] = useState('')
   const [urlPublique, setUrlPublique] = useState('')
   const [envoiResultat, setEnvoiResultat] = useState<string | null>(null)
   const [envoiErreur, setEnvoiErreur] = useState<string | null>(null)
 
-  // Par où passe le courriel. Microsoft a fermé l'authentification par mot de
-  // passe sur beaucoup de locataires : là où elle l'est, IMAP échoue quel que
-  // soit le mot de passe, et l'écran ne disait pas pourquoi.
-  const [fournisseur, setFournisseur] = useState<'imap' | 'microsoft365'>('imap')
+  // Accès Microsoft 365 : les trois valeurs de l'inscription d'application.
   const [tenant, setTenant] = useState('')
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
 
+  // Le modèle d'IA. Fournisseur vide : le fichier du serveur décide. Les
+  // clés ne sont jamais réaffichées : vide veut dire « inchangée ».
+  const [iaFournisseur, setIaFournisseur] = useState<'' | FournisseurIa>('')
+  const [iaModele, setIaModele] = useState('')
+  const [adresseOpenai, setAdresseOpenai] = useState('')
+  const [adresseOllama, setAdresseOllama] = useState('')
+  const [cles, setCles] = useState({ gemini: '', anthropic: '', openai: '' })
+
   const [contactCandidats, setContactCandidats] = useState('')
 
   const [onglet, setOnglet] = useState<Onglet>(estAdmin ? 'etat' : 'general')
-  // L'assistant s'ouvre au moment où l'on bascule sur Microsoft : c'est là
-  // qu'on a besoin de la marche à suivre, pas dans un guide à retrouver.
   const [assistant, setAssistant] = useState(false)
+  // L'assistant s'ouvre de lui-même la première fois qu'un administrateur
+  // arrive sur l'onglet Courriel sans rien de réglé : c'est là qu'on a besoin
+  // de la marche à suivre, pas dans un guide à retrouver. Une fois par visite
+  // de la page — le bouton « Reprendre la marche à suivre » fait le reste.
+  const [assistantPropose, setAssistantPropose] = useState(false)
+  useEffect(() => {
+    const s = reglages.data
+    if (onglet !== 'courriel' || !estAdmin || !s || assistantPropose) return
+    setAssistantPropose(true)
+    if (!s.oauth_tenant && !s.oauth_client_id && !s.oauth_client_secret_defini) {
+      setAssistant(true)
+    }
+  }, [onglet, estAdmin, reglages.data, assistantPropose])
 
   // Le formulaire part de l'état du serveur, pas d'une valeur inventée.
   useEffect(() => {
@@ -126,25 +292,21 @@ export default function SettingsPage() {
     setInscription(reglages.data.allow_self_registration)
     setSpontanees(reglages.data.candidatures_spontanees)
     setCourriel(reglages.data.courriel_actif)
-    setHote(reglages.data.imap_host)
-    setPort(String(reglages.data.imap_port))
-    setAdresse(reglages.data.imap_user)
-    setDossier(reglages.data.imap_folder)
-    setEnvoi(reglages.data.smtp_actif)
-    setSmtpHote(reglages.data.smtp_host)
-    setSmtpPort(String(reglages.data.smtp_port))
-    setSmtpUser(reglages.data.smtp_user)
-    setSmtpTls(reglages.data.smtp_tls)
-    setExpediteur(reglages.data.smtp_expediteur)
+    setAdresse(reglages.data.adresse_boite)
+    setDossier(reglages.data.dossier_boite)
+    setEnvoi(reglages.data.envoi_actif)
+    setExpediteur(reglages.data.adresse_expediteur)
     setUrlPublique(reglages.data.url_publique)
-    setFournisseur(reglages.data.fournisseur_courriel)
     setTenant(reglages.data.oauth_tenant)
     setClientId(reglages.data.oauth_client_id)
     setContactCandidats(reglages.data.contact_candidats)
     // Jamais réhydratés : le serveur ne renvoie aucun secret.
-    setMotDePasse('')
-    setSmtpMotDePasse('')
     setClientSecret('')
+    setIaFournisseur(reglages.data.ia_fournisseur_ecran)
+    setIaModele(reglages.data.ia_modele_ecran)
+    setAdresseOpenai(reglages.data.ia_adresse_openai)
+    setAdresseOllama(reglages.data.ia_adresse_ollama)
+    setCles({ gemini: '', anthropic: '', openai: '' })
   }, [reglages.data])
 
   const enregistrer = useMutation({
@@ -154,40 +316,51 @@ export default function SettingsPage() {
         allow_self_registration: inscription,
         candidatures_spontanees: spontanees,
         courriel_actif: courriel,
-        imap_host: hote.trim(),
-        imap_port: Number(port) || 993,
-        imap_user: adresse.trim(),
-        // Vide = inchangé, côté serveur comme ici.
-        imap_password: motDePasse,
-        imap_folder: dossier.trim() || 'INBOX',
-        smtp_actif: envoi,
-        smtp_host: smtpHote.trim(),
-        smtp_port: Number(smtpPort) || 587,
-        smtp_user: smtpUser.trim(),
-        smtp_password: smtpMotDePasse,
-        smtp_tls: smtpTls,
-        smtp_expediteur: expediteur.trim(),
+        adresse_boite: adresse.trim(),
+        dossier_boite: dossier.trim() || 'inbox',
+        envoi_actif: envoi,
+        adresse_expediteur: expediteur.trim(),
         url_publique: urlPublique.trim(),
-        fournisseur_courriel: fournisseur,
         oauth_tenant: tenant.trim(),
         oauth_client_id: clientId.trim(),
-        // Vide = inchangé, comme les mots de passe.
+        // Vide = inchangé, côté serveur comme ici.
         oauth_client_secret: clientSecret,
+        llm_provider: iaFournisseur,
+        llm_model: iaModele.trim(),
+        gemini_api_key: cles.gemini.trim(),
+        anthropic_api_key: cles.anthropic.trim(),
+        llm_api_key: cles.openai.trim(),
+        llm_base_url: adresseOpenai.trim(),
+        ollama_base_url: adresseOllama.trim(),
         contact_candidats: contactCandidats.trim(),
       }),
     onSuccess: () => {
       setErreur(null)
       setMessage('Réglages enregistrés.')
-      setMotDePasse('')
-      setSmtpMotDePasse('')
       setClientSecret('')
+      setCles({ gemini: '', anthropic: '', openai: '' })
       void queryClient.invalidateQueries({ queryKey: ['settings'] })
       void queryClient.invalidateQueries({ queryKey: ['aide-publique'] })
       void queryClient.invalidateQueries({ queryKey: ['courriel', 'etat'] })
+      void queryClient.invalidateQueries({ queryKey: ['sante'] })
     },
     onError: (e) => {
       setMessage(null)
       setErreur(e instanceof Error ? e.message : 'Enregistrement impossible')
+    },
+  })
+
+  const revenirServeur = useMutation({
+    mutationFn: settingsApi.revenirIaServeur,
+    onSuccess: () => {
+      setErreur(null)
+      setMessage('Le modèle d’IA suit de nouveau le réglage du serveur.')
+      void queryClient.invalidateQueries({ queryKey: ['settings'] })
+      void queryClient.invalidateQueries({ queryKey: ['sante'] })
+    },
+    onError: (e) => {
+      setMessage(null)
+      setErreur(e instanceof Error ? e.message : 'Retrait impossible')
     },
   })
 
@@ -197,7 +370,7 @@ export default function SettingsPage() {
     mutationFn: settingsApi.testerEnvoi,
     onSuccess: (r) => {
       setEnvoiErreur(null)
-      setEnvoiResultat(`Session ouverte. Les messages partiront de ${r.expediteur}.`)
+      setEnvoiResultat(`Accès vérifié. Les messages partiront de ${r.expediteur}.`)
     },
     onError: (e) => {
       setEnvoiResultat(null)
@@ -224,10 +397,6 @@ export default function SettingsPage() {
     return <ErrorState error={reglages.error} onRetry={() => reglages.refetch()} />
 
   const s = reglages.data!
-  // Chez Microsoft, rien ne passe par un serveur IMAP ni SMTP : ni hôte, ni
-  // port, ni mot de passe. Les laisser à l'écran ferait croire qu'ils comptent,
-  // et on les remplirait avant de chercher pourquoi le relevé échoue encore.
-  const graph = fournisseur === 'microsoft365'
 
   return (
     <div className="max-w-2xl">
@@ -246,7 +415,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Trois onglets plutôt qu'une colonne de mille pixels : la pratique du
+      {/* Des onglets plutôt qu'une colonne de mille pixels : la pratique du
           cabinet se règle une fois, le courriel se débogue à plusieurs
           reprises, et les comptes s'ouvrent quand quelqu'un arrive. Rien ne
           gagnait à les empiler. */}
@@ -329,110 +498,92 @@ export default function SettingsPage() {
           />
         </div>
 
+        <PanneauIa
+          s={s}
+          estAdmin={estAdmin}
+          fournisseur={iaFournisseur}
+          onFournisseur={setIaFournisseur}
+          modele={iaModele}
+          onModele={setIaModele}
+          adresseOpenai={adresseOpenai}
+          onAdresseOpenai={setAdresseOpenai}
+          adresseOllama={adresseOllama}
+          onAdresseOllama={setAdresseOllama}
+          cles={cles}
+          onCle={(nom, valeur) => setCles((c) => ({ ...c, [nom]: valeur }))}
+          revenirServeur={revenirServeur}
+        />
+
         </div>
 
         <div className={onglet === 'courriel' ? '' : 'hidden'}>
         <div>
-          <h2 className="text-sm font-semibold text-ink-900">Par où passe le courriel</h2>
+          <h2 className="text-sm font-semibold text-ink-900">Accès Microsoft 365</h2>
           <p className="mt-1 text-xs text-ink-500">
-            Microsoft a fermé l&apos;authentification par mot de passe sur beaucoup de
-            locataires professionnels. Là où elle l&apos;est, IMAP échoue quel que soit le mot de
-            passe saisi — y compris un mot de passe d&apos;application, que Microsoft n&apos;offre
-            pas non plus. Ce n&apos;est pas une erreur de saisie : c&apos;est le mauvais chemin.
+            La boîte de recrutement est lue, et les messages envoyés, par Microsoft Graph. Ces
+            trois valeurs viennent d&apos;une inscription d&apos;application dans Entra ID ; la
+            marche à suivre les donne une à une.
           </p>
 
-          <div className="mt-4 space-y-2">
-            <Choix
-              actif={fournisseur === 'imap'}
-              disabled={!estAdmin}
-              titre="IMAP et SMTP"
-              detail="Gmail avec un mot de passe d'application, une boîte OVH, Zoho, ou tout serveur classique."
-              onClick={() => setFournisseur('imap')}
-            />
-            <Choix
-              actif={fournisseur === 'microsoft365'}
-              disabled={!estAdmin}
-              titre="Microsoft 365 (Graph)"
-              detail="Une boîte Exchange Online. Demande une inscription d'application dans Entra ID, et le consentement d'un administrateur du locataire."
-              onClick={() => {
-                setFournisseur('microsoft365')
-                // Première bascule : on ouvre la marche à suivre. Revenir sur
-                // un réglage déjà posé ne rouvre rien — le bouton « Reprendre
-                // la marche à suivre » est là pour ça.
-                if (fournisseur !== 'microsoft365') setAssistant(true)
-              }}
-            />
-          </div>
-        </div>
-
-        {fournisseur === 'microsoft365' && (
-          <div className="mt-6 border-t border-ink-100 pt-5">
-            <h2 className="text-sm font-semibold text-ink-900">Accès Microsoft 365</h2>
-            <p className="mt-1 text-xs text-ink-500">
-              Ces trois valeurs viennent d&apos;une inscription d&apos;application dans Entra ID.
-              L&apos;application relève et envoie <em>sans utilisateur connecté</em> : les
-              permissions sont donc des permissions d&apos;application, pas déléguées, et elles
-              demandent le consentement d&apos;un administrateur du locataire.
-            </p>
-
+          {estAdmin && (
             <button
               type="button"
               className="btn-secondary mt-3"
               onClick={() => setAssistant(true)}
             >
-              Reprendre la marche à suivre
+              {s.oauth_client_secret_defini ? 'Reprendre la marche à suivre' : 'Ouvrir la marche à suivre'}
             </button>
+          )}
 
-            <div className="mt-4 space-y-4">
-              <Field
-                label="ID du locataire (tenant)"
-                htmlFor="oauth-tenant"
-                hint="L'« ID de l'annuaire (locataire) » de la page Vue d'ensemble. Un domaine — kapiconsult.onmicrosoft.com — est accepté aussi."
-              >
-                <input
-                  id="oauth-tenant"
-                  className="input"
-                  value={tenant}
-                  disabled={!estAdmin}
-                  placeholder="00000000-0000-0000-0000-000000000000"
-                  onChange={(e) => setTenant(e.target.value)}
-                />
-              </Field>
+          <div className="mt-4 space-y-4">
+            <Field
+              label="ID du locataire (tenant)"
+              htmlFor="oauth-tenant"
+              hint="L'« ID de l'annuaire (locataire) » de la page Vue d'ensemble. Un domaine — kapiconsult.onmicrosoft.com — est accepté aussi."
+            >
+              <input
+                id="oauth-tenant"
+                className="input"
+                value={tenant}
+                disabled={!estAdmin}
+                placeholder="00000000-0000-0000-0000-000000000000"
+                onChange={(e) => setTenant(e.target.value)}
+              />
+            </Field>
 
-              <Field label="ID de l'application (client)" htmlFor="oauth-client">
-                <input
-                  id="oauth-client"
-                  className="input"
-                  value={clientId}
-                  disabled={!estAdmin}
-                  placeholder="00000000-0000-0000-0000-000000000000"
-                  onChange={(e) => setClientId(e.target.value)}
-                />
-              </Field>
+            <Field label="ID de l'application (client)" htmlFor="oauth-client">
+              <input
+                id="oauth-client"
+                className="input"
+                value={clientId}
+                disabled={!estAdmin}
+                placeholder="00000000-0000-0000-0000-000000000000"
+                onChange={(e) => setClientId(e.target.value)}
+              />
+            </Field>
 
-              <Field
-                label="Secret client"
-                htmlFor="oauth-secret"
-                hint={
-                  s.oauth_client_secret_defini
-                    ? 'Déjà défini. Laissez vide pour le conserver. Un secret Entra expire — notez sa date d’échéance quelque part.'
-                    : 'La « valeur » du secret, pas son identifiant. Elle n’est affichée qu’une fois par Entra ID.'
-                }
-              >
-                <input
-                  id="oauth-secret"
-                  type="password"
-                  className="input"
-                  value={clientSecret}
-                  disabled={!estAdmin}
-                  autoComplete="new-password"
-                  placeholder={s.oauth_client_secret_defini ? '•••••••• (inchangé)' : ''}
-                  onChange={(e) => setClientSecret(e.target.value)}
-                />
-              </Field>
-            </div>
+            <Field
+              label="Secret client"
+              htmlFor="oauth-secret"
+              hint={
+                s.oauth_client_secret_defini
+                  ? 'Déjà défini. Laissez vide pour le conserver. Un secret Entra expire — notez sa date d’échéance quelque part.'
+                  : 'La « valeur » du secret, pas son identifiant. Elle n’est affichée qu’une fois par Entra ID.'
+              }
+            >
+              <input
+                id="oauth-secret"
+                type="password"
+                className="input"
+                value={clientSecret}
+                disabled={!estAdmin}
+                autoComplete="new-password"
+                placeholder={s.oauth_client_secret_defini ? '•••••••• (inchangé)' : ''}
+                onChange={(e) => setClientSecret(e.target.value)}
+              />
+            </Field>
           </div>
-        )}
+        </div>
 
         <div className="mt-6 border-t border-ink-100 pt-5">
           <h2 className="text-sm font-semibold text-ink-900">Boîte de candidatures</h2>
@@ -453,11 +604,11 @@ export default function SettingsPage() {
 
             <Field
               label="Adresse de la boîte"
-              htmlFor="imap-user"
+              htmlFor="adresse-boite"
               hint="L'adresse dédiée au recrutement, celle qui figure dans les avis."
             >
               <input
-                id="imap-user"
+                id="adresse-boite"
                 type="email"
                 className="input"
                 value={adresse}
@@ -467,64 +618,13 @@ export default function SettingsPage() {
               />
             </Field>
 
-            {!graph && (
-              <>
-            <Field
-              label="Mot de passe"
-              htmlFor="imap-password"
-              hint={
-                s.imap_password_defini
-                  ? 'Déjà défini. Laissez vide pour le conserver ; saisissez-en un nouveau pour le remplacer.'
-                  : "Chez Gmail, ce n'est pas le mot de passe du compte mais un « mot de passe d'application » à créer dans le compte Google."
-              }
-            >
-              <input
-                id="imap-password"
-                type="password"
-                className="input"
-                value={motDePasse}
-                disabled={!estAdmin}
-                autoComplete="new-password"
-                placeholder={s.imap_password_defini ? '•••••••• (inchangé)' : ''}
-                onChange={(e) => setMotDePasse(e.target.value)}
-              />
-            </Field>
-
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
-                <Field label="Serveur IMAP" htmlFor="imap-host">
-                  <input
-                    id="imap-host"
-                    className="input"
-                    value={hote}
-                    disabled={!estAdmin}
-                    placeholder="imap.gmail.com"
-                    onChange={(e) => setHote(e.target.value)}
-                  />
-                </Field>
-              </div>
-              <Field label="Port" htmlFor="imap-port">
-                <input
-                  id="imap-port"
-                  type="number"
-                  className="input"
-                  value={port}
-                  disabled={!estAdmin}
-                  onChange={(e) => setPort(e.target.value)}
-                />
-              </Field>
-            </div>
-
-              </>
-            )}
-
             <Field
               label="Dossier à relever"
-              htmlFor="imap-folder"
-              hint="INBOX pour la boîte principale. Un libellé Gmail s'écrit tel quel."
+              htmlFor="dossier-boite"
+              hint="« inbox » pour la boîte de réception. Un autre dossier s'écrit sous son nom affiché dans Outlook."
             >
               <input
-                id="imap-folder"
+                id="dossier-boite"
                 className="input"
                 value={dossier}
                 disabled={!estAdmin}
@@ -558,8 +658,8 @@ export default function SettingsPage() {
           <h2 className="text-sm font-semibold text-ink-900">Envoi de courriels</h2>
           <p className="mt-1 text-xs text-ink-500">
             Pour écrire aux candidats — convocation, pièce manquante, réponse — et transmettre au
-            promoteur son accès à l'espace de suivi. Sans cette configuration, ces boutons
-            refusent l'envoi plutôt que de le perdre en silence.
+            promoteur son accès à l'espace de suivi. Les messages partent de la boîte Microsoft
+            365 et restent dans ses éléments envoyés.
           </p>
 
           <div className="mt-4 space-y-4">
@@ -573,89 +673,19 @@ export default function SettingsPage() {
 
             <Field
               label="Adresse d'expédition"
-              htmlFor="smtp-expediteur"
-              hint="Ce que les candidats verront en « De : ». À défaut, le compte d'envoi est utilisé."
+              htmlFor="adresse-expediteur"
+              hint="Ce que les candidats verront en « De : ». Laissée vide, c'est la boîte de candidatures qui écrit."
             >
               <input
-                id="smtp-expediteur"
+                id="adresse-expediteur"
                 type="email"
                 className="input"
                 value={expediteur}
                 disabled={!estAdmin}
-                placeholder="recrutement@kapiconsult.tg"
+                placeholder={adresse || 'recrutement@kapiconsult.tg'}
                 onChange={(e) => setExpediteur(e.target.value)}
               />
             </Field>
-
-            {!graph && (
-              <>
-            <Field label="Compte d'envoi" htmlFor="smtp-user">
-              <input
-                id="smtp-user"
-                type="email"
-                className="input"
-                value={smtpUser}
-                disabled={!estAdmin}
-                onChange={(e) => setSmtpUser(e.target.value)}
-              />
-            </Field>
-
-            <Field
-              label="Mot de passe"
-              htmlFor="smtp-password"
-              hint={
-                s.smtp_password_defini
-                  ? 'Déjà défini. Laissez vide pour le conserver.'
-                  : "Chez Gmail, un « mot de passe d'application », pas celui du compte."
-              }
-            >
-              <input
-                id="smtp-password"
-                type="password"
-                className="input"
-                value={smtpMotDePasse}
-                disabled={!estAdmin}
-                autoComplete="new-password"
-                placeholder={s.smtp_password_defini ? '•••••••• (inchangé)' : ''}
-                onChange={(e) => setSmtpMotDePasse(e.target.value)}
-              />
-            </Field>
-
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
-                <Field label="Serveur SMTP" htmlFor="smtp-host">
-                  <input
-                    id="smtp-host"
-                    className="input"
-                    value={smtpHote}
-                    disabled={!estAdmin}
-                    placeholder="smtp.gmail.com"
-                    onChange={(e) => setSmtpHote(e.target.value)}
-                  />
-                </Field>
-              </div>
-              <Field label="Port" htmlFor="smtp-port">
-                <input
-                  id="smtp-port"
-                  type="number"
-                  className="input"
-                  value={smtpPort}
-                  disabled={!estAdmin}
-                  onChange={(e) => setSmtpPort(e.target.value)}
-                />
-              </Field>
-            </div>
-
-            <Toggle
-              checked={smtpTls}
-              onChange={setSmtpTls}
-              disabled={!estAdmin}
-              label="Chiffrer la connexion (STARTTLS)"
-              hint="À laisser coché. Le port 465 chiffre dès l'ouverture et ignore ce réglage."
-            />
-
-              </>
-            )}
 
             <Field
               label="Adresse publique de l'application"
@@ -683,7 +713,7 @@ export default function SettingsPage() {
                 Tester l&apos;envoi
               </button>
               <span className="text-xs text-ink-500">
-                Ouvre une session sans rien expédier. Enregistrez d&apos;abord.
+                Vérifie l&apos;accès sans rien expédier. Enregistrez d&apos;abord.
               </span>
             </div>
 

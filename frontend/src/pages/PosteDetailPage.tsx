@@ -20,6 +20,7 @@ import { formatDate } from '@/lib/format'
 import { PUBLIC_URL } from '@/lib/config'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import ChoisirDestinataires from '@/components/ChoisirDestinataires'
+import TelechargerDossiers from '@/components/TelechargerDossiers'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
 import FichePosteEditeur from '@/components/FichePosteEditeur'
 import GrilleEntretienEditeur from '@/components/GrilleEntretienEditeur'
@@ -1313,6 +1314,8 @@ export default function PosteDetailPage() {
   const [choixPortee, setChoixPortee] = useState(false)
   // Quel document tableur exporter : le choix se fait avant, pas après.
   const [choixExport, setChoixExport] = useState(false)
+  // Plusieurs dossiers à emporter d'un coup — impression, clé USB.
+  const [dossiersOuverts, setDossiersOuverts] = useState(false)
   const [ficheOuverte, setFicheOuverte] = useState(false)
   // Ouverte par « Renommer » : le formulaire met alors l'intitulé sous le
   // curseur, plutôt que de laisser chercher le champ parmi vingt autres.
@@ -1484,6 +1487,15 @@ export default function PosteDetailPage() {
           >
             {exporterCv.isPending && <Spinner />}
             CV à en-tête (Word)
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={g.nombre_candidatures === 0}
+            title="Les fichiers reçus, un dossier par candidat, en une archive ZIP — pour imprimer ou copier sur une clé USB."
+            onClick={() => setDossiersOuverts(true)}
+          >
+            Télécharger les dossiers
           </button>
           <button
             type="button"
@@ -1764,6 +1776,21 @@ export default function PosteDetailPage() {
           onSupprime={(compteRendu) => {
             setErreur(null)
             setCompteRendu(compteRendu)
+          }}
+          onDeplace={(compteRendu) => {
+            setErreur(null)
+            setCompteRendu(compteRendu)
+          }}
+        />
+      )}
+
+      {dossiersOuverts && (
+        <TelechargerDossiers
+          posteId={posteId}
+          onClose={() => setDossiersOuverts(false)}
+          onTelecharge={(m) => {
+            setErreur(null)
+            setCompteRendu(m)
           }}
         />
       )}

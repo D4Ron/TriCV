@@ -209,7 +209,7 @@ def contenu() -> list:
     h.append(
         para(
             "Deux documents l'accompagnent. Le <b>guide de configuration de la boîte de "
-            "candidatures</b> détaille le paramétrage IMAP, qui est la partie la plus "
+            "candidatures</b> détaille l'accès Microsoft 365, qui est la partie la plus "
             "délicate ; il est cité au bon endroit. Le fichier "
             "<b>.env.example</b>, à la racine du dépôt, liste toutes les variables lues "
             "par l'application, chacune commentée."
@@ -406,8 +406,10 @@ def contenu() -> list:
     h.append(para("3. Le courriel", "section"))
     h.append(
         para(
-            "TriCV lit une boîte pour y récupérer les candidatures, et en écrit une pour "
-            "les convocations et les accès clients."
+            "TriCV lit la boîte Microsoft 365 de recrutement pour y récupérer les "
+            "candidatures, et écrit depuis elle les convocations et les accès clients — "
+            "par Microsoft Graph, seule voie retenue : IMAP et SMTP ne sont pas pris en "
+            "charge."
         )
     )
     h.append(
@@ -416,16 +418,16 @@ def contenu() -> list:
             "le reste de la configuration serveur — c'est le moment où l'on a déjà les "
             "identifiants en main et un accès à la machine. L'écran <b>Paramètres</b> "
             "reste disponible pour les corriger ensuite sans rouvrir cet accès : une "
-            "adresse de recrutement peut changer avec les campagnes, et un mot de passe "
-            "peut être révoqué. Ce qui est enregistré dans l'application <b>prime</b> sur "
+            "adresse de recrutement peut changer avec les campagnes, et un secret Entra "
+            "expire. Ce qui est enregistré dans l'application <b>prime</b> sur "
             "le fichier, qui ne sert alors plus qu'à amorcer une installation neuve."
         )
     )
 
-    h.append(para("3.1 — Réception (IMAP)", "etape"))
+    h.append(para("3.1 — Réception", "etape"))
     h.append(
         para(
-            "Le paramétrage complet, fournisseur par fournisseur, et la façon de vérifier "
+            "Le paramétrage complet, et la façon de vérifier "
             "que le relevé fonctionne, font l'objet d'un document séparé : "
             "<b>Guide-configuration-boite-candidatures.pdf</b>. Suivez-le avant de "
             "revenir ici."
@@ -433,61 +435,26 @@ def contenu() -> list:
     )
     h.extend(
         encadre(
-            "Boîte Microsoft : prévoyez un administrateur, et du délai",
-            "Une adresse Outlook ou Microsoft 365 ne s'ouvre plus avec un mot de passe — "
-            "Microsoft a supprimé l'authentification de base sur IMAP, POP et SMTP, y "
-            "compris les « mots de passe d'application ». Il faut déclarer TriCV dans "
-            "Entra ID et lui accorder l'accès à cette boîte, ce qui demande des droits "
-            "d'administrateur. Ce n'est pas long, mais cela dépend de quelqu'un d'autre : "
-            "à lancer en début d'installation, pas la veille de la mise en service. Le "
-            "guide de la boîte contient, à l'étape M4, une demande à transmettre telle "
-            "quelle à l'administrateur. Côté application, le chemin se choisit dans "
-            "<b>Paramètres → Courriel → Par où passe le courriel</b> : « Microsoft 365 "
-            "(Graph) » remplace alors les champs IMAP par les trois valeurs de "
-            "l'inscription Entra.",
+            "Prévoyez un administrateur Microsoft 365, et du délai",
+            "Il faut déclarer TriCV dans Entra ID et lui accorder l'accès à la boîte, ce "
+            "qui demande des droits d'administrateur. Ce n'est pas long, mais cela dépend "
+            "de quelqu'un d'autre : à lancer en début d'installation, pas la veille de la "
+            "mise en service. Le guide de la boîte contient, à l'étape M4, une demande à "
+            "transmettre telle quelle à l'administrateur ; dans l'application, une "
+            "fenêtre déroule la même marche à suivre à la première ouverture de "
+            "<b>Paramètres → Courriel</b>.",
         )
     )
 
-    h.append(para("3.2 — Envoi (SMTP)", "etape"))
+    h.append(para("3.2 — Envoi", "etape"))
     h.append(
         para(
-            "Dans <b>Paramètres → Courriel → Envoi de courriels</b>, renseignez le serveur, le "
-            "compte et le mot de passe, puis l'adresse d'expédition — celle que les "
-            "candidats verront. Le bouton <b>Tester l'envoi</b> ouvre une session sans "
-            "rien expédier : une erreur d'identifiants doit se découvrir là, et non au "
+            "Dans <b>Paramètres → Courriel → Envoi de courriels</b>, cochez l'envoi et, si "
+            "les candidats doivent voir une autre adresse que la boîte, renseignez "
+            "l'adresse d'expédition. L'accès est le même que pour la réception : aucun "
+            "serveur ni mot de passe à saisir. Le bouton <b>Tester l'envoi</b> vérifie "
+            "l'accès sans rien expédier : une erreur doit se découvrir là, et non au "
             "moment où trente convocations partent."
-        )
-    )
-    h.append(
-        tableau(
-            ["Fournisseur", "Serveur", "Port", "Mot de passe"],
-            [
-                [
-                    "Gmail / Google Workspace",
-                    "smtp.gmail.com",
-                    "587",
-                    "Un <b>mot de passe d'application</b>, jamais celui du compte. "
-                    "Il se crée dans Compte Google › Sécurité, après avoir activé la "
-                    "validation en deux étapes.",
-                ],
-                [
-                    "<b>Microsoft 365 / Outlook</b>",
-                    "smtp.office365.com",
-                    "587",
-                    "<b>Aucun mot de passe ne fonctionne</b>, pas même un « mot de passe "
-                    "d'application » : Microsoft a retiré l'authentification de base de "
-                    "SMTP comme d'IMAP. Renseignez l'accès OAuth (tenant, application, "
-                    "secret) — le même que pour la réception.",
-                ],
-                [
-                    "Hébergeur du domaine",
-                    "Fourni par l'hébergeur",
-                    "587 ou 465",
-                    "Le mot de passe de la boîte. Le port 465 chiffre dès l'ouverture "
-                    "et ignore le réglage STARTTLS.",
-                ],
-            ],
-            [38 * mm, 38 * mm, 15 * mm, 74 * mm],
         )
     )
     h.append(Spacer(1, 8))
@@ -1012,10 +979,9 @@ _ENV_RESEAU = [
 ]
 
 _ENV_COURRIEL = [
-    ("IMAP_HOST, IMAP_PORT,<br/>IMAP_USER, IMAP_PASSWORD,<br/>IMAP_FOLDER", "La boîte relevée.", "<b>Amorçage seulement.</b> Le réglage courant vit en base et se change dans Paramètres. Éditer ce fichier après le premier démarrage n'a plus d'effet."),
-    ("SMTP_HOST, SMTP_PORT,<br/>SMTP_USER, SMTP_PASSWORD,<br/>SMTP_TLS, SMTP_EXPEDITEUR", "L'envoi.", "Même remarque. Chez Microsoft, laisser SMTP_PASSWORD vide : aucun mot de passe n'y est accepté."),
-    ("OAUTH_TENANT,<br/>OAUTH_CLIENT_ID,<br/>OAUTH_CLIENT_SECRET", "L'accès à une boîte Microsoft — réception <i>et</i> envoi. Microsoft a supprimé le mot de passe d'IMAP et de SMTP : sans ces valeurs, une boîte Outlook ne s'ouvre pas.", "<b>À poser au déploiement</b>, contrairement aux deux lignes ci-dessus : ces valeurs ne se révoquent pas d'elles-mêmes. Fournies par l'administrateur Entra — guide de la boîte, étape M4. L'écran Paramètres reste là pour les corriger, et ce qui y est saisi prime."),
-    ("OAUTH_REFRESH_TOKEN", "Le même accès, pour une adresse <font face='Courier'>outlook.com</font> personnelle.", "Seulement dans ce cas : Microsoft n'y autorise pas le flux application. Inutile avec une adresse Microsoft 365, où le secret suffit."),
+    ("BOITE_RECRUTEMENT", "L'adresse de la boîte Microsoft 365 relevée.", "<b>Amorçage seulement.</b> Le réglage courant vit en base et se change dans Paramètres. Éditer ce fichier après le premier démarrage n'a plus d'effet. L'ancien nom IMAP_USER est encore lu."),
+    ("EXPEDITEUR_COURRIEL", "L'adresse « De : », si elle diffère de la boîte.", "Même remarque. L'ancien nom SMTP_EXPEDITEUR est encore lu."),
+    ("OAUTH_TENANT,<br/>OAUTH_CLIENT_ID,<br/>OAUTH_CLIENT_SECRET", "L'accès à la boîte Microsoft 365 — réception <i>et</i> envoi, par Graph.", "Fournies par l'administrateur Entra — guide de la boîte, étape M4. L'écran Paramètres permet de les corriger sans accès à la machine, et ce qui y est saisi prime."),
 ]
 
 # Les réglages de l'écran Paramètres. Ils priment sur le fichier.
@@ -1024,10 +990,10 @@ _PARAMETRES = [
     ("Inscription libre / Code", "Création de comptes depuis la page de connexion.", "Décoché une fois l'équipe créée."),
     ("Candidatures spontanées", "Ouvre le dépôt hors avis, qui alimente le vivier.", "Au choix du cabinet."),
     ("Relever la boîte", "Active le relevé et fait apparaître les boutons sur les postes.", "Coché une fois la boîte réglée."),
-    ("Adresse, serveur, port, dossier", "Les coordonnées IMAP.", "<font face='Courier'>outlook.office365.com</font> : 993, INBOX."),
-    ("Mot de passe (IMAP)", "Le secret de la boîte.", "<b>Vide pour une boîte Microsoft</b>, qui n'en accepte aucun. Un mot de passe d'application chez Google."),
-    ("Tenant, ID d'application, Secret", "L'accès OAuth Microsoft, pour la réception <i>et</i> l'envoi.", "Normalement déjà posés dans <font face='Courier'>.env</font> au déploiement (A.7). À ne remplir ici que pour corriger, sans rouvrir un accès à la machine."),
-    ("Envoi : serveur, port, compte,<br/>mot de passe, TLS, expéditeur", "La session d'envoi et l'adresse « De : ».", "L'adresse d'expédition est celle que les candidats voient et à laquelle ils répondront."),
+    ("Adresse de la boîte, dossier", "La boîte relevée.", "L'adresse de recrutement ; « inbox » pour la boîte de réception."),
+    ("Tenant, ID d'application, Secret", "L'accès Microsoft 365, pour la réception <i>et</i> l'envoi.", "Les trois valeurs de l'inscription Entra. Une fenêtre donne la marche à suivre."),
+    ("Envoyer les courriels, adresse d'expédition", "L'envoi depuis la boîte, et l'adresse « De : ».", "L'adresse d'expédition est celle que les candidats voient et à laquelle ils répondront ; vide, c'est la boîte."),
+    ("Clé de l'API Gemini (Général)", "La clé du modèle d'IA.", "Prime sur GEMINI_API_KEY du fichier et sert sans redémarrage."),
     ("Adresse publique de l'application", "Bâtit les liens des courriels.", "L'adresse par laquelle un candidat joint l'application depuis l'extérieur."),
 ]
 
@@ -1080,8 +1046,8 @@ def _annexe_configuration() -> list:
     h.extend(
         encadre(
             "Les secrets ne se réaffichent jamais",
-            "Mot de passe IMAP, mot de passe d'envoi, secret Microsoft, jeton de "
-            "rafraîchissement : une fois enregistrés, ils ne ressortent plus du serveur. Le "
+            "Secret Microsoft, clé du modèle : une fois enregistrés, ils ne ressortent "
+            "plus du serveur. Le "
             "champ reste vide et indique « déjà défini ». Laisser un champ de secret vide "
             "veut donc dire « inchangé », et non « effacé » — sans quoi ouvrir puis "
             "enregistrer l'écran des paramètres déconnecterait la boîte.",

@@ -8,8 +8,8 @@ import { Callout, CopyField, Field, Modal } from '@/components/ui'
  * n'ouvre en configurant. L'administrateur voyait trois champs vides et un
  * message expliquant que son mot de passe ne marcherait pas.
  *
- * Cette fenêtre s'ouvre d'elle-même au moment où l'on choisit Microsoft 365 :
- * c'est là qu'on en a besoin, pas dans un guide à retrouver. Elle donne les
+ * Cette fenêtre s'ouvre d'elle-même la première fois qu'un administrateur
+ * arrive sur l'onglet Courriel sans accès réglé : c'est là qu'on en a besoin, pas dans un guide à retrouver. Elle donne les
  * liens à ouvrir, les champs à remplir, et surtout **le lien de consentement**,
  * fabriqué à mesure qu'on tape — c'est le seul geste de toute l'opération qui
  * tient vraiment en un clic, et il était jusqu'ici décrit en prose.

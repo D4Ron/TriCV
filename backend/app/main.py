@@ -14,6 +14,7 @@ from app.api import (
     candidates,
     candidatures,
     collaboration,
+    dossiers,
     exports,
     fiches,
     mandats,
@@ -96,6 +97,16 @@ async def lifespan(app: FastAPI):
             logger.info("retention sweep removed %d expired candidate record(s)", deleted)
     except Exception:
         logger.exception("retention sweep failed at startup")
+    # Le modèle d'IA réglé dans Paramètres prime sur le .env ; il vit en
+    # base, et doit être remis en service à chaque démarrage.
+    try:
+        from app.db import SessionLocal
+        from app.services import parametres
+
+        async with SessionLocal() as db:
+            parametres.appliquer_ia(await parametres.lire(db))
+    except Exception:
+        logger.exception("modèle d'IA réglé à l'écran non chargé au démarrage")
     yield
 
 
@@ -201,6 +212,7 @@ for router in (
     fiches.router,
     candidatures.router,
     collaboration.router,
+    dossiers.router,
     rapports.router,
     public_avis.router,
     # L'espace du promoteur : porte separee, jeton de type distinct.

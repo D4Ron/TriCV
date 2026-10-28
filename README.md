@@ -419,28 +419,16 @@ correct, and exporting again.
 
 ## The application mailbox
 
-Configured in the app, under **Paramètres**, with a **Tester la connexion** button. No restart, no
-file access. The values in `.env` only seed a fresh install.
+Configured in the app, under **Paramètres › Courriel**, with a **Tester la connexion** button. No
+restart, no file access. The values in `.env` only seed a fresh install.
 
-**Two routes, and a setting picks one.** A fresh install starts on **Microsoft 365**, which is what
-the firm runs; setting `IMAP_HOST` or `SMTP_HOST` in `.env` keeps an existing install on IMAP
-instead, so nobody's working mailbox flips on upgrade.
+**Microsoft 365 only.** The mailbox is read, and mail is sent, over **Microsoft Graph**. The IMAP
+and SMTP routes have been removed: the firm runs Microsoft 365, and Microsoft accepts no password on
+those protocols anyway. The first time an administrator opens the Courriel tab with nothing set, a
+step-by-step window opens and builds the admin-consent link as the values are typed.
 
-> The API and the mail layer support both routes today. The **settings screen still shows the IMAP
-> fields only** — choosing the provider and entering the Entra credentials from the interface is the
-> frontend half of this change, and it is not built yet. Until it is, a Microsoft 365 install is
-> configured through `.env` (`OAUTH_*`).
-
-| | |
-|---|---|
-| **Microsoft 365** *(default)* | Reads and sends over **Microsoft Graph**. Nothing to set on the IMAP/SMTP side — the same tenant, client ID and secret serve both directions |
-| **Autre fournisseur** | Classic IMAP + SMTP, for a client whose mailbox is elsewhere |
-
-Graph rather than IMAP-over-XOAUTH2 for Microsoft, because of what each costs to switch on: Graph
-needs an app registration, two **application** permissions (`Mail.ReadWrite`, `Mail.Send`) and an
-admin consent. The IMAP route needs all that *plus* re-enabling SMTP AUTH on the tenant and creating
-a service principal bound to the mailbox in Exchange PowerShell. For a firm that already has Entra
-ID, only the first fits in one meeting.
+Graph needs an app registration, two **application** permissions (`Mail.ReadWrite`, `Mail.Send`)
+and an admin consent. The same tenant, client ID and secret serve both reading and sending.
 
 **Restrict the app to the recruitment mailbox.** Those two permissions are tenant-wide by default —
 they reach every mailbox in the organisation. An Exchange *Application Access Policy* scopes them to
@@ -450,16 +438,14 @@ Secrets are write-only: they go to the server and never come back — the API re
 set, never its value, and the audit log records which settings changed, not their contents. Saving
 with the field left blank keeps the existing secret.
 
-**Gmail**, on the *autre fournisseur* route, needs 2-Step Verification and an **App password**
-(Google Account → Security → App passwords); the account password is rejected over IMAP, and IMAP
-has to be enabled in Gmail's settings. App passwords are displayed in groups of four — the spaces
-are stripped automatically.
+**The AI key** follows the same rule. It can be pasted under **Paramètres › Général**, where it takes
+precedence over `GEMINI_API_KEY` in `.env` and is used immediately, without a restart.
 
 ### How a message becomes an application
 
 In order, stopping at the first failure:
 
-1. **Unread messages** are fetched with `BODY.PEEK` — nothing is marked read until it is
+1. **Unread messages** are fetched as raw MIME — nothing is marked read until it is
    successfully processed, so a crash mid-fetch loses nothing.
 2. **Already seen?** Matched on `Message-ID`. Re-running creates no duplicates.
 3. **Attached to a poste** by the bracketed reference in the **subject** — `[AVIS-2026-014]` — which
@@ -481,6 +467,20 @@ unrecognised attachment name can be flagged rather than assumed to be a CV.
 
 **Aperçu** shows exactly what a fetch would create, without writing anything. Use it first on a real
 mailbox.
+
+**A message that names no poste** becomes a spontaneous application. The **Vivier** page lists these
+under *Candidatures sans poste*, with their files one click away, and **Rattacher** files each one
+under the poste it was meant for — where it is scored like any other. The same action, *Changer de
+poste* in a candidate's panel, moves a dossier filed under the wrong poste. Both are refused when the
+person already has a dossier under the target poste, or when interview marks exist for the current
+one.
+
+### Taking dossiers away
+
+**Télécharger les dossiers**, on a poste, builds a ZIP of the files **as received** — one folder per
+candidate, alphabetical, with a *Sommaire* spreadsheet — for printing or a USB drive. Pick a group
+(all, préqualifiés, à vérifier, sous le seuil, éliminés), untick anyone not wanted. Purged files are
+listed in the summary instead of silently missing. The export is written to the audit log.
 
 ---
 
@@ -604,6 +604,14 @@ There is no upload size limit to configure. Authenticated uploads are unlimited;
 a fixed anti-abuse ceiling in code. Storage is controlled by purging archived mandates.
 
 ### Choosing a provider
+
+**The provider can be chosen in the app**, under *Paramètres › Général › Modèle d'IA*: Gemini,
+Anthropic, any OpenAI-compatible service, or a local Ollama, with its key. What is set there takes
+precedence over `.env` — provider, key, model, and the `LLM_PROSE_PROVIDER` writer, which no longer
+applies once the screen picks a provider. A key pasted with no provider chosen makes its own
+provider the primary one. `LLM_FALLBACK` still applies, only when the chosen provider fails.
+*Revenir au réglage du serveur* hands control back to `.env`.
+
 
 The figure that decides this is **not** requests per day. TriCV sends up to 24,000 characters of
 CV per *dépouillement* — roughly 7,000 tokens — so a free tier with a generous request count and a

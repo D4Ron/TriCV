@@ -763,7 +763,6 @@ export const recrutementApi = {
       releve_desactive: boolean
       /** Ce qu'il reste à renseigner, en toutes lettres. Vide si rien ne manque. */
       manquants: string[]
-      fournisseur: 'imap' | 'microsoft365'
     }>('/courriel/etat'),
   testerCourriel: () =>
     request<{ boite: string; dossier: string; messages: number; non_lus: number }>(
@@ -1112,6 +1111,80 @@ export function signaler(
   }
 }
 
+// --- dossiers hors de la grille ------------------------------------------
+
+export interface LigneDossier {
+  candidature_id: string
+  nom: string
+  prenom: string
+  statut: string
+  note: string
+  pieces: number
+  pieces_disponibles: number
+}
+
+export interface CandidatureSansPoste {
+  id: string
+  nom: string
+  prenom: string
+  email: string | null
+  recue_le: string
+  source: string
+  objet: string | null
+  pieces: Array<{ id: string; nom_fichier: string; disponible: boolean }>
+}
+
+export interface PosteActif {
+  id: string
+  intitule: string
+  mandat: string
+  client: string
+}
+
+export const dossiersApi = {
+  duPoste: (posteId: string, portee: PorteeEnvoi) =>
+    request<LigneDossier[]>(`/postes/${posteId}/dossiers?portee=${portee}`),
+  /** Une archive : le jeton ne passe pas dans un lien, on la récupère puis
+   *  on la remet au navigateur. */
+  telechargerArchive: async (posteId: string, ids: string[]): Promise<void> => {
+    const response = await fetch(`${BASE}/postes/${posteId}/dossiers.zip`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}`,
+      },
+      body: JSON.stringify({ candidature_ids: ids }),
+    })
+    if (!response.ok) {
+      const corps = await response.json().catch(() => null)
+      throw new ApiError(
+        response.status,
+        (corps as { detail?: string } | null)?.detail ?? 'Le téléchargement a échoué',
+      )
+    }
+    const disposition = response.headers.get('content-disposition') ?? ''
+    const etoile = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
+    const nom = etoile
+      ? decodeURIComponent(etoile)
+      : (/filename="?([^";]+)"?/.exec(disposition)?.[1] ?? 'dossiers.zip')
+    const url = URL.createObjectURL(await response.blob())
+    const lien = document.createElement('a')
+    lien.href = url
+    lien.download = nom
+    document.body.appendChild(lien)
+    lien.click()
+    lien.remove()
+    URL.revokeObjectURL(url)
+  },
+  sansPoste: () => request<CandidatureSansPoste[]>('/dossiers/sans-poste'),
+  postesActifs: () => request<PosteActif[]>('/postes-actifs'),
+  rattacher: (candidatureId: string, posteId: string) =>
+    request<Candidature>(`/candidatures/${candidatureId}/rattacher`, {
+      method: 'POST',
+      body: { poste_id: posteId },
+    }),
+}
+
 // --- misc -------------------------------------------------------------------
 
 export const settingsApi = {
@@ -1121,28 +1194,29 @@ export const settingsApi = {
     allow_self_registration?: boolean
     candidatures_spontanees?: boolean
     courriel_actif?: boolean
-    imap_host?: string
-    imap_port?: number
-    imap_user?: string
-    /** Omis ou vide = inchangé. Le serveur ne renvoie jamais le secret. */
-    imap_password?: string
-    imap_folder?: string
-    smtp_actif?: boolean
-    smtp_host?: string
-    smtp_port?: number
-    smtp_user?: string
-    smtp_password?: string
-    smtp_tls?: boolean
-    smtp_expediteur?: string
+    adresse_boite?: string
+    dossier_boite?: string
+    envoi_actif?: boolean
+    adresse_expediteur?: string
     url_publique?: string
-    fournisseur_courriel?: 'imap' | 'microsoft365'
     oauth_tenant?: string
     oauth_client_id?: string
-    /** Omis ou vide = inchangé, comme les mots de passe. */
+    /** Omis ou vide = inchangé. Le serveur ne renvoie jamais le secret. */
     oauth_client_secret?: string
+    /** Vide : le fichier du serveur décide. */
+    llm_provider?: '' | 'gemini' | 'anthropic' | 'openai' | 'ollama'
+    llm_model?: string
+    /** Les clés : omises ou vides = inchangées, comme le secret. */
+    gemini_api_key?: string
+    anthropic_api_key?: string
+    llm_api_key?: string
+    llm_base_url?: string
+    ollama_base_url?: string
     contact_candidats?: string
   }) => request<DeploymentSettings>('/settings', { method: 'PATCH', body: payload }),
-  /** Ouvre une session SMTP sans rien envoyer, pour valider la configuration. */
+  /** Oublie le modèle d'IA réglé à l'écran : le fichier du serveur reprend la main. */
+  revenirIaServeur: () => request<DeploymentSettings>('/settings/ia', { method: 'DELETE' }),
+  /** Vérifie l'accès à la boîte d'envoi sans rien envoyer. */
   testerEnvoi: () => request<{ ok: boolean; expediteur: string }>('/messagerie/test', { method: 'POST' }),
 }
 

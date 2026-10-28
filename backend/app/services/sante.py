@@ -129,7 +129,7 @@ def _masquer(texte: str) -> str:
     return re.sub(r"\b[A-Za-z0-9_\-]{32,}\b", "…", texte)[:300]
 
 
-def _verifier_ia() -> Verification:
+def _verifier_ia(reglages: parametres.Reglages) -> Verification:
     from app.llm.factory import build_chain
 
     nom = settings.llm_provider or "aucun"
@@ -141,16 +141,24 @@ def _verifier_ia() -> Verification:
             "Modèle d'IA",
             A_REGLER,
             f"Le fournisseur « {nom} » ne peut pas être utilisé : {_masquer(str(exc))} "
-            "Les avis et les rapports arrivent en squelette, à rédiger à la main.",
-            "serveur",
+            "Les avis et les rapports arrivent en squelette, à rédiger à la main. "
+            "Choisissez le fournisseur et collez sa clé dans Paramètres › Général.",
+            "general",
         )
+    cle = parametres.CLE_DU_FOURNISSEUR.get(nom)
+    source = {
+        "ecran": "clé collée dans Paramètres",
+        "serveur": "clé du fichier de configuration du serveur",
+    }.get(parametres.source_cle(reglages, cle) if cle else "", "")
+    if parametres.fournisseur_ecran(reglages):
+        source = "choisi dans Paramètres" + (f", {source}" if source else "")
     return Verification(
         "ia",
         "Modèle d'IA",
         OK,
-        f"Fournisseur « {nom} » configuré. Seul un essai réel dit si la clé est "
-        "acceptée — bouton « Essayer ».",
-        "serveur",
+        f"Fournisseur « {nom} » configuré{f' ({source})' if source else ''}. Seul un "
+        "essai réel dit si la clé est acceptée — bouton « Essayer ».",
+        "general",
     )
 
 
@@ -189,7 +197,7 @@ async def verifications(db: AsyncSession) -> list[Verification]:
     await db.execute(select(1))
     resultats.append(Verification("base", "Base de données", OK, "Elle répond."))
 
-    resultats.append(_verifier_ia())
+    resultats.append(_verifier_ia(reglages))
 
     # Le relevé et l'envoi du courriel.
     if reglages.courriel_utilisable:
@@ -234,7 +242,7 @@ async def verifications(db: AsyncSession) -> list[Verification]:
     else:
         raison = (
             "l'envoi est désactivé"
-            if not reglages.smtp_actif
+            if not reglages.envoi_actif
             else "la configuration est incomplète"
         )
         resultats.append(
