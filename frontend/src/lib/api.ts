@@ -982,6 +982,136 @@ export const fichesApi = {
   },
 }
 
+// --- état de l'application --------------------------------------------------
+
+export type EtatVerification = 'ok' | 'info' | 'a_verifier' | 'a_regler'
+
+export interface Verification {
+  code: string
+  libelle: string
+  etat: EtatVerification
+  detail: string
+  /** Où le régler : un onglet des paramètres, ou « serveur » hors de l'application. */
+  ou: string
+}
+
+export interface JourFrequentation {
+  jour: string
+  visites: number
+  candidatures: number
+  refus_taille: number
+  echecs: number
+}
+
+export interface PosteFrequentation {
+  poste_id: string
+  intitule: string
+  visites: number
+  candidatures: number
+  refus_taille: number
+}
+
+export interface EtatApplication {
+  verifications: Verification[]
+  frequentation: {
+    debut: string
+    jours: JourFrequentation[]
+    totaux: { visites: number; candidatures: number; refus_taille: number; echecs: number }
+    par_poste: PosteFrequentation[]
+  }
+}
+
+export const santeApi = {
+  etat: () => request<EtatApplication>('/sante'),
+
+  /** Un appel réel au modèle : seul moyen de savoir si la clé est acceptée. */
+  testerIa: () =>
+    request<{ ok: boolean; detail: string; secondes: number }>('/sante/ia/tester', {
+      method: 'POST',
+    }),
+
+  /**
+   * Envoie `octets` à une sonde qui les jette, et dit si le serveur frontal les
+   * a laissés passer.
+   *
+   * Le formulaire de candidature n'est pas touché : aucun dossier n'est créé. Un
+   * 413 veut dire que le frontal refuse cette taille — et donc les candidats.
+   */
+  sonderDepot: async (
+    octets: number,
+  ): Promise<{ passe: boolean; statut: number; secondes: number }> => {
+    const debut = performance.now()
+    const response = await fetch(`${BASE}/sante/sonde-depot`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: new Uint8Array(octets),
+    })
+    return {
+      passe: response.ok,
+      statut: response.status,
+      secondes: Math.round((performance.now() - debut) / 100) / 10,
+    }
+  },
+}
+
+/**
+ * Ce qu'un échec de dépôt dit du site — ou null s'il ne dit rien de lui.
+ *
+ * Seuls deux cas se comptent. Le 413 : le serveur frontal a refusé l'envoi, et
+ * l'application ne l'a jamais vu. Les pannes : réseau coupé, délai dépassé,
+ * erreur serveur. Un refus motivé de l'application — pièce manquante, format,
+ * doublon — est une réponse au candidat, pas une panne du site.
+ */
+export function classerEchec(caught: unknown): 'depot_refuse_taille' | 'depot_echoue' | null {
+  if (caught instanceof ApiError) {
+    if (caught.status === 413) return 'depot_refuse_taille'
+    return caught.status >= 500 ? 'depot_echoue' : null
+  }
+  return 'depot_echoue'
+}
+
+/**
+ * Signale au serveur ce qu'il ne voit pas : une visite, un dépôt refusé.
+ *
+ * Une fois par page et par onglet, pour qu'un rafraîchissement ne compte pas
+ * double. Ne lève jamais : une page publique ne doit pas échouer parce qu'un
+ * compteur n'a pas répondu. Rien n'est envoyé d'autre que l'événement et
+ * l'avis concerné.
+ */
+export function signaler(
+  evenement:
+    | 'visite_postes'
+    | 'visite_avis'
+    | 'visite_aide'
+    | 'depot_refuse_taille'
+    | 'depot_echoue',
+  cle = '',
+  { unique = true }: { unique?: boolean } = {},
+): void {
+  if (unique) {
+    const marque = `tricv-vu:${evenement}:${cle}`
+    try {
+      if (sessionStorage.getItem(marque)) return
+      sessionStorage.setItem(marque, '1')
+    } catch {
+      /* stockage indisponible (navigation privée) : on compte quand même */
+    }
+  }
+  try {
+    void fetch(`${BASE}/public/evenement`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ evenement, cle }),
+      keepalive: true,
+    }).catch(() => undefined)
+  } catch {
+    /* jamais bloquant */
+  }
+}
+
 // --- misc -------------------------------------------------------------------
 
 export const settingsApi = {

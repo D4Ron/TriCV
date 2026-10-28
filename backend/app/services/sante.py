@@ -303,9 +303,15 @@ async def verifications(db: AsyncSession) -> list[Verification]:
     ]
     echus = len(publies) - len(ouverts)
     if ouverts:
-        detail = f"{len(ouverts)} avis accepte(nt) des candidatures."
-        if echus:
-            detail += f" {echus} autre(s), publié(s), ont passé leur date de clôture."
+        detail = (
+            "1 avis accepte des candidatures."
+            if len(ouverts) == 1
+            else f"{len(ouverts)} avis acceptent des candidatures."
+        )
+        if echus == 1:
+            detail += " Un autre, toujours publié, a passé sa date de clôture."
+        elif echus:
+            detail += f" {echus} autres, toujours publiés, ont passé leur date de clôture."
         resultats.append(Verification("avis", "Avis en ligne", OK, detail))
     else:
         resultats.append(

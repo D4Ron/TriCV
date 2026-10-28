@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { avisPublicApi } from '@/lib/api'
+import { avisPublicApi, classerEchec, signaler } from '@/lib/api'
 import { Marque } from '@/components/Marque'
 import PiedPublic, { EncartProbleme } from '@/components/PiedPublic'
 import { Callout, Field, PageLoader, Spinner } from '@/components/ui'
@@ -26,6 +26,11 @@ export default function ApplyPage() {
     queryFn: () => avisPublicApi.detail(publicKey),
     retry: false,
   })
+  // Une visite comptée seulement si l'avis existe : un lien mort n'est pas
+  // une visite de poste.
+  useEffect(() => {
+    if (avis.data) signaler('visite_avis', publicKey)
+  }, [avis.data, publicKey])
 
   const [nom, setNom] = useState('')
   const [prenom, setPrenom] = useState('')
@@ -197,6 +202,10 @@ export default function ApplyPage() {
       })
       setTermine(true)
     } catch (caught) {
+      // Le serveur ne voit jamais un envoi refusé par le frontal : seul ce
+      // navigateur peut le dire, et l'onglet « État » le montrera.
+      const echec = classerEchec(caught)
+      if (echec) signaler(echec, publicKey, { unique: false })
       // Un dossier refusé n'est pas un dossier perdu : le candidat a tout
       // saisi, il lui manque une issue. On lui donne la raison, puis à qui
       // écrire — sans quoi il referme l'onglet, et le cabinet ne saura jamais

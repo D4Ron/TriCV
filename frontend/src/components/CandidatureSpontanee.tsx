@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ACCEPT_DEPOT, refusHorsPdf } from '@/lib/pieces'
-import { avisPublicApi } from '@/lib/api'
+import { avisPublicApi, classerEchec, signaler } from '@/lib/api'
 import { Callout, Field, Spinner } from '@/components/ui'
 import SaisieParcoursDeclare, {
   PARCOURS_VIDE,
@@ -75,6 +75,8 @@ export default function CandidatureSpontanee() {
       })
       setTermine(true)
     } catch (caught) {
+      const echec = classerEchec(caught)
+      if (echec) signaler(echec, '', { unique: false })
       setErreurEnvoi(caught instanceof Error ? caught.message : 'Une erreur est survenue')
     } finally {
       setEnvoi(false)

@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { avisPublicApi } from '@/lib/api'
+import { avisPublicApi, signaler } from '@/lib/api'
 import { Marque } from '@/components/Marque'
 import PiedPublic from '@/components/PiedPublic'
 
@@ -127,6 +127,7 @@ const QUESTIONS: Question[] = [
 
 export default function AidePage() {
   const [ouverte, setOuverte] = useState<number | null>(0)
+  useEffect(() => signaler('visite_aide'), [])
   const contact = useQuery({
     queryKey: ['aide-publique'],
     queryFn: avisPublicApi.aide,

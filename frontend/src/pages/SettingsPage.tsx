@@ -5,6 +5,7 @@ import { useAuthStore } from '@/store/auth'
 import { Callout, ErrorState, Field, PageLoader, Spinner, Toggle } from '@/components/ui'
 import PanneauUtilisateurs from '@/components/PanneauUtilisateurs'
 import AssistantMicrosoft365 from '@/components/AssistantMicrosoft365'
+import EtatApplication from '@/components/EtatApplication'
 
 /**
  * Paramètres du cabinet.
@@ -56,7 +57,12 @@ function Choix({
   )
 }
 
-const ONGLETS: Array<['general' | 'courriel' | 'comptes', string]> = [
+type Onglet = 'etat' | 'general' | 'courriel' | 'comptes'
+
+// « État » d'abord : c'est ce qu'un administrateur vient vérifier, et ce
+// qui dit vers quel autre onglet aller.
+const ONGLETS: Array<[Onglet, string]> = [
+  ['etat', 'État'],
   ['general', 'Général'],
   ['courriel', 'Courriel'],
   ['comptes', 'Utilisateurs'],
@@ -108,7 +114,7 @@ export default function SettingsPage() {
 
   const [contactCandidats, setContactCandidats] = useState('')
 
-  const [onglet, setOnglet] = useState<'general' | 'courriel' | 'comptes'>('general')
+  const [onglet, setOnglet] = useState<Onglet>(estAdmin ? 'etat' : 'general')
   // L'assistant s'ouvre au moment où l'on bascule sur Microsoft : c'est là
   // qu'on a besoin de la marche à suivre, pas dans un guide à retrouver.
   const [assistant, setAssistant] = useState(false)
@@ -245,7 +251,7 @@ export default function SettingsPage() {
           reprises, et les comptes s'ouvrent quand quelqu'un arrive. Rien ne
           gagnait à les empiler. */}
       <div className="mt-5 flex gap-1 border-b border-ink-200">
-        {ONGLETS.filter(([cle]) => cle !== 'comptes' || estAdmin).map(([cle, libelle]) => (
+        {ONGLETS.filter(([cle]) => (cle !== 'comptes' && cle !== 'etat') || estAdmin).map(([cle, libelle]) => (
           <button
             key={cle}
             type="button"
@@ -274,13 +280,21 @@ export default function SettingsPage() {
         />
       )}
 
+      {onglet === 'etat' && estAdmin && (
+        <div className="mt-5">
+          <EtatApplication onAller={setOnglet} />
+        </div>
+      )}
+
       {onglet === 'comptes' && (
         <div className="mt-5">
           <PanneauUtilisateurs />
         </div>
       )}
 
-      <section className={`card mt-5 p-5 ${onglet === 'comptes' ? 'hidden' : ''}`}>
+      <section
+        className={`card mt-5 p-5 ${onglet === 'comptes' || onglet === 'etat' ? 'hidden' : ''}`}
+      >
         <div className={onglet === 'general' ? '' : 'hidden'}>
         <h2 className="text-sm font-semibold text-ink-900">Pratique de recrutement</h2>
         <p className="mt-1 text-xs text-ink-500">

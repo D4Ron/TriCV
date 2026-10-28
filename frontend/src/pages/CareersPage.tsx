@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { avisPublicApi } from '@/lib/api'
+import { useEffect } from 'react'
+import { avisPublicApi, signaler } from '@/lib/api'
 import CandidatureSpontanee from '@/components/CandidatureSpontanee'
 import { Marque } from '@/components/Marque'
 import PiedPublic from '@/components/PiedPublic'
@@ -21,6 +22,7 @@ const LIBELLE_TYPE: Record<string, string> = {
  */
 export default function CareersPage() {
   const avis = useQuery({ queryKey: ['avis-ouverts'], queryFn: avisPublicApi.ouverts })
+  useEffect(() => signaler('visite_postes'), [])
 
   return (
     <div className="min-h-screen bg-ink-50">
