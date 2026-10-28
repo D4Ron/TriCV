@@ -41,7 +41,7 @@ PLAFOND_ABSOLU_MO = 100
 
 
 def valider_octets(
-    data: bytes, filename: str, max_mb: int | None = None
+    data: bytes, filename: str, max_mb: int | None = None, pdf_seulement: bool = False
 ) -> AcceptedFile:
     """Le contrôle proprement dit, sur un contenu déjà lu.
 
@@ -67,6 +67,9 @@ def valider_octets(
             "correspond à aucun de ces formats."
         )
 
+    if pdf_seulement and mime_type != extraction.PDF_MIME:
+        raise RejectedUpload(_refus_hors_pdf(nom, mime_type))
+
     return AcceptedFile(
         data=data,
         mime_type=mime_type,
@@ -75,7 +78,29 @@ def valider_octets(
     )
 
 
-async def validate(file: UploadFile, max_mb: int | None = None) -> AcceptedFile:
+def _refus_hors_pdf(nom: str, mime_type: str) -> str:
+    """Le refus d'un document Word, avec la manière d'en faire un PDF.
+
+    Le format se reconnaît au contenu, pas à l'extension : un « .pdf » qui est
+    en réalité un Word renommé est refusé aussi. Le message dit donc ce que le
+    fichier *est*, puis comment le convertir — un candidat refusé sans
+    marche à suivre abandonne.
+    """
+    nature = (
+        "un document Word"
+        if mime_type in (extraction.DOCX_MIME, extraction.DOC_MIME)
+        else "un fichier qui n'est pas un PDF"
+    )
+    return (
+        f"« {nom[:60]} » est {nature}. Seul le format PDF est accepté. Dans Word, "
+        "LibreOffice ou Google Docs : Fichier › Enregistrer sous (ou Télécharger) "
+        "› PDF, puis joignez le fichier obtenu."
+    )
+
+
+async def validate(
+    file: UploadFile, max_mb: int | None = None, pdf_seulement: bool = False
+) -> AcceptedFile:
     """Size, then magic bytes. The extension is never trusted.
 
     `max_mb` ne sert qu'au garde-fou anti-abus du formulaire public ; les
@@ -83,7 +108,7 @@ async def validate(file: UploadFile, max_mb: int | None = None) -> AcceptedFile:
     """
     data = await file.read()
     await file.close()
-    return valider_octets(data, file.filename or "", max_mb)
+    return valider_octets(data, file.filename or "", max_mb, pdf_seulement)
 
 
 async def store(accepted: AcceptedFile) -> str:

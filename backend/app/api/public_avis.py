@@ -88,7 +88,10 @@ class AvisPublicOut(AvisPublicItem):
     formats_pieces: dict[str, list[str]] = Field(default_factory=dict)
     pieces_libres_autorisees: bool = True
     taille_max_mo: int = 10
-    formats_acceptes: list[str] = Field(default_factory=lambda: ["PDF", "Word"])
+    # Ce que les candidats peuvent envoyer. Le PDF seul : un Word se lit
+    # différemment d'un poste à l'autre, et c'est un PDF que le cabinet
+    # remet au client.
+    formats_acceptes: list[str] = Field(default_factory=lambda: ["PDF"])
     accepte_candidatures: bool = True
 
 
@@ -380,7 +383,11 @@ async def deposer_spontanee(
     acceptes = []
     for fichier in fichiers:
         try:
-            acceptes.append(await uploads.validate(fichier, uploads.PLAFOND_ABSOLU_MO))
+            acceptes.append(
+                await uploads.validate(
+                    fichier, uploads.PLAFOND_ABSOLU_MO, pdf_seulement=True
+                )
+            )
         except uploads.RejectedUpload as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 
@@ -583,8 +590,12 @@ async def deposer(
         try:
             # Route non authentifiée : le plafond absolu protège la
             # mémoire du serveur, il ne restreint aucun dossier réel.
+            # Le PDF seul : c'est le format que le cabinet transmet au
+            # client, et le seul qui s'ouvre partout à l'identique.
             acceptes.append(
-                await uploads.validate(fichier, uploads.PLAFOND_ABSOLU_MO)
+                await uploads.validate(
+                    fichier, uploads.PLAFOND_ABSOLU_MO, pdf_seulement=True
+                )
             )
         except uploads.RejectedUpload as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc

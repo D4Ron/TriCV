@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ACCEPT_DEPOT, refusHorsPdf } from '@/lib/pieces'
 import { avisPublicApi } from '@/lib/api'
 import { Callout, Field, Spinner } from '@/components/ui'
 import SaisieParcoursDeclare, {
@@ -50,6 +51,10 @@ export default function CandidatureSpontanee() {
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
       trouvees.email = 'Adresse email invalide'
     if (!cv) trouvees.cv = 'Votre curriculum vitae est nécessaire'
+    else {
+      const horsPdf = refusHorsPdf(cv)
+      if (horsPdf) trouvees.cv = horsPdf
+    }
     setErreurs(trouvees)
     if (Object.keys(trouvees).length > 0) return
 
@@ -197,7 +202,7 @@ export default function CandidatureSpontanee() {
         <input
           id="sp-cv"
           type="file"
-          accept=".pdf,.docx,.doc"
+          accept={ACCEPT_DEPOT}
           className="input"
           onChange={(e) => setCv(e.target.files?.[0] ?? null)}
         />

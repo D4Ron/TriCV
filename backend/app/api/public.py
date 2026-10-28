@@ -104,7 +104,9 @@ async def apply(
 
     try:
         # Route non authentifiée : seul le plafond anti-abus s'applique.
-        accepted = await uploads.validate(cv, uploads.PLAFOND_ABSOLU_MO)
+        accepted = await uploads.validate(
+            cv, uploads.PLAFOND_ABSOLU_MO, pdf_seulement=True
+        )
     except uploads.RejectedUpload as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
 

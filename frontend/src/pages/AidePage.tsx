@@ -9,7 +9,7 @@ import PiedPublic from '@/components/PiedPublic'
  * Ce qu'un candidat a besoin de savoir avant d'écrire à quelqu'un.
  *
  * Le dépôt échoue de quelques façons connues — un scan trop lourd, un fichier
- * qui n'est ni PDF ni Word, une pièce qu'on n'a pas encore, un lien clôturé —
+ * qui n'est pas un PDF, une pièce qu'on n'a pas encore, un lien clôturé —
  * et jusqu'ici rien ne le disait. Un candidat bloqué refermait l'onglet ; le
  * cabinet ne voyait qu'un dossier manquant, sans savoir qu'il y avait eu une
  * tentative.
@@ -30,10 +30,11 @@ const QUESTIONS: Question[] = [
     question: 'Mon fichier est refusé : « format non accepté ».',
     reponse: (
       <>
-        Seuls le PDF et le Word (.doc, .docx) sont acceptés. Une photo prise au téléphone
-        (.jpg, .png) ou une capture d&apos;écran est refusée même si le document est lisible :
-        rassemblez vos pages dans un seul PDF avant de les déposer. La plupart des applications
-        de numérisation sur téléphone savent produire un PDF.
+        Seul le format PDF est accepté. Un document Word se convertit en quelques secondes :
+        dans Word, LibreOffice ou Google Docs, <b>Fichier › Enregistrer sous</b> (ou{' '}
+        <b>Télécharger</b>) <b>› PDF</b>. Une photo prise au téléphone ou une capture
+        d&apos;écran est refusée aussi : rassemblez vos pages dans un seul PDF — la plupart des
+        applications de numérisation sur téléphone savent le produire.
       </>
     ),
   },

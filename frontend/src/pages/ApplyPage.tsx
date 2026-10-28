@@ -6,6 +6,7 @@ import { Marque } from '@/components/Marque'
 import PiedPublic, { EncartProbleme } from '@/components/PiedPublic'
 import { Callout, Field, PageLoader, Spinner } from '@/components/ui'
 import { formatDate } from '@/lib/format'
+import { ACCEPT_DEPOT, refusHorsPdf } from '@/lib/pieces'
 import SaisieParcoursDeclare, {
   PARCOURS_VIDE,
   parcoursRempli,
@@ -137,6 +138,8 @@ export default function ApplyPage() {
       if (fichier.size > a.taille_max_mo * 1024 * 1024) {
         trouvees[code] = `Fichier trop volumineux (maximum ${a.taille_max_mo} Mo)`
       }
+      const horsPdf = refusHorsPdf(fichier)
+      if (horsPdf) trouvees[code] = horsPdf
       const imposes = a.formats_pieces[code]
       if (imposes?.length) {
         const extension = fichier.name.split('.').pop()?.toLowerCase() ?? ''
@@ -154,6 +157,8 @@ export default function ApplyPage() {
       if (libre.fichier && libre.fichier.size > a.taille_max_mo * 1024 * 1024) {
         trouvees[`libre-${index}`] = `Fichier trop volumineux (maximum ${a.taille_max_mo} Mo)`
       }
+      const horsPdf = libre.fichier ? refusHorsPdf(libre.fichier) : null
+      if (horsPdf) trouvees[`libre-${index}`] = horsPdf
     })
     setErreurs(trouvees)
     if (Object.keys(trouvees).length > 0) return
@@ -424,7 +429,7 @@ export default function ApplyPage() {
               >
                 <input
                   type="file"
-                  accept=".pdf,.docx,.doc"
+                  accept={ACCEPT_DEPOT}
                   className="input"
                   onChange={(e) => {
                     const fichier = e.target.files?.[0]
@@ -480,7 +485,7 @@ export default function ApplyPage() {
                   {choixGroupe[index] && (
                     <input
                       type="file"
-                      accept=".pdf,.docx,.doc"
+                      accept={ACCEPT_DEPOT}
                       className="input mt-2"
                       aria-label={groupe.libelle || 'Document au choix'}
                       onChange={(e) => {
@@ -506,7 +511,7 @@ export default function ApplyPage() {
                     <Field key={piece.code} label={piece.libelle} error={erreurs[piece.code]}>
                       <input
                         type="file"
-                        accept=".pdf,.docx,.doc"
+                        accept={ACCEPT_DEPOT}
                         className="input"
                         onChange={(e) => {
                           const fichier = e.target.files?.[0]
@@ -537,7 +542,7 @@ export default function ApplyPage() {
                   <Field key={piece.code} label={piece.libelle}>
                     <input
                       type="file"
-                      accept=".pdf,.docx,.doc"
+                      accept={ACCEPT_DEPOT}
                       className="input"
                       onChange={(e) => {
                         const fichier = e.target.files?.[0]
@@ -585,7 +590,7 @@ export default function ApplyPage() {
                     <Field label="Fichier">
                       <input
                         type="file"
-                        accept=".pdf,.docx,.doc"
+                        accept={ACCEPT_DEPOT}
                         className="input"
                         aria-label={`Fichier — document ${index + 1}`}
                         onChange={(e) =>

@@ -85,3 +85,24 @@ export function enListe(valeur: string): string[] {
     .filter(Boolean)
   return [...new Set(vus)]
 }
+
+/**
+ * Ce que le formulaire candidat accepte : le PDF, et rien d'autre.
+ *
+ * Le serveur reconnaît le format au contenu et refuse tout le reste ; ce test-ci
+ * ne fait que prévenir avant l'envoi, pour qu'un candidat n'apprenne pas qu'un
+ * fichier ne va pas après avoir tout rempli et attendu le transfert.
+ */
+export const ACCEPT_DEPOT = '.pdf,application/pdf'
+
+/** Le refus d'un fichier non PDF, avec la manière d'en faire un. Null si c'est un PDF. */
+export function refusHorsPdf(fichier: File): string | null {
+  const extension = fichier.name.split('.').pop()?.toLowerCase() ?? ''
+  if (extension === 'pdf' || fichier.type === 'application/pdf') return null
+  const word = ['doc', 'docx', 'odt', 'rtf'].includes(extension)
+  return (
+    `${word ? 'Document Word : ' : ''}seul le format PDF est accepté. ` +
+    'Dans Word, LibreOffice ou Google Docs : Fichier › Enregistrer sous (ou ' +
+    'Télécharger) › PDF.'
+  )
+}
