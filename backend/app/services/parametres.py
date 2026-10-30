@@ -132,9 +132,13 @@ ANCIENNES_CLES = {
 # Le .env, tel que lu au démarrage : ce qui revient quand l'écran ne règle
 # rien. `appliquer_ia` réécrit la configuration du processus ; sans cette
 # copie, retirer un réglage de l'écran ne saurait plus à quoi revenir.
+# Le modèle propre à chaque fournisseur (GEMINI_MODEL…) l'emporte sur
+# LLM_MODEL à la lecture : il faut donc le garder aussi, pour que le modèle
+# choisi à l'écran puisse passer devant.
+MODELES_PAR_FOURNISSEUR = tuple(f"{nom}_model" for nom in FOURNISSEURS_IA)
 _IA_DU_FICHIER = {
     cle: getattr(settings, cle)
-    for cle in (*CLES_IA, "llm_prose_provider")
+    for cle in (*CLES_IA, "llm_prose_provider", *MODELES_PAR_FOURNISSEUR)
 }
 
 
@@ -381,6 +385,13 @@ def appliquer_ia(reglages: Reglages) -> None:
         voulu[IA_FOURNISSEUR] = _IA_DU_FICHIER[IA_FOURNISSEUR]
         voulu[IA_MODELE] = reglages.llm_model.strip() or _IA_DU_FICHIER[IA_MODELE]
         voulu["llm_prose_provider"] = _IA_DU_FICHIER["llm_prose_provider"]
+
+    # Le modèle propre du fournisseur en service suit l'écran quand l'écran
+    # en nomme un ; sans quoi un GEMINI_MODEL du .env passerait devant.
+    for cle in MODELES_PAR_FOURNISSEUR:
+        voulu[cle] = _IA_DU_FICHIER[cle]
+    if reglages.llm_model.strip():
+        voulu[f"{voulu[IA_FOURNISSEUR]}_model"] = reglages.llm_model.strip()
 
     change = False
     for cle, valeur in voulu.items():

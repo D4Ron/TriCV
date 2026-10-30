@@ -229,6 +229,10 @@ def serveur_ia(monkeypatch):
         "llm_base_url": "https://api.exemple.test/v1",
         "ollama_base_url": "http://ollama:11434",
         "llm_prose_provider": "anthropic",
+        "gemini_model": "",
+        "anthropic_model": "",
+        "openai_model": "",
+        "ollama_model": "",
     }
     for cle, valeur in du_fichier.items():
         monkeypatch.setattr(settings, cle, valeur)
@@ -268,6 +272,26 @@ async def test_le_fournisseur_choisi_a_l_ecran_l_emporte(client, auth, serveur_i
     assert settings.anthropic_api_key == "sk-ant-test"
     assert settings.llm_model == "claude-x"
     assert settings.llm_prose_provider == ""
+
+
+async def test_le_modele_de_l_ecran_passe_devant_gemini_model(
+    client, auth, serveur_ia, monkeypatch
+):
+    """GEMINI_MODEL l'emporte sur LLM_MODEL à la lecture : l'écran doit le battre."""
+    from app.llm.base import modele_configure
+
+    monkeypatch.setattr(settings, "gemini_model", "modele-retire-du-serveur")
+    monkeypatch.setitem(parametres._IA_DU_FICHIER, "gemini_model", "modele-retire-du-serveur")
+    await client.patch(
+        f"{API}/settings",
+        json={"llm_provider": "gemini", "gemini_api_key": "AIza-x", "llm_model": "modele-ecran"},
+        headers=auth,
+    )
+    assert modele_configure("gemini", "defaut") == "modele-ecran"
+
+    # Sans modèle à l'écran, celui du serveur revient.
+    await client.patch(f"{API}/settings", json={"llm_model": ""}, headers=auth)
+    assert modele_configure("gemini", "defaut") == "modele-retire-du-serveur"
 
 
 async def test_le_choix_explicite_prime_sur_une_cle_collee(client, auth, serveur_ia):

@@ -66,8 +66,15 @@ async def test_une_boite_microsoft_incomplete_nomme_les_champs(client, auth):
     assert "secret" in releve["detail"]
 
 
-async def test_le_mot_de_passe_d_origine_de_l_administrateur_est_signale(client, auth):
+async def test_le_mot_de_passe_d_origine_de_l_administrateur_est_signale(
+    client, auth, monkeypatch
+):
     """Il figure dans le code source : tant qu'il tient, n'importe qui entre."""
+    from app.config import Settings
+
+    monkeypatch.setattr(
+        settings, "seed_admin_password", Settings.model_fields["seed_admin_password"].default
+    )
     sans = _par_code((await client.get(f"{API}/sante", headers=auth)).json())
     assert "admin_defaut" not in sans
 
@@ -84,6 +91,21 @@ async def test_le_mot_de_passe_d_origine_de_l_administrateur_est_signale(client,
     assert avec["admin_defaut"]["ou"] == "comptes"
     # Le mot de passe lui-même n'est jamais affiché.
     assert settings.seed_admin_password not in avec["admin_defaut"]["detail"]
+
+
+async def test_un_mot_de_passe_pose_dans_le_env_n_est_pas_signale(client, auth, monkeypatch):
+    """Fausse alerte relevée en production : un SEED_ADMIN_PASSWORD du .env
+    n'est pas « publié dans le code source »."""
+    monkeypatch.setattr(settings, "seed_admin_password", "un-secret-propre-au-serveur")
+    async with SessionLocal() as db:
+        await db.execute(
+            update(User)
+            .where(User.email == settings.seed_admin_email.lower())
+            .values(password_hash=hash_password(settings.seed_admin_password))
+        )
+        await db.commit()
+    verifs = _par_code((await client.get(f"{API}/sante", headers=auth)).json())
+    assert "admin_defaut" not in verifs
 
 
 async def test_un_avis_ouvert_est_compte(client, auth):

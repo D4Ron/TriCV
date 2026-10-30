@@ -12,7 +12,10 @@ from app.llm.base import (
     modele_configure,
 )
 
-DEFAULT_MODEL = "gemini-2.0-flash"
+# gemini-2.0-flash a été retiré par Google (HTTP 404, constaté en production
+# le 30/10/2026) ; Google indique ce modèle à sa place. Un autre se règle
+# dans Paramètres › Général, sans redéployer.
+DEFAULT_MODEL = "gemini-3.8-flash"
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
 MAX_OUTPUT_TOKENS = 8192
 

@@ -445,6 +445,17 @@ export default function SettingsPage() {
           onTenant={setTenant}
           onClientId={setClientId}
           onSecret={setClientSecret}
+          onEnregistrer={() =>
+            enregistrer.mutate(undefined, { onSuccess: () => setAssistant(false) })
+          }
+          enregistrement={{
+            enCours: enregistrer.isPending,
+            erreur: enregistrer.isError
+              ? enregistrer.error instanceof Error
+                ? enregistrer.error.message
+                : 'Enregistrement impossible'
+              : null,
+          }}
           onClose={() => setAssistant(false)}
         />
       )}

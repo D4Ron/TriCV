@@ -44,6 +44,8 @@ export default function AssistantMicrosoft365({
   onTenant,
   onClientId,
   onSecret,
+  onEnregistrer,
+  enregistrement,
   onClose,
 }: {
   tenant: string
@@ -53,6 +55,14 @@ export default function AssistantMicrosoft365({
   onTenant: (v: string) => void
   onClientId: (v: string) => void
   onSecret: (v: string) => void
+  /**
+   * Enregistre les réglages de la page. Fermer la fenêtre ne suffisait pas :
+   * il fallait encore trouver « Enregistrer » au bas de l'onglet, et les
+   * trois valeurs se perdaient chez qui ne le voyait pas — c'est arrivé en
+   * production.
+   */
+  onEnregistrer: () => void
+  enregistrement: { enCours: boolean; erreur: string | null }
   onClose: () => void
 }) {
   const complet = Boolean(tenant.trim() && clientId.trim())
@@ -225,15 +235,24 @@ export default function AssistantMicrosoft365({
 
         <Etape numero={6} titre="Enregistrer, puis tester">
           <p>
-            Fermez cette fenêtre, vérifiez l&apos;adresse de la boîte plus bas, puis{' '}
-            <b>Enregistrez</b>. Le bouton <b>Tester la connexion</b> ouvre alors une vraie
-            session : c&apos;est lui qui dit si le consentement est bien passé.
+            <b>Enregistrer</b> ci-dessous garde les trois valeurs. Cochez ensuite le relevé et
+            l&apos;envoi dans l&apos;onglet, et cliquez <b>Tester la connexion</b> : c&apos;est
+            lui qui dit si le consentement est bien passé.
           </p>
         </Etape>
 
-        <div className="flex justify-end">
-          <button type="button" className="btn-primary" onClick={onClose}>
-            Revenir aux réglages
+        {enregistrement.erreur && <Callout tone="danger">{enregistrement.erreur}</Callout>}
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-ghost" onClick={onClose}>
+            Fermer sans enregistrer
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={enregistrement.enCours}
+            onClick={onEnregistrer}
+          >
+            Enregistrer
           </button>
         </div>
       </div>

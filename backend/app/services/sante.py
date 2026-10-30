@@ -168,6 +168,13 @@ async def _verifier_admin_par_defaut(db: AsyncSession) -> Verification | None:
     Ce mot de passe figure dans le code source : tant qu'il n'est pas changé,
     quiconque a lu le dépôt peut entrer.
     """
+    # Seul le mot de passe écrit dans le code est public. Un SEED_ADMIN_PASSWORD
+    # posé dans le .env n'est connu que du serveur : le signaler ici était une
+    # fausse alerte, relevée en production.
+    from app.config import Settings
+
+    if settings.seed_admin_password != Settings.model_fields["seed_admin_password"].default:
+        return None
     compte = (
         await db.execute(select(User).where(User.email == settings.seed_admin_email.lower()))
     ).scalar_one_or_none()
