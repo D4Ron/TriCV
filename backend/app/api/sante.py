@@ -13,6 +13,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.deps import AdminUser, DbSession, client_ip
 from app.models import EVENEMENTS
 from app.services import sante
@@ -69,10 +70,12 @@ async def tester_ia(_: AdminUser) -> dict:
             fournisseur.rediger(
                 "Répondez par le seul mot : OK.", "Essai de connexion.", titre="essai"
             ),
-            timeout=45,
+            # Un modèle saturé coûte jusqu'à 90 s avant que le suivant soit
+            # essayé : 45 s jugeait la panne avant que le repli ait pu jouer.
+            timeout=150,
         )
     except asyncio.TimeoutError:
-        return {"ok": False, "detail": "Pas de réponse en 45 secondes.", "secondes": 45}
+        return {"ok": False, "detail": "Pas de réponse en 150 secondes.", "secondes": 150}
     except Exception as exc:
         return {
             "ok": False,
@@ -80,9 +83,18 @@ async def tester_ia(_: AdminUser) -> dict:
             "secondes": round(time.monotonic() - debut, 1),
         }
     ok = bool((reponse or "").strip())
+    from app.llm import gemini
+
+    # Derrière un repli, ce n'est plus forcément le modèle réglé qui répond :
+    # l'écran doit le dire, sans quoi on croirait le réglage bon.
+    servi = gemini.dernier_modele_servi if settings.llm_provider == "gemini" else None
     return {
         "ok": ok,
-        "detail": "Le modèle a répondu." if ok else "Le modèle a répondu vide.",
+        "detail": (
+            f"Le modèle a répondu{f' ({servi})' if servi else ''}."
+            if ok
+            else "Le modèle a répondu vide."
+        ),
         "secondes": round(time.monotonic() - debut, 1),
     }
 

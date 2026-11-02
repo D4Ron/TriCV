@@ -36,11 +36,17 @@ async def post_json(
     json: dict[str, Any],
     headers: dict[str, str] | None = None,
     provider: str = "llm",
+    max_attempts: int = MAX_ATTEMPTS,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     """POST with exponential backoff on 429 and 5xx.
 
     Errors that will not fix themselves — a bad key, a malformed request — are
     raised on the first attempt rather than retried four times.
+
+    `max_attempts` and `timeout` let a caller with somewhere else to go — Gemini
+    and its other models — give up on a saturated endpoint sooner, rather than
+    spend four attempts and two minutes waiting on it.
     """
     last_error: Exception | None = None
     # Un 429 qui survit aux quatre tentatives n'est plus une limite par minute :
@@ -49,8 +55,8 @@ async def post_json(
     # faut passer au suivant et non réessayer.
     dernier_429 = False
 
-    async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
-        for attempt in range(MAX_ATTEMPTS):
+    async with httpx.AsyncClient(timeout=timeout or settings.llm_timeout_seconds) as client:
+        for attempt in range(max_attempts):
             try:
                 response = await client.post(url, json=json, headers=headers or {})
             except (httpx.TimeoutException, httpx.TransportError) as exc:
@@ -86,10 +92,10 @@ async def post_json(
                 last_error = LLMError(f"HTTP {response.status_code}: {body}")
                 logger.warning(
                     "[%s] HTTP %d on attempt %d/%d",
-                    provider, response.status_code, attempt + 1, MAX_ATTEMPTS,
+                    provider, response.status_code, attempt + 1, max_attempts,
                 )
 
-            if attempt < MAX_ATTEMPTS - 1:
+            if attempt < max_attempts - 1:
                 # Jitter so a batch of CVs uploaded together does not retry in lockstep.
                 delay = BACKOFF_SECONDS[attempt] * (1 + random.random() * 0.25)
                 await asyncio.sleep(delay)
@@ -97,7 +103,7 @@ async def post_json(
     # Survivre aux quatre tentatives, c'est ne pas être disponible : 5xx à
     # répétition, ou pas de réponse du tout. Un secours doit pouvoir prendre le
     # relais — c'est le jour de panne qui justifie qu'on ait une seconde clé.
-    message = f"{provider} unreachable after {MAX_ATTEMPTS} attempts: {last_error}"
+    message = f"{provider} unreachable after {max_attempts} attempts: {last_error}"
     if dernier_429:
         raise LLMQuotaError(message)
     raise LLMIndisponible(message)
