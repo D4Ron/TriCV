@@ -209,6 +209,19 @@ async def test_on_n_ignore_pas_la_boite_elle_meme(client, auth):
     assert refus.status_code == 409
 
 
+async def test_on_n_ignore_pas_une_messagerie_publique_entiere(client, auth):
+    """@gmail.com, c'est la plupart des candidats : seule une adresse précise s'ignore."""
+    refus = await client.post(
+        f"{API}/boite/expediteurs-ignores", json={"adresse": "@Gmail.com"}, headers=auth
+    )
+    assert refus.status_code == 409
+    assert "messagerie publique" in refus.json()["detail"]
+    accepte = await client.post(
+        f"{API}/boite/expediteurs-ignores", json={"adresse": "lettre.info@gmail.com"}, headers=auth
+    )
+    assert accepte.status_code == 200
+
+
 async def test_une_regle_se_retire(client, auth):
     await client.post(f"{API}/boite/expediteurs-ignores", json={"adresse": "x@journal.test"}, headers=auth)
     regles = (await client.get(f"{API}/boite/expediteurs-ignores", headers=auth)).json()

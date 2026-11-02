@@ -62,6 +62,26 @@ class ExpediteurIgnore(Base):
     cree_par: Mapped[str | None] = mapped_column(sa.String(36))
 
 
+# Les messageries publiques : la plupart des candidats y ont leur adresse. En
+# ignorer le domaine entier ferait disparaître toutes leurs candidatures — on
+# n'ignore qu'une adresse à la fois chez elles. Constaté en production : 31 des
+# 32 dossiers sans poste venaient de @gmail.com ou @yahoo.com.
+DOMAINES_PUBLICS = frozenset(
+    {
+        "@gmail.com", "@googlemail.com", "@yahoo.com", "@yahoo.fr", "@ymail.com",
+        "@outlook.com", "@outlook.fr", "@hotmail.com", "@hotmail.fr", "@live.com",
+        "@live.fr", "@msn.com", "@icloud.com", "@me.com", "@aol.com", "@gmx.com",
+        "@gmx.fr", "@proton.me", "@protonmail.com", "@orange.fr", "@free.fr",
+        "@laposte.net", "@yandex.com", "@mail.com", "@zoho.com",
+    }
+)
+
+
+def domaine_public(motif: str) -> bool:
+    """Un motif « @domaine » qui désigne une messagerie publique."""
+    return normaliser_adresse(motif) in DOMAINES_PUBLICS
+
+
 def normaliser_adresse(adresse: str) -> str:
     return (adresse or "").strip().lower()
 

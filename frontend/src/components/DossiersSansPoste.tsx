@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dossiersApi, recrutementApi } from '@/lib/api'
 import { useAnnulable } from '@/lib/annulable'
+import { estDomainePublic } from '@/lib/interface'
 import { Callout, Modal } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 import RattacherPoste from '@/components/RattacherPoste'
@@ -41,11 +42,18 @@ export default function DossiersSansPoste() {
   const dossiers = liste.data ?? []
 
   // Les provenances qui reviennent : de quoi écarter d'un coup toute une
-  // lettre d'information.
+  // lettre d'information. Chez une messagerie publique (@gmail.com…), le
+  // domaine regrouperait des candidats réels : on regroupe alors par adresse.
+  const provenance = (d: { domaine: string | null; email: string | null }) =>
+    estDomainePublic(d.domaine) ? (d.email ?? '').toLowerCase() : (d.domaine ?? '')
   const provenances = useMemo(() => {
     const compte = new Map<string, number>()
-    dossiers.forEach((d) => d.domaine && compte.set(d.domaine, (compte.get(d.domaine) ?? 0) + 1))
+    dossiers.forEach((d) => {
+      const cle = provenance(d)
+      if (cle) compte.set(cle, (compte.get(cle) ?? 0) + 1)
+    })
     return [...compte.entries()].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dossiers])
 
   const supprimer = useMutation({
@@ -180,7 +188,7 @@ export default function DossiersSansPoste() {
               onClick={() =>
                 setCoches((s) => {
                   const nouv = new Set(s)
-                  dossiers.filter((d) => d.domaine === dom).forEach((d) => nouv.add(d.id))
+                  dossiers.filter((d) => provenance(d) === dom).forEach((d) => nouv.add(d.id))
                   return nouv
                 })
               }

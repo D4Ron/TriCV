@@ -10,6 +10,7 @@ import {
   type StatutMessage,
 } from '@/lib/api'
 import { Callout, EmptyState, ErrorState, Modal, PageLoader, Spinner } from '@/components/ui'
+import { estDomainePublic } from '@/lib/interface'
 
 /**
  * La boîte de recrutement, comme dans une messagerie.
@@ -491,13 +492,17 @@ function Lecture({
               >
                 Ignorer cet expéditeur
               </button>
-              <button
-                type="button"
-                className="btn-ghost px-3 py-1.5 text-xs"
-                onClick={() => ignorerExpediteur.mutate(domaine(m.expediteur))}
-              >
-                Ignorer tout {domaine(m.expediteur)}
-              </button>
+              {/* Une messagerie publique (@gmail.com…) porte la plupart des
+                  candidats : on n'en ignore jamais le domaine entier. */}
+              {!estDomainePublic(domaine(m.expediteur)) && (
+                <button
+                  type="button"
+                  className="btn-ghost px-3 py-1.5 text-xs"
+                  onClick={() => ignorerExpediteur.mutate(domaine(m.expediteur))}
+                >
+                  Ignorer tout {domaine(m.expediteur)}
+                </button>
+              )}
             </>
           )}
         </div>

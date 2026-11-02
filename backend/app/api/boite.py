@@ -332,6 +332,12 @@ async def ajouter_regle(payload: RegleIn, db: DbSession, user: CurrentUser) -> d
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Une adresse (nom@domaine) ou un domaine précédé de @ (@domaine.com).",
         )
+    if traces.domaine_public(adresse):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{adresse} est une messagerie publique : la plupart des candidats y ont leur "
+            "adresse. Ignorez l'expéditeur précis plutôt que tout le domaine.",
+        )
     reglages = await parametres.lire(db)
     # La boîte elle-même : l'ignorer couperait les réponses des candidats.
     if reglages.boite and traces.est_ignore(reglages.boite, {adresse}):
