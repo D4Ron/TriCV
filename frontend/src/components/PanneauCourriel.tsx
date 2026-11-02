@@ -67,12 +67,13 @@ export default function PanneauCourriel() {
   })
 
   const relever = useMutation({
-    mutationFn: recrutementApi.releverCourriel,
+    mutationFn: () => recrutementApi.releverCourriel(100),
     onSuccess: (r) => {
       const parts = [`${r.crees} candidature(s) créée(s)`]
       if (r.ignores) parts.push(`${r.ignores} déjà reçue(s)`)
       if (r.non_rattaches.length) parts.push(`${r.non_rattaches.length} sans référence`)
       if (r.sans_piece.length) parts.push(`${r.sans_piece.length} sans pièce jointe`)
+      if (r.reste) parts.push("d'autres messages attendent : relevez de nouveau")
       setErreur(null)
       setApercu(null)
       setMessage(parts.join(' · '))

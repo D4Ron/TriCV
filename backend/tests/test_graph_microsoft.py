@@ -108,7 +108,9 @@ def test_le_releve_rend_les_messages_non_lus_au_format_mime(monkeypatch):
 
     # Seuls les non-lus, et pas plus que la limite demandée.
     _, _, options = graph.appels[0]
-    assert options["params"]["$filter"] == "isRead eq false"
+    assert options["params"]["$filter"].endswith("isRead eq false")
+    # Des plus anciens aux plus récents, pour qu'une boîte longue se vide dans l'ordre.
+    assert options["params"]["$orderby"] == "receivedDateTime asc"
 
 
 def test_marquer_traite_passe_le_message_en_lu(monkeypatch):

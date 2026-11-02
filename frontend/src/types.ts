@@ -181,6 +181,8 @@ export interface DeploymentSettings {
   allow_self_registration: boolean
   /** Les dossiers reçus hors de tout avis rejoignent-ils le vivier ? */
   candidatures_spontanees: boolean
+  /** Les écrans d'avant la refonte de la revue et de la boîte. */
+  interface_classique: boolean
   /** Boîte de candidatures Microsoft 365, relevée par Graph. */
   courriel_actif: boolean
   adresse_boite: string

@@ -237,6 +237,7 @@ export default function SettingsPage() {
   const [demographiques, setDemographiques] = useState(true)
   const [inscription, setInscription] = useState(false)
   const [spontanees, setSpontanees] = useState(true)
+  const [classique, setClassique] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
 
@@ -291,6 +292,7 @@ export default function SettingsPage() {
     setDemographiques(reglages.data.redact_demographics)
     setInscription(reglages.data.allow_self_registration)
     setSpontanees(reglages.data.candidatures_spontanees)
+    setClassique(reglages.data.interface_classique)
     setCourriel(reglages.data.courriel_actif)
     setAdresse(reglages.data.adresse_boite)
     setDossier(reglages.data.dossier_boite)
@@ -315,6 +317,7 @@ export default function SettingsPage() {
         redact_demographics: demographiques,
         allow_self_registration: inscription,
         candidatures_spontanees: spontanees,
+        interface_classique: classique,
         courriel_actif: courriel,
         adresse_boite: adresse.trim(),
         dossier_boite: dossier.trim() || 'inbox',
@@ -506,6 +509,14 @@ export default function SettingsPage() {
             disabled={!estAdmin}
             label="Accueillir les candidatures spontanées"
             hint="Un dossier reçu hors de tout avis — par la boîte de candidatures ou par le formulaire du site — rejoint le vivier sans être noté. Décoché, ces messages restent simplement signalés « non rattachés »."
+          />
+
+          <Toggle
+            checked={classique}
+            onChange={setClassique}
+            disabled={!estAdmin}
+            label="Revenir à l'interface d'avant"
+            hint="Rétablit les écrans précédents : le poste sur une seule page, le panneau latéral pour chaque dossier, le relevé depuis la page des mandats. La revue dossier par dossier et la boîte de recrutement disparaissent du menu. Rien n'est perdu ; on peut revenir à tout moment."
           />
         </div>
 

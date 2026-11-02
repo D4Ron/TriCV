@@ -13,6 +13,7 @@ from app.api import (
     auth,
     candidates,
     candidatures,
+    boite,
     collaboration,
     dossiers,
     exports,
@@ -213,6 +214,7 @@ for router in (
     candidatures.router,
     collaboration.router,
     dossiers.router,
+    boite.router,
     rapports.router,
     public_avis.router,
     # L'espace du promoteur : porte separee, jeton de type distinct.

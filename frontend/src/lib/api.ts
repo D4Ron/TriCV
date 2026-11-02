@@ -783,7 +783,7 @@ export const recrutementApi = {
         pieces: Array<{ nom: string; octets: number; type: string; retenue: boolean }>
       }>
     }>('/courriel/apercu', { method: 'POST' }),
-  releverCourriel: () =>
+  releverCourriel: (limite = 25) =>
     request<{
       crees: number
       ignores: number
@@ -793,7 +793,11 @@ export const recrutementApi = {
       echanges_client: number
       non_rattaches: string[]
       sans_piece: string[]
-    }>('/courriel/relever', { method: 'POST' }),
+      /** Messages d'expéditeurs ignorés : ni dossier, ni place dans la liste. */
+      expediteurs_ignores: number
+      /** D'autres messages attendent : relancer pour le lot suivant. */
+      reste: boolean
+    }>(`/courriel/relever?limite=${limite}`, { method: 'POST' }),
 
   /** Propose le texte d'un avis. N'écrit rien : c'est un brouillon à relire. */
   redigerAvis: (
@@ -1128,6 +1132,8 @@ export interface CandidatureSansPoste {
   nom: string
   prenom: string
   email: string | null
+  /** « @domaine » de l'expéditeur, pour écarter d'un coup tout ce qui en vient. */
+  domaine: string | null
   recue_le: string
   source: string
   objet: string | null
@@ -1178,11 +1184,132 @@ export const dossiersApi = {
   },
   sansPoste: () => request<CandidatureSansPoste[]>('/dossiers/sans-poste'),
   postesActifs: () => request<PosteActif[]>('/postes-actifs'),
+  /**
+   * Supprime des dossiers d'un coup, avec les mêmes retenues qu'à l'unité :
+   * un dossier passé en entretien, écrit ou présélectionné est gardé et
+   * listé dans `retenus`, sauf `confirmer`.
+   */
+  supprimerEnLot: (
+    ids: string[],
+    motif: string,
+    options: { confirmer?: boolean; ignorerExpediteurs?: boolean } = {},
+  ) =>
+    request<{
+      supprimes: number
+      retenus: Array<{ id: string; nom: string; raison: string }>
+      expediteurs_ignores: string[]
+    }>('/dossiers/suppression', {
+      method: 'POST',
+      body: {
+        candidature_ids: ids,
+        motif,
+        confirmer: options.confirmer ?? false,
+        ignorer_expediteurs: options.ignorerExpediteurs ?? false,
+      },
+    }),
   rattacher: (candidatureId: string, posteId: string) =>
     request<Candidature>(`/candidatures/${candidatureId}/rattacher`, {
       method: 'POST',
       body: { poste_id: posteId },
     }),
+}
+
+// --- la boîte de recrutement, lue dans l'application -----------------------
+
+export type StatutMessage = '' | 'IMPORTE' | 'IGNORE' | 'SANS_PIECE' | 'SUPPRIME'
+
+export interface MessageBoite {
+  id: string
+  message_id: string
+  sujet: string
+  expediteur: string
+  nom_expediteur: string
+  recu_le: string
+  lu: boolean
+  avec_pieces: boolean
+  apercu: string
+  conversation: string
+  /** Ce que l'application en a fait ; vide : rien encore. */
+  statut: StatutMessage
+  candidature_id: string | null
+  motif: string | null
+  expediteur_ignore: boolean
+}
+
+export interface MessageBoiteDetail extends MessageBoite {
+  corps: string
+  destinataires: string[]
+  pieces: Array<{ id: string; nom: string; type: string; octets: number; en_ligne: boolean }>
+  /** Les autres messages de la même adresse : un dossier en plusieurs envois. */
+  autres: MessageBoite[]
+  /** Le poste que l'objet désigne, s'il en désigne un. */
+  poste_propose: { id: string; intitule: string } | null
+}
+
+export const boiteApi = {
+  lister: (params: { filtre?: string; recherche?: string; suite?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (params.filtre) query.set('filtre', params.filtre)
+    if (params.recherche) query.set('recherche', params.recherche)
+    if (params.suite) query.set('suite', params.suite)
+    return request<{
+      messages: MessageBoite[]
+      suite: string
+      dossier?: string
+      total?: number
+      non_lus?: number
+    }>(`/boite/messages?${query.toString()}`)
+  },
+  lire: (id: string) => request<MessageBoiteDetail>(`/boite/messages/${encodeURIComponent(id)}`),
+  /** Le jeton ne passe pas dans un lien : la pièce est récupérée puis confiée au navigateur. */
+  pieceObjectUrl: async (id: string, pieceId: string): Promise<string> => {
+    const response = await fetch(
+      `${BASE}/boite/messages/${encodeURIComponent(id)}/pieces/${encodeURIComponent(pieceId)}`,
+      { headers: { Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}` } },
+    )
+    if (!response.ok) throw new ApiError(response.status, `Pièce indisponible (${response.status})`)
+    return URL.createObjectURL(await response.blob())
+  },
+  importer: (identifiants: string[], posteId: string | null, regrouper = true) =>
+    request<{
+      crees: number
+      completes: number
+      sans_piece: string[]
+      deja_importes: string[]
+      candidature_ids: string[]
+    }>('/boite/importer', {
+      method: 'POST',
+      body: { identifiants, poste_id: posteId, regrouper },
+    }),
+  ignorer: (messages: MessageBoite[], motif = 'écarté à la main') =>
+    request<{ ignores: number }>('/boite/ignorer', {
+      method: 'POST',
+      body: {
+        motif,
+        messages: messages.map((m) => ({
+          message_id: m.message_id,
+          expediteur: m.expediteur,
+          sujet: m.sujet,
+          recu_le: m.recu_le || null,
+        })),
+      },
+    }),
+  retablir: (messageIds: string[]) =>
+    request<{ retablis: number }>('/boite/retablir', {
+      method: 'POST',
+      body: { message_ids: messageIds },
+    }),
+  regles: () =>
+    request<Array<{ id: string; adresse: string; raison: string | null; cree_le: string }>>(
+      '/boite/expediteurs-ignores',
+    ),
+  ajouterRegle: (adresse: string, raison = '') =>
+    request<{ adresse: string }>('/boite/expediteurs-ignores', {
+      method: 'POST',
+      body: { adresse, raison },
+    }),
+  retirerRegle: (id: string) =>
+    request<{ retire: string }>(`/boite/expediteurs-ignores/${id}`, { method: 'DELETE' }),
 }
 
 // --- misc -------------------------------------------------------------------
@@ -1193,6 +1320,8 @@ export const settingsApi = {
     redact_demographics?: boolean
     allow_self_registration?: boolean
     candidatures_spontanees?: boolean
+    /** Revenir aux écrans d'avant la refonte de la revue et de la boîte. */
+    interface_classique?: boolean
     courriel_actif?: boolean
     adresse_boite?: string
     dossier_boite?: string

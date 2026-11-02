@@ -559,7 +559,7 @@ def _noter_formation(
         points = bareme.points_niveau_requis + ecart * bareme.points_par_niveau_superieur
         detail = f"{atteint.libelle} pour un {exigences.niveau_min.libelle} demandé."
         if ecart:
-            detail += f" Soit {ecart} niveau(x) au-dessus."
+            detail += f" Soit {ecart} niveau{'x' if ecart > 1 else ''} au-dessus."
 
     # Certifications et formation complémentaire : zéro tant que le poste ne
     # leur accorde rien, ce qui est le barème du cabinet par défaut.
@@ -597,6 +597,23 @@ def _noter_formation(
     )
 
 
+def _ans(n: int) -> str:
+    return f"{n} an{'s' if n > 1 else ''}"
+
+
+def duree_lisible(mois: int) -> str:
+    """« 4 mois », « 1 an », « 2 ans et 3 mois » — plutôt que « 0.3 an(s) »."""
+    mois = max(int(round(mois)), 0)
+    if mois == 0:
+        return "aucune expérience"
+    ans, reste = divmod(mois, 12)
+    if not ans:
+        return f"{reste} mois"
+    if not reste:
+        return _ans(ans)
+    return f"{_ans(ans)} et {reste} mois"
+
+
 def _noter_experience(
     code: str,
     libelle: str,
@@ -611,7 +628,7 @@ def _noter_experience(
             libelle=libelle,
             points=0.0,
             points_max=bareme.points_max,
-            detail=f"{annees:.1f} an(s) pour {annees_requises} an(s) demandé(s).",
+            detail=f"{duree_lisible(mois)} pour {_ans(annees_requises)} demandé{'s' if annees_requises > 1 else ''}.",
         )
 
     supplementaires = max(annees - annees_requises, 0.0)
@@ -619,9 +636,13 @@ def _noter_experience(
         supplementaires = min(supplementaires, bareme.annees_supplementaires_max)
 
     points = bareme.points_au_seuil + supplementaires * bareme.points_par_annee_supplementaire
-    detail = f"{annees:.1f} an(s) pour {annees_requises} an(s) demandé(s)."
+    detail = (
+        f"{duree_lisible(mois)} pour {_ans(annees_requises)} demandé{'s' if annees_requises > 1 else ''}."
+        if annees_requises
+        else f"{duree_lisible(mois)} ; aucune durée minimale demandée."
+    )
     if supplementaires >= 1:
-        detail += f" Soit {supplementaires:.1f} an(s) au-delà du seuil."
+        detail += f" Soit {duree_lisible(round(supplementaires * 12))} au-delà du seuil."
 
     return LigneNote(
         code=code,

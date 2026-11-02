@@ -475,6 +475,39 @@ poste* in a candidate's panel, moves a dossier filed under the wrong poste. Both
 person already has a dossier under the target poste, or when interview marks exist for the current
 one.
 
+### The mailbox screen
+
+**Boîte** shows the recruitment mailbox like a mail client — list, reading pane, attachments —
+with what the app did to each message: *Importé*, *Ignoré*, *Sans pièce lisible*, *Importé puis
+supprimé*. From there: import by hand (to a poste, or to the vivier), with a person's other emails
+grouped into the same dossier; ignore a message; ignore a sender or a whole domain for good.
+**Relever tout** reads the whole mailbox in batches of 25 with a progress window, so a large inbox
+is never cut off at the first 50.
+
+Every message the fetch has handled leaves a trace. A message is never downloaded twice, and a
+dossier deleted as junk is never recreated by the next fetch. Nothing is ever deleted from the
+Microsoft mailbox; imported messages are only marked read.
+
+**Junk in bulk.** Vivier › *Candidatures sans poste* has checkboxes and "everything from
+@domain" shortcuts. Bulk deletion keeps the single-deletion safeguards (a dossier with an
+interview, a sent email or a pre-selection is kept and listed), can add the senders to the ignore
+list, and waits 10 seconds with an **Annuler** button before it runs.
+
+### Reviewing dossiers
+
+**Revoir les dossiers**, on a poste, opens one dossier at a time: the document on the left, what
+was extracted from it on the right, one primary action — *Confirmer et passer au suivant*. The
+score explanation sits behind *Pourquoi ?*; everything else (files, interview, emails, moving to
+another poste, deletion) opens with **E** in the full panel. Keyboard: J/K next/previous, C confirm,
+Esc back to the poste. Lifting a reason and deleting wait 10 seconds with *Annuler*; an unsaved
+appreciation stops navigation with a warning.
+
+The poste page now opens on its candidates, with a to-do bar (to review, letters to appreciate,
+interviews to enter); the job description, ad and upload live under *Préparer le poste*.
+
+**Going back.** Paramètres › Général › *Revenir à l'interface d'avant* restores the previous
+screens. Both versions stay in the code; switching loses nothing.
+
 ### Taking dossiers away
 
 **Télécharger les dossiers**, on a poste, builds a ZIP of the files **as received** — one folder per

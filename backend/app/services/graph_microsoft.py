@@ -21,6 +21,7 @@ c'est une précaution que l'administrateur doit connaître.
 
 from __future__ import annotations
 
+import base64
 import logging
 from urllib.parse import quote
 
@@ -123,10 +124,14 @@ class ClientGraph:
             raise ErreurGraph(str(exc)) from exc
         return {"Authorization": f"Bearer {acces}"}
 
-    def appeler(self, methode: str, chemin: str, **options) -> httpx.Response:
-        url = f"{GRAPH}/users/{quote(self.boite)}{chemin}"
+    def appeler(
+        self, methode: str, chemin: str, *, entetes: dict[str, str] | None = None, **options
+    ) -> httpx.Response:
+        url = chemin if chemin.startswith(f"{GRAPH}/") else f"{GRAPH}/users/{quote(self.boite)}{chemin}"
         try:
-            reponse = self._http.request(methode, url, headers=self._entetes(), **options)
+            reponse = self._http.request(
+                methode, url, headers={**self._entetes(), **(entetes or {})}, **options
+            )
         except httpx.HTTPError as exc:
             raise ErreurGraph(f"Impossible de joindre Microsoft Graph ({exc}).") from exc
         if reponse.status_code >= 400:
@@ -199,27 +204,153 @@ class BoiteGraph:
             "non_lus": int(infos.get("unreadItemCount") or 0),
         }
 
-    def relever(self, limite: int = 50) -> list[MessageEntrant]:
-        liste = self.client.appeler(
+    def relever(
+        self, limite: int = 50, exclure: frozenset[str] | set[str] = frozenset()
+    ) -> list[MessageEntrant]:
+        """Les messages non lus, des plus anciens aux plus récents, sans limite de nombre.
+
+        Le relevé ne s'arrêtait qu'aux cinquante premiers : une boîte de deux
+        cents non lus n'était jamais vidée, et les messages laissés non lus faute
+        de pièce lisible occupaient indéfiniment ces cinquante places. On
+        parcourt donc toutes les pages, et les messages déjà traités — `exclure`,
+        par identifiant Internet — sont sautés sans être téléchargés. `limite`
+        borne le nombre de messages *nouveaux* rendus ; `reste` dit s'il y en a
+        d'autres derrière, pour que l'appelant enchaîne.
+        """
+        self.reste = False
+        params = {
+            # Le tri exige que sa propriété ouvre le filtre (règle de Graph).
+            "$filter": "receivedDateTime ge 1900-01-01T00:00:00Z and isRead eq false",
+            "$orderby": "receivedDateTime asc",
+            "$top": "50",
+            "$select": "id,internetMessageId",
+        }
+        page = self.client.appeler("GET", f"{self._dossier()}/messages", params=params).json()
+        messages: list[MessageEntrant] = []
+        while True:
+            for element in page.get("value") or []:
+                if (element.get("internetMessageId") or "").strip() in exclure:
+                    continue
+                if len(messages) >= limite:
+                    self.reste = True
+                    return messages
+                identifiant = element["id"]
+                # Le message entier, au format MIME : ce que `depuis_message`
+                # sait lire, pièces jointes comprises.
+                brut = self.client.appeler("GET", f"/messages/{quote(identifiant)}/$value").content
+                message = depuis_message(brut)
+                self._identifiants[message.message_id] = identifiant
+                messages.append(message)
+            suite = page.get("@odata.nextLink")
+            if not suite:
+                return messages
+            page = self.client.appeler("GET", _lien_graph(suite)).json()
+
+    # --- la boîte, telle qu'un client de messagerie la montre --------------
+
+    def lister(
+        self, *, filtre: str = "tous", recherche: str = "", taille: int = 50, suite: str = ""
+    ) -> dict:
+        """Une page de messages, les plus récents d'abord, et le lien de la suivante."""
+        if suite:
+            page = self.client.appeler("GET", _lien_graph(suite)).json()
+        else:
+            params = {"$select": _CHAMPS_LISTE, "$top": str(max(1, min(taille, 100)))}
+            if recherche.strip():
+                # $search ne se combine pas avec un tri : Graph rend par pertinence.
+                params["$search"] = '"' + recherche.strip().replace('"', '') + '"'
+            else:
+                params["$orderby"] = "receivedDateTime desc"
+                conditions = []
+                if filtre == "non_lus":
+                    conditions.append("isRead eq false")
+                elif filtre == "avec_pj":
+                    conditions.append("hasAttachments eq true")
+                if conditions:
+                    params["$filter"] = " and ".join(
+                        ["receivedDateTime ge 1900-01-01T00:00:00Z", *conditions]
+                    )
+            page = self.client.appeler(
+                "GET", f"{self._dossier()}/messages", params=params
+            ).json()
+        return {
+            "messages": [_resume(m) for m in page.get("value") or []],
+            "suite": page.get("@odata.nextLink") or "",
+        }
+
+    def lire(self, identifiant: str) -> dict:
+        """Un message en entier : corps en texte, destinataires, pièces jointes."""
+        m = self.client.appeler(
             "GET",
-            f"{self._dossier()}/messages",
+            f"/messages/{quote(identifiant)}",
+            params={"$select": _CHAMPS_LISTE + ",body,toRecipients,ccRecipients"},
+            # Le corps en texte : du HTML d'un inconnu n'a rien à faire dans l'écran.
+            entetes={"Prefer": 'outlook.body-content-type="text"'},
+        ).json()
+        pieces = self.client.appeler(
+            "GET",
+            f"/messages/{quote(identifiant)}/attachments",
+            params={"$select": "id,name,contentType,size,isInline"},
+        ).json()
+        resume = _resume(m)
+        resume["corps"] = ((m.get("body") or {}).get("content") or "")[:50_000]
+        resume["destinataires"] = [
+            (d.get("emailAddress") or {}).get("address", "")
+            for d in (m.get("toRecipients") or []) + (m.get("ccRecipients") or [])
+        ]
+        resume["pieces"] = [
+            {
+                "id": a["id"],
+                "nom": a.get("name") or "pièce jointe",
+                "type": a.get("contentType") or "",
+                "octets": int(a.get("size") or 0),
+                "en_ligne": bool(a.get("isInline")),
+            }
+            for a in pieces.get("value") or []
+        ]
+        return resume
+
+    def piece_jointe(self, identifiant: str, piece: str) -> tuple[bytes, str, str]:
+        """Le contenu d'une pièce jointe : (octets, nom, type)."""
+        a = self.client.appeler(
+            "GET", f"/messages/{quote(identifiant)}/attachments/{quote(piece)}"
+        ).json()
+        contenu = a.get("contentBytes")
+        if not contenu:
+            raise ErreurGraph("Cette pièce jointe n'est pas un fichier (message joint ou lien).")
+        return base64.b64decode(contenu), a.get("name") or "piece", a.get("contentType") or ""
+
+    def message_complet(self, identifiant: str) -> MessageEntrant:
+        """Le message au format MIME, lu comme le relevé le lit."""
+        brut = self.client.appeler("GET", f"/messages/{quote(identifiant)}/$value").content
+        message = depuis_message(brut)
+        self._identifiants[message.message_id] = identifiant
+        return message
+
+    def du_meme_expediteur(self, adresse: str, taille: int = 25) -> list[dict]:
+        """Les autres messages de cette adresse, dans toute la boîte.
+
+        Un candidat envoie souvent son dossier en deux ou trois courriels — le CV,
+        puis les diplômes, puis « j'ai oublié la lettre ». Les voir ensemble
+        évite d'en faire trois dossiers.
+        """
+        adresse = adresse.strip().replace("'", "''")
+        if not adresse:
+            return []
+        page = self.client.appeler(
+            "GET",
+            "/messages",
             params={
-                "$filter": "isRead eq false",
-                "$top": str(limite),
-                "$select": "id,internetMessageId",
+                "$filter": f"from/emailAddress/address eq '{adresse}'",
+                "$select": _CHAMPS_LISTE,
+                "$top": str(taille),
             },
         ).json()
+        messages = [_resume(m) for m in page.get("value") or []]
+        return sorted(messages, key=lambda m: m["recu_le"], reverse=True)
 
-        messages: list[MessageEntrant] = []
-        for element in liste.get("value") or []:
-            identifiant = element["id"]
-            # Le message entier, au format MIME : ce que `depuis_message` sait
-            # lire, pièces jointes comprises.
-            brut = self.client.appeler("GET", f"/messages/{quote(identifiant)}/$value").content
-            message = depuis_message(brut)
-            self._identifiants[message.message_id] = identifiant
-            messages.append(message)
-        return messages
+    def marquer_lu(self, identifiant: str, lu: bool = True) -> None:
+        self.client.appeler("PATCH", f"/messages/{quote(identifiant)}", json={"isRead": lu})
 
     def marquer_traite(self, message_id: str) -> None:
         identifiant = self._identifiants.get(message_id)
@@ -233,6 +364,39 @@ class BoiteGraph:
             # Le relevé reste rejouable : un message non marqué sera reconnu
             # comme déjà reçu au passage suivant.
             logger.warning("marquage impossible pour %s : %s", message_id, exc)
+
+
+_CHAMPS_LISTE = (
+    "id,internetMessageId,subject,from,receivedDateTime,isRead,hasAttachments,"
+    "bodyPreview,conversationId"
+)
+
+
+def _lien_graph(lien: str) -> str:
+    """Un lien de page suivante, accepté seulement s'il mène bien à Graph.
+
+    Il revient de l'écran : sans ce contrôle, n'importe quelle adresse
+    recevrait le jeton de la boîte.
+    """
+    if not lien.startswith(f"{GRAPH}/"):
+        raise ErreurGraph("Lien de page invalide.")
+    return lien
+
+
+def _resume(m: dict) -> dict:
+    expediteur = (m.get("from") or {}).get("emailAddress") or {}
+    return {
+        "id": m.get("id", ""),
+        "message_id": (m.get("internetMessageId") or "").strip(),
+        "sujet": m.get("subject") or "",
+        "expediteur": (expediteur.get("address") or "").lower(),
+        "nom_expediteur": expediteur.get("name") or "",
+        "recu_le": m.get("receivedDateTime") or "",
+        "lu": bool(m.get("isRead")),
+        "avec_pieces": bool(m.get("hasAttachments")),
+        "apercu": (m.get("bodyPreview") or "")[:300],
+        "conversation": m.get("conversationId") or "",
+    }
 
 
 def _destinataire(adresse: str, nom: str = "") -> dict:

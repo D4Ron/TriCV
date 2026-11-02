@@ -56,6 +56,8 @@ class SettingsOut(BaseModel):
     # Les candidatures reçues hors de tout avis — par la boîte de candidatures
     # ou par le formulaire du site — rejoignent-elles le vivier ?
     candidatures_spontanees: bool = True
+    # Les écrans d'avant la refonte de la revue et de la boîte.
+    interface_classique: bool = False
     storage_backend: str
     spacy_models_loaded: list[str] = Field(default_factory=list)
 
@@ -109,6 +111,7 @@ class ReglagesIn(BaseModel):
     redact_demographics: bool | None = None
     allow_self_registration: bool | None = None
     candidatures_spontanees: bool | None = None
+    interface_classique: bool | None = None
 
     # Boîte de candidatures et envoi, sur Microsoft 365.
     courriel_actif: bool | None = None

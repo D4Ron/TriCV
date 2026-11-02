@@ -46,20 +46,11 @@ def contenu() -> list:
         )
     )
 
-    h.append(para("2. Accorder le consentement Microsoft", "section"))
+    h.append(para("2. Contrôler", "section"))
     h.append(
         para(
-            "<b>entra.microsoft.com</b> › Inscriptions d'applications › l'application de "
-            "TriCV › <b>Autorisations de l'API</b> :"
-        )
-    )
-    h.append(
-        para(
-            "• Microsoft Graph › <b>Autorisations d'application</b> (pas déléguées) : "
-            "<font face='Courier'>Mail.ReadWrite</font> et "
-            "<font face='Courier'>Mail.Send</font>.<br/>"
-            "• Cliquer <b>Accorder un consentement d'administrateur</b> — les deux "
-            "lignes doivent passer au vert."
+            "<b>Paramètres › État</b> : chaque ligne « En place ». Le consentement "
+            "Microsoft est déjà accordé (vérifié le 02/11/2026) : rien à faire côté Entra."
         )
     )
     return h

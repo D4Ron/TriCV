@@ -49,6 +49,7 @@ from app.models.recrutement import (
     Poste,
     nouvelle_cle_publique,
 )
+from app.models.boite import ExpediteurIgnore, MessageTraite
 from app.models.frequentation import EVENEMENTS, Frequentation
 from app.models.user import User
 
@@ -99,6 +100,8 @@ __all__ = [
     "TypeEchange",
     "UsageModele",
     "EVENEMENTS",
+    "ExpediteurIgnore",
+    "MessageTraite",
     "Frequentation",
     "Parametre",
     "User",

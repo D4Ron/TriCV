@@ -30,13 +30,26 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from starlette.background import BackgroundTask
 
-from app.api.candidatures import _vers_sortie, get_candidature_or_404
+from app.api.candidatures import (
+    SuppressionRetenue,
+    _vers_sortie,
+    get_candidature_or_404,
+    preparer_suppression,
+)
 from app.api.postes import _PORTEES, get_poste_or_404
 from app.deps import CurrentUser, DbSession
-from app.models import Candidat, Candidature, Mandat, Poste, StatutCandidature
+from app.models import (
+    Candidat,
+    Candidature,
+    ExpediteurIgnore,
+    Mandat,
+    Poste,
+    StatutCandidature,
+)
+from app.models import boite as traces
 from app.models.base import utcnow
 from app.schemas.recrutement import CandidatureOut
-from app.services import audit, storage
+from app.services import audit, parametres, storage
 from app.services.preselection import evaluer_candidature
 
 router = APIRouter(tags=["dossiers"])
@@ -266,6 +279,8 @@ class CandidatureSansPoste(BaseModel):
     nom: str
     prenom: str
     email: str | None
+    # Pour regrouper les dossiers inutiles par provenance et les écarter d'un coup.
+    domaine: str | None
     recue_le: datetime
     source: str
     objet: str | None
@@ -299,6 +314,9 @@ async def sans_poste(db: DbSession, _: CurrentUser) -> list[CandidatureSansPoste
             nom=c.candidat.nom,
             prenom=c.candidat.prenom or "",
             email=c.candidat.email,
+            domaine=("@" + c.candidat.email.rpartition("@")[2].lower())
+            if c.candidat.email and "@" in c.candidat.email
+            else None,
             recue_le=c.recue_le,
             source=str(c.source.value if hasattr(c.source, "value") else c.source),
             objet=c.notes_rh,
@@ -411,3 +429,95 @@ async def rattacher(
     )
     await db.commit()
     return _vers_sortie(await get_candidature_or_404(db, candidature_id))
+
+
+# --- la suppression groupée ---------------------------------------------------
+
+
+class SuppressionGroupee(BaseModel):
+    candidature_ids: list[str] = Field(min_length=1, max_length=MAX_DOSSIERS)
+    motif: str = Field(min_length=3, max_length=500)
+    # Passer outre les retenues (entretien saisi, courriel envoyé, présélection).
+    confirmer: bool = False
+    # Ignorer aussi, désormais, les expéditeurs de ces dossiers.
+    ignorer_expediteurs: bool = False
+
+
+@router.post("/dossiers/suppression")
+async def supprimer_en_lot(
+    payload: SuppressionGroupee, db: DbSession, user: CurrentUser
+) -> dict:
+    """Supprime d'un coup des dossiers inutiles — lettres d'information, rapports.
+
+    Le relevé prend tout ce qui porte une pièce lisible : c'est voulu, un
+    dossier de trop se retire alors qu'une candidature manquée ne se rattrape
+    pas. Encore faut-il que retirer vingt dossiers ne coûte pas vingt gestes.
+
+    Chaque dossier passe par la même suppression qu'à l'unité, avec les mêmes
+    retenues : ceux qui ne ressemblent pas à une erreur — entretien saisi,
+    courriel déjà envoyé, présélection — sont *gardés* et listés, sauf
+    confirmation explicite. Un dossier venu d'un courriel laisse une trace
+    « supprimé » : le relevé ne le recréera pas. Et `ignorer_expediteurs`
+    empêche le même expéditeur d'en produire d'autres.
+    """
+    supprimes: list[str] = []
+    retenus: list[dict] = []
+    fichiers: list[str] = []
+    adresses: set[str] = set()
+    for identifiant in dict.fromkeys(payload.candidature_ids):
+        try:
+            candidature = await get_candidature_or_404(db, identifiant)
+        except HTTPException:
+            continue
+        nom = f"{candidature.candidat.nom} {candidature.candidat.prenom or ''}".strip()
+        email = (candidature.candidat.email or "").lower()
+        try:
+            _, a_effacer = await preparer_suppression(
+                db,
+                candidature,
+                user_id=user.id,
+                motif=payload.motif,
+                confirmer=payload.confirmer,
+                lever=False,
+            )
+        except SuppressionRetenue as exc:
+            retenus.append({"id": identifiant, "nom": nom, "raison": str(exc)})
+            continue
+        supprimes.append(identifiant)
+        fichiers.extend(a_effacer)
+        if email:
+            adresses.add(email)
+
+    ignores: list[str] = []
+    if payload.ignorer_expediteurs and adresses:
+        reglages = await parametres.lire(db)
+        existantes = set(
+            (await db.execute(select(ExpediteurIgnore.motif_adresse))).scalars()
+        )
+        for adresse in sorted(adresses):
+            if adresse in existantes or (
+                reglages.boite and traces.normaliser_adresse(reglages.boite) == adresse
+            ):
+                continue
+            db.add(ExpediteurIgnore(motif_adresse=adresse, raison=payload.motif, cree_par=user.id))
+            ignores.append(adresse)
+
+    await audit.record(
+        db,
+        action="dossiers.suppression_groupee",
+        entity_type="candidature",
+        entity_id=None,
+        user_id=user.id,
+        details={
+            "motif": payload.motif,
+            "supprimes": len(supprimes),
+            "retenus": len(retenus),
+            "expediteurs_ignores": ignores,
+        },
+    )
+    await db.commit()
+
+    depot = storage.get_storage()
+    for chemin in fichiers:
+        await depot.delete(chemin)
+    return {"supprimes": len(supprimes), "retenus": retenus, "expediteurs_ignores": ignores}

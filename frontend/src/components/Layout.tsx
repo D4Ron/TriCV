@@ -5,6 +5,7 @@ import { useAuthStore } from '@/store/auth'
 import { initials } from '@/lib/format'
 import { LogoKapi, Marque } from '@/components/Marque'
 import InstallerApplication from '@/components/InstallerApplication'
+import { useInterfaceClassique } from '@/lib/interface'
 
 export { LogoKapi, Marque }
 
@@ -18,6 +19,7 @@ export default function Layout() {
   const navigate = useNavigate()
   const user = useAuthStore((state) => state.user)
   const logout = useAuthStore((state) => state.logout)
+  const classique = useInterfaceClassique()
 
   // L'onglet actif prend le bleu de la marque plutôt qu'un gris : sur une
   // barre blanche, c'est le seul repère de position.
@@ -47,7 +49,12 @@ export default function Layout() {
             <NavLink to="/mandats" className={navClass}>
               Mandats
             </NavLink>
-            <NavLink to="/vivier" className={navClass}>
+            {!classique && (
+          <NavLink to="/boite" className={navClass}>
+            Boîte
+          </NavLink>
+        )}
+        <NavLink to="/vivier" className={navClass}>
               Vivier
             </NavLink>
             <NavLink to="/archives" className={navClass}>

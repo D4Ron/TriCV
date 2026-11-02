@@ -8,6 +8,8 @@ import SignupPage from '@/pages/SignupPage'
 import MandatsPage from '@/pages/MandatsPage'
 import MandatDetailPage from '@/pages/MandatDetailPage'
 import PosteDetailPage from '@/pages/PosteDetailPage'
+import RevuePage from '@/pages/RevuePage'
+import BoitePage from '@/pages/BoitePage'
 import ArchivesPage from '@/pages/ArchivesPage'
 import VivierPage from '@/pages/VivierPage'
 import SessionsPage from '@/pages/SessionsPage'
@@ -79,6 +81,8 @@ export default function App() {
         <Route path="/mandats" element={<MandatsPage />} />
         <Route path="/mandats/:mandatId" element={<MandatDetailPage />} />
         <Route path="/postes/:posteId" element={<PosteDetailPage />} />
+        <Route path="/postes/:posteId/revue" element={<RevuePage />} />
+        <Route path="/boite" element={<BoitePage />} />
         <Route path="/vivier" element={<VivierPage />} />
         <Route path="/archives" element={<ArchivesPage />} />
         <Route path="/sessions" element={<SessionsPage />} />

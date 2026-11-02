@@ -36,6 +36,7 @@ from app.models import (
     StatutCandidature,
 )
 from app.models.base import utcnow
+from app.models.boite import SUPPRIME as MessageTraite_SUPPRIME
 from app.schemas.recrutement import (
     AppreciationIn,
     CandidatureCreate,
@@ -1019,17 +1020,28 @@ async def apercu_courriel(db: DbSession, _: CurrentUser) -> dict:
 
 
 @router.post("/courriel/relever")
-async def relever_courriel(db: DbSession, user: CurrentUser) -> dict:
-    """Relève la boîte et crée les candidatures rattachables.
+async def relever_courriel(
+    db: DbSession, user: CurrentUser, limite: int = Query(25, ge=1, le=100)
+) -> dict:
+    """Relève un lot de messages et crée les candidatures rattachables.
 
     Déclenché à la demande plutôt que par une tâche de fond : le relevé est une
     action que les RH veulent voir aboutir, avec son compte-rendu.
+
+    Par lots : une boîte de plusieurs centaines de non-lus ne tient pas dans
+    une requête — chaque message se télécharge en entier. `reste` dit qu'un
+    autre lot attend ; l'écran enchaîne et montre l'avancement. Chaque lot
+    est enregistré : une coupure en route ne perd rien de ce qui est fait.
     """
     reglages = await parametres.lire(db)
     boite = await _ouvrir_boite(db)
     try:
         resultat = await courriel.relever(
-            db, boite, accepter_spontanees=reglages.candidatures_spontanees
+            db,
+            boite,
+            limite=limite,
+            accepter_spontanees=reglages.candidatures_spontanees,
+            utilisateur=user.id,
         )
     except courriel.ErreurBoite as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
@@ -1061,6 +1073,8 @@ async def relever_courriel(db: DbSession, user: CurrentUser) -> dict:
         "echanges_client": resultat.echanges_client,
         "non_rattaches": resultat.non_rattaches,
         "sans_piece": resultat.sans_piece,
+        "expediteurs_ignores": resultat.expediteurs_ignores,
+        "reste": resultat.reste,
     }
 
 
@@ -1287,6 +1301,41 @@ async def supprimer_candidature(
     mais il faut le dire.
     """
     candidature = await get_candidature_or_404(db, candidature_id)
+    compte_rendu, fichiers = await preparer_suppression(
+        db, candidature, user_id=user.id, motif=motif, confirmer=confirmer
+    )
+    await db.commit()
+
+    # Après le commit seulement : une transaction annulée ne doit pas laisser
+    # un dossier intact dont les fichiers ont déjà disparu.
+    depot = storage.get_storage()
+    for chemin in fichiers:
+        await depot.delete(chemin)
+    return compte_rendu
+
+
+class SuppressionRetenue(Exception):
+    """Le dossier ne ressemble pas à une erreur : il faut confirmer."""
+
+
+async def preparer_suppression(
+    db: AsyncSession,
+    candidature: Candidature,
+    *,
+    user_id: str,
+    motif: str,
+    confirmer: bool,
+    lever: bool = True,
+) -> tuple[dict, list[str]]:
+    """Supprime un dossier dans la transaction en cours, sans la valider.
+
+    Rend le compte rendu et les fichiers à effacer *après* le commit. Partagée
+    par la suppression unitaire et la suppression groupée, pour que la
+    seconde ne contourne aucune des retenues de la première.
+
+    Un dossier venu d'un courriel laisse une trace « supprimé » : le relevé
+    suivant ne le recréera pas.
+    """
     candidat = candidature.candidat
 
     courriels = await db.scalar(
@@ -1307,12 +1356,14 @@ async def supprimer_candidature(
         retenues.append("il figure dans la présélection")
 
     if retenues and not confirmer:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
+        message = (
             "Ce dossier ne ressemble pas à une erreur de saisie : "
             + " ; ".join(retenues)
-            + ". Confirmez la suppression si c'est bien ce que vous voulez.",
+            + ". Confirmez la suppression si c'est bien ce que vous voulez."
         )
+        if lever:
+            raise HTTPException(status.HTTP_409_CONFLICT, message)
+        raise SuppressionRetenue(message)
 
     # Relevés avant la suppression : après, l'objet n'a plus ni pièces ni note.
     fichiers = [p.chemin_stockage for p in candidature.pieces if p.chemin_stockage]
@@ -1340,7 +1391,7 @@ async def supprimer_candidature(
         action="candidature.supprimer",
         entity_type="candidature",
         entity_id=candidature.id,
-        user_id=user.id,
+        user_id=user_id,
         details={
             "motif": motif,
             "candidat": f"{candidat.nom} {candidat.prenom}",
@@ -1355,23 +1406,35 @@ async def supprimer_candidature(
         },
     )
 
+    if candidature.message_id:
+        await courriel.tracer(
+            db,
+            courriel.MessageEntrant(
+                message_id=candidature.message_id,
+                expediteur=candidat.email or "",
+                nom_expediteur="",
+                sujet=(candidature.notes_rh or "")[:512],
+                recu_le=candidature.recue_le,
+            ),
+            MessageTraite_SUPPRIME,
+            motif=motif[:500],
+            utilisateur=user_id,
+        )
+
     await db.delete(candidature)
     if profil_supprime:
         await db.delete(candidat)
-    await db.commit()
+    await db.flush()
 
-    # Après le commit seulement : une transaction annulée ne doit pas laisser
-    # un dossier intact dont les fichiers ont déjà disparu.
-    depot = storage.get_storage()
-    for chemin in fichiers:
-        await depot.delete(chemin)
-
-    return {
-        "supprime": True,
-        "pieces_supprimees": len(fichiers),
-        "profil_supprime": profil_supprime,
-        "courriels_conserves": courriels,
-    }
+    return (
+        {
+            "supprime": True,
+            "pieces_supprimees": len(fichiers),
+            "profil_supprime": profil_supprime,
+            "courriels_conserves": courriels,
+        },
+        fichiers,
+    )
 
 
 @router.post("/candidatures/{candidature_id}/depouiller")

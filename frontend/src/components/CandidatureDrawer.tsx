@@ -5,6 +5,8 @@ import { LIBELLE_PIECE, libellePiece } from '@/lib/pieces'
 import { Callout, ErrorState, Spinner } from '@/components/ui'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import RattacherPoste from '@/components/RattacherPoste'
+import { useAnnulable } from '@/lib/annulable'
+import { LIBELLE_SOURCE } from '@/lib/interface'
 import { formatDateTime, formatMois } from '@/lib/format'
 import type { Elimination, Provenance } from '@/types'
 
@@ -495,6 +497,8 @@ function SupprimerDossier({
   // Renseigné quand le serveur a retenu le dossier : il faut alors redemander
   // en connaissance de cause.
   const [aConfirmer, setAConfirmer] = useState(false)
+  // Dix secondes pour se raviser : le clic part souvent sur la mauvaise ligne.
+  const annulable = useAnnulable()
 
   const supprimer = useMutation({
     mutationFn: (confirmer: boolean) =>
@@ -559,8 +563,11 @@ function SupprimerDossier({
         <button
           type="button"
           className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-800 disabled:opacity-50"
-          disabled={motif.trim().length < 3 || supprimer.isPending}
-          onClick={() => supprimer.mutate(aConfirmer)}
+          disabled={motif.trim().length < 3 || supprimer.isPending || annulable.enAttente}
+          onClick={() => {
+            const confirmer = aConfirmer
+            annulable.programmer(`Suppression du dossier de ${nom}…`, () => supprimer.mutate(confirmer))
+          }}
         >
           {supprimer.isPending && <Spinner />}
           {aConfirmer ? 'Supprimer quand même' : 'Supprimer définitivement'}
@@ -581,6 +588,7 @@ function SupprimerDossier({
           <span className="text-xs text-ink-500">Le motif est obligatoire.</span>
         )}
       </div>
+      {annulable.bandeau}
     </div>
   )
 }
@@ -802,7 +810,7 @@ export default function CandidatureDrawer({
             {c && (
               <p className="truncate text-xs text-ink-500">
                 {c.candidat.email ?? 'sans email'} · reçue le{' '}
-                {formatDateTime(c.recue_le, 'fr')} · {c.source.toLowerCase()}
+                {formatDateTime(c.recue_le, 'fr')} · {LIBELLE_SOURCE[c.source] ?? c.source.toLowerCase()}
               </p>
             )}
           </div>

@@ -32,6 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.referentiel import PieceDossier
 from app.models import (
     AccesClient,
+    ExpediteurIgnore,
+    MessageTraite,
     AuteurEchange,
     EchangeClient,
     TypeEchange,
@@ -44,6 +46,7 @@ from app.models import (
     SourceCandidature,
     StatutAvis,
 )
+from app.models import boite as traces
 from app.services import doublons, extraction, storage
 from app.services.preselection import charger_candidature, evaluer_candidature
 
@@ -68,9 +71,18 @@ class MessageEntrant:
 
 
 class SourceCourriel(Protocol):
-    """Une boîte dont on peut relever les messages non traités."""
+    """Une boîte dont on peut relever les messages non traités.
 
-    def relever(self, limite: int = 50) -> list[MessageEntrant]: ...
+    `exclure` : les identifiants Internet des messages déjà traités, que la
+    boîte saute sans les télécharger. `reste`, après l'appel : d'autres
+    messages attendent derrière la limite.
+    """
+
+    reste: bool
+
+    def relever(
+        self, limite: int = 50, exclure: frozenset[str] = frozenset()
+    ) -> list[MessageEntrant]: ...
 
     def marquer_traite(self, message_id: str) -> None: ...
 
@@ -241,6 +253,54 @@ class ResultatReleve:
     echanges_client: int = 0
     non_rattaches: list[str] = field(default_factory=list)
     sans_piece: list[str] = field(default_factory=list)
+    # Messages d'un expéditeur ignoré : ni dossier, ni place dans la liste.
+    expediteurs_ignores: int = 0
+    # D'autres messages attendent : l'appelant relance pour la suite.
+    reste: bool = False
+
+
+async def deja_traites(db: AsyncSession) -> frozenset[str]:
+    """Les identifiants Internet des messages que le relevé n'a plus à lire.
+
+    Ceux qui ont une trace, ceux qui ont donné une candidature avant que la
+    trace existe, et les réponses de promoteurs déjà versées à leur fil.
+    """
+    ids: set[str] = set()
+    for colonne in (MessageTraite.message_id, Candidature.message_id, EchangeClient.message_id):
+        ids.update(v for v in (await db.execute(select(colonne))).scalars() if v)
+    return frozenset(ids)
+
+
+async def regles_d_ignorance(db: AsyncSession) -> set[str]:
+    return set((await db.execute(select(ExpediteurIgnore.motif_adresse))).scalars())
+
+
+async def tracer(
+    db: AsyncSession,
+    message: MessageEntrant,
+    statut: str,
+    *,
+    candidature_id: str | None = None,
+    motif: str | None = None,
+    utilisateur: str | None = None,
+) -> None:
+    """Note ce qui a été fait d'un message ; une trace existante est mise à jour."""
+    if not message.message_id:
+        return
+    existante = (
+        await db.execute(select(MessageTraite).where(MessageTraite.message_id == message.message_id))
+    ).scalar_one_or_none()
+    if existante is None:
+        existante = MessageTraite(message_id=message.message_id)
+        db.add(existante)
+    existante.statut = statut
+    existante.expediteur = (message.expediteur or "")[:320]
+    existante.sujet = (message.sujet or "")[:512]
+    existante.recu_le = message.recu_le
+    existante.candidature_id = candidature_id or existante.candidature_id
+    existante.motif = motif
+    existante.traite_par = utilisateur
+    await db.flush()
 
 
 async def _deja_recu(db: AsyncSession, message_id: str) -> bool:
@@ -280,12 +340,39 @@ async def creer_depuis_message(
     db.add(candidature)
     await db.flush()
 
+    await enregistrer_pieces(db, candidature, message)
+
+    chargee = await charger_candidature(db, candidature.id)
+    await evaluer_candidature(db, chargee)
+    return chargee
+
+
+async def enregistrer_pieces(
+    db: AsyncSession, candidature: Candidature, message: MessageEntrant
+) -> int:
+    """Range les pièces lisibles d'un message dans un dossier. Rend leur nombre.
+
+    Sert aussi à verser au même dossier le deuxième courriel d'un candidat —
+    « j'ai oublié les diplômes ». Une pièce déjà présente, au même contenu,
+    n'est pas ajoutée deux fois.
+    """
+    deja = {
+        e for e in (await db.execute(
+            select(PieceCandidature.empreinte).where(PieceCandidature.candidature_id == candidature.id)
+        )).scalars() if e
+    }
     depot = storage.get_storage()
+    ajoutees = 0
     for piece in message.pieces:
         type_mime = extraction.sniff_mime(piece.donnees, piece.nom)
         if type_mime not in extraction.ALLOWED_MIME_TYPES:
             # Signatures, images inline : ignorées sans faire échouer le reste.
             logger.info("pièce jointe ignorée (%s) : %s", type_mime, piece.nom)
+            continue
+        empreinte = hashlib.sha256(piece.donnees).hexdigest()
+        # Comparée à ce que le dossier avait *avant* ce message seulement : deux
+        # pièces d'un même envoi sont deux pièces, même au contenu identique.
+        if empreinte in deja:
             continue
         cle = await depot.save(storage.build_key(type_mime), piece.donnees)
         db.add(
@@ -296,14 +383,12 @@ async def creer_depuis_message(
                 chemin_stockage=cle,
                 type_mime=type_mime,
                 taille_octets=len(piece.donnees),
-                empreinte=hashlib.sha256(piece.donnees).hexdigest(),
+                empreinte=empreinte,
             )
         )
+        ajoutees += 1
     await db.flush()
-
-    chargee = await charger_candidature(db, candidature.id)
-    await evaluer_candidature(db, chargee)
-    return chargee
+    return ajoutees
 
 
 async def apercu(
@@ -417,6 +502,7 @@ async def relever(
     source: SourceCourriel,
     limite: int = 50,
     accepter_spontanees: bool = True,
+    utilisateur: str | None = None,
 ) -> ResultatReleve:
     """Relève la boîte et crée les candidatures.
 
@@ -435,11 +521,22 @@ async def relever(
     fil « à côté du dossier » n'était vrai qu'à moitié.
     """
     resultat = ResultatReleve()
+    regles = await regles_d_ignorance(db)
 
-    for message in source.relever(limite):
+    messages = source.relever(limite, exclure=await deja_traites(db))
+    resultat.reste = bool(getattr(source, "reste", False))
+    for message in messages:
         if await _deja_recu(db, message.message_id):
             resultat.ignores += 1
             source.marquer_traite(message.message_id)
+            continue
+
+        # Un expéditeur qu'on a décidé d'ignorer — une lettre d'information, un
+        # rapport automatique — ne produit plus de dossier. Le message reste
+        # dans la boîte, intact : on ne fait que ne plus le lire.
+        if traces.est_ignore(message.expediteur, regles):
+            await tracer(db, message, traces.IGNORE, motif="expéditeur ignoré", utilisateur=utilisateur)
+            resultat.expediteurs_ignores += 1
             continue
 
         # Le promoteur d'abord : il écrit depuis une adresse connue, et sa
@@ -452,6 +549,7 @@ async def relever(
                 resultat.echanges_client += 1
             else:
                 resultat.ignores += 1
+            await tracer(db, message, traces.IMPORTE, motif="réponse du promoteur", utilisateur=utilisateur)
             source.marquer_traite(message.message_id)
             continue
 
@@ -472,20 +570,29 @@ async def relever(
                 resultat.non_rattaches.append(message.sujet or message.expediteur)
             else:
                 resultat.sans_piece.append(message.sujet or message.expediteur)
+            # Noté pour ne pas le retélécharger à chaque relevé ; il reste non lu
+            # dans la boîte, et l'écran de la boîte permet de l'importer quand même.
+            await tracer(db, message, traces.SANS_PIECE, utilisateur=utilisateur)
             continue
 
         if poste is None and not accepter_spontanees:
             resultat.non_rattaches.append(message.sujet or message.expediteur)
+            await tracer(
+                db, message, traces.IGNORE,
+                motif="hors avis, candidatures spontanées fermées", utilisateur=utilisateur,
+            )
             continue
 
         if await doublons.trouver_identique(
             db, poste.id if poste is not None else None, empreintes
         ):
             resultat.ignores += 1
+            await tracer(db, message, traces.IGNORE, motif="pièces déjà reçues", utilisateur=utilisateur)
             source.marquer_traite(message.message_id)
             continue
 
-        await creer_depuis_message(db, message, poste)
+        cree = await creer_depuis_message(db, message, poste)
+        await tracer(db, message, traces.IMPORTE, candidature_id=cree.id, utilisateur=utilisateur)
         if poste is None:
             resultat.spontanees += 1
         else:

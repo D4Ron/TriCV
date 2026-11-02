@@ -65,6 +65,11 @@ INSCRIPTION_LIBRE = "allow_self_registration"
 # ne le demande — ou fermer la porte pendant une campagne chargée.
 CANDIDATURES_SPONTANEES = "candidatures_spontanees"
 
+# Revenir aux écrans d'avant la refonte de la revue des dossiers et de la
+# boîte — le temps de s'habituer, ou si la nouvelle façon gêne. Les deux
+# coexistent : rien n'est perdu à basculer, dans un sens ou dans l'autre.
+INTERFACE_CLASSIQUE = "interface_classique"
+
 # Boîte de candidatures. Elle se règle depuis l'interface parce que l'adresse
 # de recrutement change avec les campagnes : demander un accès au serveur à
 # chaque fois condamnerait la fonction à ne jamais être utilisée.
@@ -148,6 +153,7 @@ class Reglages:
     allow_self_registration: bool
     candidatures_spontanees: bool
     courriel_actif: bool = False
+    interface_classique: bool = False
     adresse_boite: str = ""
     dossier_boite: str = "inbox"
     envoi_actif: bool = False
@@ -264,6 +270,8 @@ async def lire(db: AsyncSession) -> Reglages:
                 reglages.allow_self_registration = _en_bool(valeur)
             elif cle == CANDIDATURES_SPONTANEES:
                 reglages.candidatures_spontanees = _en_bool(valeur)
+            elif cle == INTERFACE_CLASSIQUE:
+                reglages.interface_classique = _en_bool(valeur)
             elif cle == COURRIEL_ACTIF:
                 reglages.courriel_actif = _en_bool(valeur)
             elif cle == ADRESSE_BOITE:

@@ -14,6 +14,7 @@ import {
 } from '@/components/ui'
 import GuidePipeline from '@/components/GuidePipeline'
 import PanneauCourriel from '@/components/PanneauCourriel'
+import { useInterfaceClassique } from '@/lib/interface'
 import ActionsMandat from '@/components/ActionsMandat'
 import { formatDate } from '@/lib/format'
 import type { StatutMandat } from '@/types'
@@ -164,6 +165,7 @@ export default function MandatsPage() {
   const [filtre, setFiltre] = useState('')
   const [archives, setArchives] = useState(false)
   const [ouvert, setOuvert] = useState(false)
+  const classique = useInterfaceClassique()
 
   const mandats = useQuery({
     queryKey: ['mandats', filtre, archives],
@@ -184,7 +186,13 @@ export default function MandatsPage() {
           </p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <PanneauCourriel />
+          {classique ? (
+            <PanneauCourriel />
+          ) : (
+            <Link to="/boite" className="btn-ghost">
+              Boîte de recrutement
+            </Link>
+          )}
           <select
             className="input w-auto"
             value={filtre}

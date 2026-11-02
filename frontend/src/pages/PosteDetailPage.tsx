@@ -21,6 +21,7 @@ import { PUBLIC_URL } from '@/lib/config'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import ChoisirDestinataires from '@/components/ChoisirDestinataires'
 import TelechargerDossiers from '@/components/TelechargerDossiers'
+import { useInterfaceClassique } from '@/lib/interface'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
 import FichePosteEditeur from '@/components/FichePosteEditeur'
 import GrilleEntretienEditeur from '@/components/GrilleEntretienEditeur'
@@ -1304,6 +1305,12 @@ export default function PosteDetailPage() {
   // Null tant que la grille n'est pas chargée : l'onglet ouvert est alors
   // celui qui contient effectivement des dossiers, plutôt qu'une liste vide.
   const [ongletChoisi, setOnglet] = useState<Onglet | null>(null)
+  const classique = useInterfaceClassique()
+  // Deux vues du poste : les candidats (ce qu'on fait chaque jour) et la
+  // préparation (fiche, avis, dépôt), qui ne sert qu'au lancement. Elles
+  // s'empilaient : il fallait faire défiler la préparation pour atteindre
+  // le premier candidat.
+  const [vueChoisie, setVue] = useState<'candidats' | 'preparer' | null>(null)
   const [selection, setSelection] = useState<string | null>(null)
   const [seuilOuvert, setSeuilOuvert] = useState(false)
   const [grilleOuverte, setGrilleOuverte] = useState(false)
@@ -1389,6 +1396,15 @@ export default function PosteDetailPage() {
           ? 'elimination'
           : 'preselection')
 
+  // Sans candidat, il n'y a que la préparation à faire.
+  const vue = vueChoisie ?? (g.nombre_candidatures > 0 ? 'candidats' : 'preparer')
+  const montrerPreparation = classique || vue === 'preparer'
+  const montrerCandidats = classique || vue === 'candidats'
+  const aApprecier = g.preselectionnes.filter((l) => l.appreciation_attendue && !l.elimine).length
+  const entretiensASaisir = g.preselectionnes.filter(
+    (l) => l.propose && l.note_finale_sur_cent === null,
+  ).length
+
   const onglets: Array<[Onglet, string, number]> = [
     ['preselection', 'Préqualifiés', g.nombre_preselectionnes],
     ['sous_seuil', 'Sous le seuil', g.non_retenus.length],
@@ -1437,6 +1453,7 @@ export default function PosteDetailPage() {
             {g.date_reference ? ` · clôture le ${formatDate(g.date_reference, 'fr')}` : ''}
           </p>
         </div>
+        {classique ? (
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -1506,7 +1523,100 @@ export default function PosteDetailPage() {
             Exporter (Excel)
           </button>
         </div>
+        ) : (
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {g.nombre_candidatures > 0 && (
+              <Link to={`/postes/${posteId}/revue`} className="btn-primary">
+                {g.nombre_a_verifier > 0
+                  ? `Revoir les dossiers (${g.nombre_a_verifier} à relire)`
+                  : 'Parcourir les dossiers'}
+              </Link>
+            )}
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={g.nombre_candidatures === 0}
+              onClick={() => setChoixPortee(true)}
+            >
+              Écrire aux candidats
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={g.nombre_candidatures === 0}
+              onClick={() => setChoixExport(true)}
+            >
+              Exporter (Excel)
+            </button>
+            {/* Le reste, moins fréquent, sans disparaître : un menu. */}
+            <details className="relative">
+              <summary className="btn-ghost cursor-pointer list-none">Plus ▾</summary>
+              <div className="absolute right-0 z-30 mt-1 w-64 rounded-lg border border-ink-200 bg-white p-1 shadow-lg">
+                {(
+                  [
+                    ['Barème et grille de sélection', () => setBaremeOuvert(true), false],
+                    [
+                      g.seuil > 0 ? `Seuil : ${g.seuil}/${g.total_max}` : 'Poser un seuil',
+                      () => setSeuilOuvert(true),
+                      false,
+                    ],
+                    ['Modifier la fiche', () => setFicheOuverte(true), false],
+                    ["Grille d'entretien", () => setGrilleOuverte(true), false],
+                    [
+                      'Télécharger les dossiers (ZIP)',
+                      () => setDossiersOuverts(true),
+                      g.nombre_candidatures === 0,
+                    ],
+                    [
+                      'CV à en-tête (Word)',
+                      () => exporterCv.mutate(false),
+                      exporterCv.isPending || g.nombre_preselectionnes === 0,
+                    ],
+                    ['Recalculer les notes', () => reevaluer.mutate(), reevaluer.isPending],
+                  ] as Array<[string, () => void, boolean]>
+                ).map(([libelle, action, inactif]) => (
+                  <button
+                    key={libelle}
+                    type="button"
+                    disabled={inactif}
+                    className="block w-full rounded-md px-3 py-2 text-left text-sm text-ink-700 hover:bg-ink-50 disabled:opacity-40"
+                    onClick={(e) => {
+                      ;(e.currentTarget.closest('details') as HTMLDetailsElement | null)?.removeAttribute('open')
+                      action()
+                    }}
+                  >
+                    {libelle}
+                  </button>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
       </div>
+
+      {!classique && (
+        <div className="mb-5 flex gap-1 border-b border-ink-200">
+          {(
+            [
+              ['candidats', `Candidats (${g.nombre_candidatures})`],
+              ['preparer', 'Préparer le poste'],
+            ] as const
+          ).map(([cle, libelle]) => (
+            <button
+              key={cle}
+              type="button"
+              onClick={() => setVue(cle)}
+              className={`-mb-px shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                vue === cle
+                  ? 'border-ink-900 text-ink-900'
+                  : 'border-transparent text-ink-500 hover:text-ink-800'
+              }`}
+            >
+              {libelle}
+            </button>
+          ))}
+        </div>
+      )}
 
       {erreur && (
         <div className="mb-5">
@@ -1557,6 +1667,8 @@ export default function PosteDetailPage() {
         </div>
       )}
 
+      {montrerPreparation && (
+      <>
       <div className="mb-5 grid items-start gap-4 lg:grid-cols-2">
         <div className="space-y-4">
           <FichePoste poste={p} />
@@ -1584,6 +1696,8 @@ export default function PosteDetailPage() {
       <div className="mb-5">
         <DepotEnLot posteId={posteId} />
       </div>
+      </>
+      )}
 
       {p.restriction.justification && (
         <div className="mb-5">
@@ -1601,6 +1715,51 @@ export default function PosteDetailPage() {
         </div>
       )}
 
+      {montrerCandidats && !classique && g.nombre_candidatures > 0 && (
+        <div className="mb-5 rounded-lg border border-ink-200 bg-white p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">À faire</p>
+          <ul className="mt-2 flex flex-wrap gap-2 text-sm">
+            {g.nombre_a_verifier > 0 && (
+              <li>
+                <Link
+                  to={`/postes/${posteId}/revue`}
+                  className="inline-flex items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 font-medium text-amber-900 hover:bg-amber-100"
+                >
+                  {g.nombre_a_verifier} dossier(s) à relire →
+                </Link>
+              </li>
+            )}
+            {aApprecier > 0 && (
+              <li>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-md bg-sky-50 px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
+                  onClick={() => setOnglet('preselection')}
+                >
+                  {aApprecier} lettre(s) de motivation à apprécier →
+                </button>
+              </li>
+            )}
+            {entretiensASaisir > 0 && (
+              <li>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-md bg-ink-50 px-3 py-1.5 font-medium text-ink-800 hover:bg-ink-100"
+                  onClick={() => setOnglet('preselection')}
+                >
+                  {entretiensASaisir} entretien(s) à saisir →
+                </button>
+              </li>
+            )}
+            {g.nombre_a_verifier === 0 && aApprecier === 0 && entretiensASaisir === 0 && (
+              <li className="text-ink-600">Rien en attente : tous les dossiers sont relus.</li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {montrerCandidats && (
+      <>
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Statistique valeur={g.nombre_candidatures} libelle="Candidatures" ton="text-ink-900" />
         <Statistique
@@ -1729,7 +1888,11 @@ export default function PosteDetailPage() {
                           {item.nom.toUpperCase()} {item.prenom}
                         </p>
                         <p className="truncate text-xs text-ink-500">
-                          {item.motifs.length} motif(s) en attente de confirmation
+                          {classique
+                            ? `${item.motifs.length} motif(s) en attente de confirmation`
+                            : item.motifs.length > 0
+                              ? `À relire · ${item.motifs.length} motif(s) d'élimination à confirmer`
+                              : 'À relire — rien ne l’écarte pour l’instant'}
                           {item.doublons > 0 && (
                             <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
                               {item.doublons} doublon(s)
@@ -1763,6 +1926,9 @@ export default function PosteDetailPage() {
             </div>
           )}
         </>
+      )}
+
+      </>
       )}
 
       {selection && (

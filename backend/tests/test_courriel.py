@@ -44,9 +44,18 @@ class BoiteFactice:
     def __init__(self, messages: list[bytes]) -> None:
         self.messages = [courriel.depuis_message(m) for m in messages]
         self.traites: list[str] = []
+        self.reste = False
 
-    def relever(self, limite: int = 50) -> list[courriel.MessageEntrant]:
-        return [m for m in self.messages if m.message_id not in self.traites][:limite]
+    def relever(
+        self, limite: int = 50, exclure: frozenset[str] = frozenset()
+    ) -> list[courriel.MessageEntrant]:
+        # Comme la vraie boîte : les messages déjà traités sont sautés sans
+        # compter dans la limite, et `reste` dit s'il en attend d'autres.
+        nouveaux = [
+            m for m in self.messages if m.message_id not in self.traites and m.message_id not in exclure
+        ]
+        self.reste = len(nouveaux) > limite
+        return nouveaux[:limite]
 
     def marquer_traite(self, message_id: str) -> None:
         self.traites.append(message_id)
@@ -277,7 +286,8 @@ async def test_rejouer_le_releve_ne_duplique_pas():
         second = await courriel.relever(db, BoiteFactice(messages))
         await db.commit()
         assert second.crees == 0
-        assert second.ignores == 1
+        # Reconnu à sa trace avant même d'être téléchargé : il n'est pas relu.
+        assert second.ignores == 0
         assert len((await db.execute(select(Candidature))).scalars().all()) == 1
 
 
