@@ -105,6 +105,11 @@ function Importer({
       if (r.completes) parts.push(`${r.completes} dossier(s) complété(s)`)
       if (r.deja_importes.length) parts.push(`${r.deja_importes.length} déjà importé(s)`)
       if (r.sans_piece.length) parts.push(`${r.sans_piece.length} sans pièce lisible`)
+      if (r.liens_recuperes) parts.push(`${r.liens_recuperes} document(s) récupéré(s) depuis un lien`)
+      if (r.liens_inaccessibles.length)
+        parts.push(
+          `${r.liens_inaccessibles.length} lien(s) à ouvrir à la main (${r.liens_inaccessibles.join(' ; ')})`,
+        )
       onFait(parts.join(' · ') + '.')
     },
   })
@@ -187,6 +192,8 @@ function ReleverTout({ onClose, onFait }: { onClose: () => void; onFait: () => v
     ignores: 0,
     expediteurs: 0,
     sansPiece: 0,
+    liens: 0,
+    liensInaccessibles: [] as string[],
     fini: false,
     erreur: null as string | null,
   })
@@ -208,6 +215,8 @@ function ReleverTout({ onClose, onFait }: { onClose: () => void; onFait: () => v
             ignores: e.ignores + r.ignores,
             expediteurs: e.expediteurs + r.expediteurs_ignores,
             sansPiece: e.sansPiece + r.sans_piece.length + r.non_rattaches.length,
+            liens: e.liens + r.liens_recuperes,
+            liensInaccessibles: [...e.liensInaccessibles, ...r.liens_inaccessibles],
           }))
         } catch (err) {
           setEtat((e) => ({ ...e, erreur: err instanceof Error ? err.message : 'Relevé interrompu' }))
@@ -240,6 +249,7 @@ function ReleverTout({ onClose, onFait }: { onClose: () => void; onFait: () => v
             ['Sans pièce lisible — laissés non lus', etat.sansPiece],
             ['Expéditeurs ignorés', etat.expediteurs],
             ['Déjà reçus', etat.ignores],
+            ['Documents récupérés depuis un lien', etat.liens],
           ].map(([libelle, n]) => (
             <div key={libelle as string} className="rounded-lg border border-ink-200 px-3 py-2">
               <dt className="text-xs text-ink-500">{libelle}</dt>
@@ -247,6 +257,17 @@ function ReleverTout({ onClose, onFait }: { onClose: () => void; onFait: () => v
             </div>
           ))}
         </dl>
+        {etat.liensInaccessibles.length > 0 && (
+          <Callout tone="warning">
+            {etat.liensInaccessibles.length} lien(s) à ouvrir à la main — privés, ou d&apos;un
+            service sans téléchargement direct :
+            <ul className="mt-1 max-h-32 list-disc overflow-y-auto pl-5 text-xs">
+              {etat.liensInaccessibles.map((l, i) => (
+                <li key={i}>{l}</li>
+              ))}
+            </ul>
+          </Callout>
+        )}
         {etat.erreur && <Callout tone="danger">{etat.erreur}</Callout>}
         {etat.fini && !etat.erreur && (
           <Callout tone="success">
@@ -527,6 +548,33 @@ function Lecture({
             </button>
           ))}
           {erreurPiece && <p className="w-full text-xs text-red-700">{erreurPiece}</p>}
+        </div>
+      )}
+
+      {m.liens.length > 0 && (
+        <div className="border-b border-ink-100 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+            Documents en lien ({m.liens.length})
+          </p>
+          <p className="mt-0.5 text-xs text-ink-500">
+            Récupérés à l&apos;import s&apos;ils sont publics ; un lien privé est signalé.
+          </p>
+          <ul className="mt-1.5 space-y-1 text-xs">
+            {m.liens.map((l) => (
+              <li key={l.url} className="flex items-center gap-2">
+                <span className="shrink-0 rounded bg-ink-100 px-1.5 py-0.5 text-ink-700">{l.service}</span>
+                <a
+                  href={l.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-w-0 flex-1 truncate text-brand-700 underline"
+                >
+                  {l.url}
+                </a>
+                {!l.telechargeable && <span className="shrink-0 text-amber-700">à ouvrir à la main</span>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

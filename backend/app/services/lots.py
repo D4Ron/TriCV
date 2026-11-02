@@ -37,7 +37,14 @@ from app.domain.referentiel import PieceDossier
 #
 # Les mots qu'on trouve réellement dans les noms de fichiers reçus. L'ordre
 # compte : « lettre de recommandation » doit être vu avant « lettre », sans quoi
-# une recommandation passerait pour une lettre de motivation.
+# une recommandation passerait pour une lettre de motivation ; « attestation de
+# Master » avant « attestation », qui en ferait une attestation de travail ;
+# « attestation de participation » avant « attestation » aussi, qui n'est pas
+# une preuve d'emploi.
+#
+# Relevé en production sur un vrai dossier reçu par courriel : certificat de
+# travail, passeport, carte d'identité et certificat de langue étaient tous
+# rangés en « CV », faute d'une règle qui les reconnaisse.
 _INDICES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         PieceDossier.LETTRE_RECOMMANDATION.value,
@@ -50,11 +57,30 @@ _INDICES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (PieceDossier.CV.value, ("cv", "curriculum", "resume", "vitae")),
     (
         PieceDossier.COPIE_DIPLOMES.value,
-        ("diplome", "diplomes", "master", "licence", "doctorat", "degree", "attestation reussite"),
+        (
+            "diplome", "diplomes", "master", "licence", "doctorat", "degree",
+            "attestation reussite", "attestation de reussite", "releve de notes",
+            "bac", "baccalaureat", "bts", "dut", "maitrise",
+        ),
+    ),
+    # Ni diplôme ni preuve d'emploi : un « autre document », sous son nom.
+    (
+        f"{PieceDossier.AUTRE.value}:Certificat de langue",
+        ("langue", "langues", "toefl", "toeic", "ielts", "delf", "dalf", "tcf", "cambridge"),
+    ),
+    (
+        f"{PieceDossier.AUTRE.value}:Attestation de formation",
+        (
+            "participation", "formation", "seminaire", "atelier", "webinaire",
+            "certification", "certifications",
+        ),
     ),
     (
         PieceDossier.ATTESTATIONS_TRAVAIL.value,
-        ("attestation", "attestations", "certificat travail", "experience", "employeur"),
+        (
+            "attestation", "attestations", "certificat travail", "certificat de travail",
+            "travail", "stage", "emploi", "experience", "employeur",
+        ),
     ),
     (PieceDossier.PASSEPORT.value, ("passeport", "passport")),
     (
@@ -79,6 +105,27 @@ def _normaliser(texte: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", plat).strip()
 
 
+def classer(nom_fichier: str) -> tuple[str | None, str | None]:
+    """(type, intitulé) que le nom du fichier laisse penser, ou (None, None).
+
+    L'intitulé n'est rempli que pour un « autre document » — un certificat de
+    langue, une attestation de formation —, pour qu'il ne s'affiche pas
+    comme un « Autre » muet.
+    """
+    mots = _normaliser(PurePosixPath(nom_fichier).stem)
+    if not mots:
+        return None, None
+    jetons = set(mots.split())
+    for code, indices in _INDICES:
+        for indice in indices:
+            morceaux = indice.split()
+            trouve = indice in mots if len(morceaux) > 1 else morceaux[0] in jetons
+            if trouve:
+                type_piece, _, intitule = code.partition(":")
+                return type_piece, intitule or None
+    return None, None
+
+
 def type_devine(nom_fichier: str) -> str | None:
     """Le type de pièce que le nom du fichier laisse penser, ou None.
 
@@ -86,18 +133,51 @@ def type_devine(nom_fichier: str) -> str | None:
     qu'il contient, et le classer d'office en CV donnerait une complétude
     fausse — un dossier compté complet alors que le CV manque.
     """
-    mots = _normaliser(PurePosixPath(nom_fichier).stem)
-    if not mots:
+    return classer(nom_fichier)[0]
+
+
+# --- le contenu, quand le nom ne dit rien ------------------------------------
+
+_CV = (
+    "curriculum vitae", "experiences professionnelles", "experience professionnelle",
+    "parcours professionnel", "competences", "centres d interet", "langues",
+    "formation academique", "formations", "references", "profil",
+)
+
+
+def type_par_contenu(texte: str) -> str | None:
+    """Le type que le texte d'un document laisse penser, ou None.
+
+    Ne sert que quand le nom du fichier ne dit rien (« scan001.pdf ») : on lit
+    le début du document et on y cherche ce qui ne trompe guère — « certifie
+    que… a travaillé », la bande d'un passeport, les rubriques d'un CV. Un
+    document scanné n'a pas de texte : il reste sans type.
+    """
+    t = " " + _normaliser(texte[:4000]) + " "
+    if len(t.strip()) < 40:
         return None
-    jetons = set(mots.split())
-    for code, indices in _INDICES:
-        for indice in indices:
-            morceaux = indice.split()
-            if len(morceaux) > 1:
-                if indice in mots:
-                    return code
-            elif morceaux[0] in jetons:
-                return code
+    if (" passeport " in t or " passport " in t) and (" p " in t or " nationalite " in t):
+        return PieceDossier.PASSEPORT.value
+    if " carte nationale d identite " in t or " carte d identite " in t:
+        return PieceDossier.PIECE_IDENTITE.value
+    # « certifie », « certifions », « atteste », « attestons »… : toutes les formes.
+    if re.search(r" (certifi|attest)\w* ", t) and any(
+        m in t for m in (" travaille ", " stage ", " emploi ", " en qualite de ", " occupe ")
+    ):
+        return PieceDossier.ATTESTATIONS_TRAVAIL.value
+    rubriques = sum(1 for r in _CV if f" {r} " in t)
+    if rubriques >= 3:
+        return PieceDossier.CV.value
+    if (" lettre de motivation " in t or (" objet " in t and " candidature " in t)) and (
+        " madame " in t or " monsieur " in t
+    ):
+        return PieceDossier.LETTRE_MOTIVATION.value
+    if (" diplome " in t or " grade de " in t) and any(
+        m in t for m in (" universite ", " jury ", " recteur ", " ecole ", " delivre ")
+    ):
+        return PieceDossier.COPIE_DIPLOMES.value
+    if rubriques >= 2:
+        return PieceDossier.CV.value
     return None
 
 

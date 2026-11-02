@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import email
 import hashlib
+from pathlib import PurePosixPath
 import logging
 import re
 import unicodedata
@@ -47,7 +48,7 @@ from app.models import (
     StatutAvis,
 )
 from app.models import boite as traces
-from app.services import doublons, extraction, storage
+from app.services import doublons, extraction, liens, lots, storage
 from app.services.preselection import charger_candidature, evaluer_candidature
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,9 @@ class MessageEntrant:
     recu_le: datetime
     corps: str = ""
     pieces: list[PieceJointe] = field(default_factory=list)
+    # Les adresses lues dans le texte et dans le HTML : des pièces envoyées
+    # en lien (Google Drive, OneDrive…) plutôt qu'en pièce jointe.
+    liens: list[str] = field(default_factory=list)
 
 
 class SourceCourriel(Protocol):
@@ -127,15 +131,64 @@ def depuis_message(brut: bytes) -> MessageEntrant:
         if donnees:
             pieces.append(PieceJointe(nom=_decoder(nom_fichier), donnees=donnees))
 
+    corps = _corps_texte(message)
+    adresses = liens_du_message(message, corps)
     return MessageEntrant(
         message_id=message.get("Message-ID", "").strip() or f"sans-id-{recu.isoformat()}",
         expediteur=adresse.lower(),
         nom_expediteur=_decoder(nom),
         sujet=_decoder(message.get("Subject")),
         recu_le=recu,
-        corps=_corps_texte(message),
+        corps=corps,
         pieces=pieces,
+        liens=adresses,
     )
+
+
+_HREF = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+
+
+def liens_du_message(message: Message, corps: str) -> list[str]:
+    """Les adresses du texte et des liens HTML — un courriel HTML cache ses
+    liens derrière un libellé (« mon CV »), absents de la version texte."""
+    adresses = [l.url for l in liens.liens_de_documents(corps)]
+    for partie in message.walk():
+        if partie.get_content_type() == "text/html" and not partie.get_filename():
+            charge = partie.get_payload(decode=True) or b""
+            html = charge.decode(partie.get_content_charset() or "utf-8", errors="replace")
+            adresses.extend(l.url for l in liens.liens_de_documents(" ".join(_HREF.findall(html))))
+    return list(dict.fromkeys(adresses))
+
+
+@dataclass(slots=True)
+class LiensJoints:
+    recuperes: int = 0
+    # « Google Drive : le lien n'est pas public… » — à dire aux RH.
+    inaccessibles: list[str] = field(default_factory=list)
+
+
+async def joindre_les_liens(message: MessageEntrant) -> LiensJoints:
+    """Télécharge les documents envoyés en lien et les ajoute aux pièces.
+
+    Seuls les liens publics des services connus sont suivis (voir
+    `app.services.liens`). Un lien privé ou WeTransfer est signalé, pas perdu.
+    """
+    resultat = LiensJoints()
+    noms = {p.nom.lower() for p in message.pieces}
+    for lien in liens.liens_de_documents(" ".join(message.liens)):
+        try:
+            nom, donnees = await liens.telecharger(lien)
+        except liens.LienInaccessible as exc:
+            resultat.inaccessibles.append(f"{lien.service} : {exc}")
+            continue
+        base, point, extension = nom.rpartition(".")
+        unique, n = nom, 2
+        while unique.lower() in noms:
+            unique, n = f"{base} ({n}).{extension}" if point else f"{nom} ({n})", n + 1
+        noms.add(unique.lower())
+        message.pieces.append(PieceJointe(nom=unique, donnees=donnees))
+        resultat.recuperes += 1
+    return resultat
 
 
 class ErreurBoite(Exception):
@@ -233,15 +286,14 @@ def nom_prenom(message: MessageEntrant) -> tuple[str, str]:
 
 
 def type_de_piece(nom_fichier: str) -> str:
-    """Classe une pièce jointe d'après son nom, à défaut de mieux."""
-    normalise = nom_fichier.lower()
-    if any(mot in normalise for mot in ("motivation", "lm", "lettre")):
-        return PieceDossier.LETTRE_MOTIVATION.value
-    if any(mot in normalise for mot in ("diplome", "diplôme", "attestation")):
-        return PieceDossier.COPIE_DIPLOMES.value
-    if any(mot in normalise for mot in ("cv", "resume", "curriculum")):
-        return PieceDossier.CV.value
-    return PieceDossier.CV.value
+    """Le type qu'un nom de fichier laisse penser ; « autre document » sinon.
+
+    Rangeait en « CV » tout ce qu'elle ne reconnaissait pas : un passeport, une
+    carte d'identité, un certificat de travail devenaient des CV. L'import
+    d'un message passe désormais par `enregistrer_pieces`, qui lit aussi le
+    contenu ; cette fonction reste pour qui n'a que le nom.
+    """
+    return lots.type_devine(nom_fichier) or PieceDossier.AUTRE.value
 
 
 @dataclass(slots=True)
@@ -255,6 +307,9 @@ class ResultatReleve:
     sans_piece: list[str] = field(default_factory=list)
     # Messages d'un expéditeur ignoré : ni dossier, ni place dans la liste.
     expediteurs_ignores: int = 0
+    # Documents envoyés en lien : récupérés, ou à ouvrir à la main.
+    liens_recuperes: int = 0
+    liens_inaccessibles: list[str] = field(default_factory=list)
     # D'autres messages attendent : l'appelant relance pour la suite.
     reste: bool = False
 
@@ -347,6 +402,39 @@ async def creer_depuis_message(
     return chargee
 
 
+async def _classer_pieces(
+    pieces: list[tuple[PieceJointe, str]],
+) -> list[tuple[str, str | None]]:
+    """(type, intitulé) de chaque pièce d'un envoi : le nom, puis le contenu.
+
+    Un envoi sans CV reconnu prend sa première pièce restée sans type pour CV —
+    c'est presque toujours ce qu'elle est (« scan001.pdf ») ; les autres pièces
+    inconnues deviennent des « autres documents » sous leur nom, plutôt que
+    d'être toutes comptées comme des CV.
+    """
+    resultats: list[tuple[str | None, str | None]] = []
+    for piece, type_mime in pieces:
+        type_piece, intitule = lots.classer(piece.nom)
+        if type_piece is None:
+            try:
+                document = await extraction.extract(piece.donnees, type_mime, piece.nom)
+                type_piece = lots.type_par_contenu(document.text)
+            except (extraction.UnreadableDocument, OSError, ValueError):
+                type_piece = None
+        resultats.append((type_piece, intitule))
+
+    cv_reconnu = any(t == PieceDossier.CV.value for t, _ in resultats)
+    definitifs: list[tuple[str, str | None]] = []
+    for (piece, _), (type_piece, intitule) in zip(pieces, resultats):
+        if type_piece is None and not cv_reconnu:
+            type_piece, cv_reconnu = PieceDossier.CV.value, True
+        elif type_piece is None:
+            type_piece = PieceDossier.AUTRE.value
+            intitule = intitule or PurePosixPath(piece.nom).stem[:255]
+        definitifs.append((type_piece, intitule))
+    return definitifs
+
+
 async def enregistrer_pieces(
     db: AsyncSession, candidature: Candidature, message: MessageEntrant
 ) -> int:
@@ -363,12 +451,17 @@ async def enregistrer_pieces(
     }
     depot = storage.get_storage()
     ajoutees = 0
+    lisibles = []
     for piece in message.pieces:
         type_mime = extraction.sniff_mime(piece.donnees, piece.nom)
         if type_mime not in extraction.ALLOWED_MIME_TYPES:
             # Signatures, images inline : ignorées sans faire échouer le reste.
             logger.info("pièce jointe ignorée (%s) : %s", type_mime, piece.nom)
             continue
+        lisibles.append((piece, type_mime))
+    types = await _classer_pieces(lisibles)
+
+    for (piece, type_mime), (type_piece, intitule) in zip(lisibles, types):
         empreinte = hashlib.sha256(piece.donnees).hexdigest()
         # Comparée à ce que le dossier avait *avant* ce message seulement : deux
         # pièces d'un même envoi sont deux pièces, même au contenu identique.
@@ -378,7 +471,8 @@ async def enregistrer_pieces(
         db.add(
             PieceCandidature(
                 candidature_id=candidature.id,
-                type_piece=type_de_piece(piece.nom),
+                type_piece=type_piece,
+                intitule_libre=intitule,
                 nom_fichier=piece.nom[:255],
                 chemin_stockage=cle,
                 type_mime=type_mime,
@@ -554,6 +648,15 @@ async def relever(
             continue
 
         poste = await poste_du_message(db, message)
+
+        # Des documents envoyés en lien plutôt qu'en pièce jointe : on les
+        # récupère, ils deviennent des pièces comme les autres.
+        if message.liens:
+            joints = await joindre_les_liens(message)
+            resultat.liens_recuperes += joints.recuperes
+            resultat.liens_inaccessibles.extend(
+                f"{message.sujet or message.expediteur} — {e}" for e in joints.inaccessibles
+            )
 
         # Un message sans pièce lisible — accusé de réception, question,
         # réponse automatique — n'est pas une candidature. Le créer polluerait

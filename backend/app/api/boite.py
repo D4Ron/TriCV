@@ -28,7 +28,7 @@ from app.api.postes import get_poste_or_404
 from app.deps import CurrentUser, DbSession
 from app.models import Candidature, ExpediteurIgnore, MessageTraite
 from app.models import boite as traces
-from app.services import audit, courriel, extraction, parametres
+from app.services import audit, courriel, extraction, liens, parametres
 from app.services.graph_microsoft import ErreurGraph
 from app.services.preselection import charger_candidature, evaluer_candidature
 
@@ -121,6 +121,10 @@ async def lire(identifiant: str, db: DbSession, _: CurrentUser) -> dict:
     finally:
         boite.fermer()
     (message,) = await _avec_statut(db, [message])
+    message["liens"] = [
+        {"url": l.url, "service": l.service, "telechargeable": l.telechargeable}
+        for l in liens.liens_de_documents(message.get("corps", ""))
+    ]
     message["autres"] = await _avec_statut(db, [a for a in autres if a["id"] != identifiant])
 
     # Le poste que le relevé aurait choisi, d'après l'objet : une proposition.
@@ -179,6 +183,8 @@ async def importer(payload: ImportIn, db: DbSession, user: CurrentUser) -> dict:
     completes: list[str] = []
     sans_piece: list[str] = []
     deja: list[str] = []
+    liens_recuperes = 0
+    liens_inaccessibles: list[str] = []
     try:
         messages = []
         for identifiant in dict.fromkeys(payload.identifiants):
@@ -201,6 +207,10 @@ async def importer(payload: ImportIn, db: DbSession, user: CurrentUser) -> dict:
                     deja.append(m.sujet or m.expediteur)
                     dossier = dossier or existant
                     continue
+                if m.liens:
+                    joints = await courriel.joindre_les_liens(m)
+                    liens_recuperes += joints.recuperes
+                    liens_inaccessibles.extend(joints.inaccessibles)
                 lisibles = [
                     p for p in m.pieces
                     if extraction.sniff_mime(p.donnees, p.nom) in extraction.ALLOWED_MIME_TYPES
@@ -245,6 +255,8 @@ async def importer(payload: ImportIn, db: DbSession, user: CurrentUser) -> dict:
         "sans_piece": sans_piece,
         "deja_importes": deja,
         "candidature_ids": crees,
+        "liens_recuperes": liens_recuperes,
+        "liens_inaccessibles": liens_inaccessibles,
     }
 
 

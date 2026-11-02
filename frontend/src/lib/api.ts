@@ -726,6 +726,12 @@ export const recrutementApi = {
     if (intituleLibre) formData.append('intitule_libre', intituleLibre)
     return request<Candidature>(`/candidatures/${id}/pieces`, { method: 'POST', formData })
   },
+  /** Corrige le type d'une pièce mal classée ; le dossier est réévalué. */
+  retyperPiece: (id: string, pieceId: string, typePiece: string, intituleLibre?: string) =>
+    request<Candidature>(`/candidatures/${id}/pieces/${pieceId}`, {
+      method: 'PATCH',
+      body: { type_piece: typePiece, intitule_libre: intituleLibre ?? null },
+    }),
   retirerPiece: (id: string, pieceId: string) =>
     request<Candidature>(`/candidatures/${id}/pieces/${pieceId}`, { method: 'DELETE' }),
   /**
@@ -795,6 +801,9 @@ export const recrutementApi = {
       sans_piece: string[]
       /** Messages d'expéditeurs ignorés : ni dossier, ni place dans la liste. */
       expediteurs_ignores: number
+      /** Documents envoyés en lien, récupérés ou à ouvrir à la main. */
+      liens_recuperes: number
+      liens_inaccessibles: string[]
       /** D'autres messages attendent : relancer pour le lot suivant. */
       reste: boolean
     }>(`/courriel/relever?limite=${limite}`, { method: 'POST' }),
@@ -1244,6 +1253,8 @@ export interface MessageBoiteDetail extends MessageBoite {
   autres: MessageBoite[]
   /** Le poste que l'objet désigne, s'il en désigne un. */
   poste_propose: { id: string; intitule: string } | null
+  /** Documents envoyés en lien : récupérés à l'import s'ils sont publics. */
+  liens: Array<{ url: string; service: string; telechargeable: boolean }>
 }
 
 export const boiteApi = {
@@ -1277,6 +1288,8 @@ export const boiteApi = {
       sans_piece: string[]
       deja_importes: string[]
       candidature_ids: string[]
+      liens_recuperes: number
+      liens_inaccessibles: string[]
     }>('/boite/importer', {
       method: 'POST',
       body: { identifiants, poste_id: posteId, regrouper },

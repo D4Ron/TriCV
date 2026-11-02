@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1074,6 +1075,8 @@ async def relever_courriel(
         "non_rattaches": resultat.non_rattaches,
         "sans_piece": resultat.sans_piece,
         "expediteurs_ignores": resultat.expediteurs_ignores,
+        "liens_recuperes": resultat.liens_recuperes,
+        "liens_inaccessibles": resultat.liens_inaccessibles,
         "reste": resultat.reste,
     }
 
@@ -1245,6 +1248,51 @@ async def telecharger_piece(
             "Content-Disposition": f'inline; filename="{piece.nom_fichier or piece.type_piece}"'
         },
     )
+
+
+class TypePieceIn(BaseModel):
+    type_piece: str = Field(min_length=1, max_length=64)
+    intitule_libre: str | None = Field(default=None, max_length=255)
+
+
+@router.patch(
+    "/candidatures/{candidature_id}/pieces/{piece_id}", response_model=CandidatureOut
+)
+async def retyper_piece(
+    candidature_id: str, piece_id: str, payload: TypePieceIn, db: DbSession, user: CurrentUser
+) -> CandidatureOut:
+    """Corrige le type d'une pièce mal classée.
+
+    Le classement d'une pièce reçue par courriel se devine — d'après son nom,
+    puis son contenu — et se trompe parfois : un passeport rangé en CV fausse la
+    complétude du dossier. On corrige ici, et le dossier est réévalué.
+    """
+    if payload.type_piece not in {p.value for p in PieceDossier}:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Type de pièce inconnu.")
+    candidature = await get_candidature_or_404(db, candidature_id)
+    piece = next((p for p in candidature.pieces if p.id == piece_id), None)
+    if piece is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Pièce introuvable")
+    avant = piece.type_piece
+    piece.type_piece = payload.type_piece
+    piece.intitule_libre = (
+        (payload.intitule_libre or "").strip() or None
+        if payload.type_piece == PieceDossier.AUTRE.value
+        else None
+    )
+    await db.flush()
+    rechargee = await get_candidature_or_404(db, candidature_id)
+    await evaluer_candidature(db, rechargee)
+    await audit.record(
+        db,
+        action="candidature.piece_retypee",
+        entity_type="candidature",
+        entity_id=candidature.id,
+        user_id=user.id,
+        details={"piece": piece.nom_fichier, "de": avant, "vers": payload.type_piece},
+    )
+    await db.commit()
+    return _vers_sortie(await get_candidature_or_404(db, candidature_id))
 
 
 @router.delete("/candidatures/{candidature_id}/pieces/{piece_id}", response_model=CandidatureOut)

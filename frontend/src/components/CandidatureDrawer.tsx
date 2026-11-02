@@ -758,6 +758,16 @@ export default function CandidatureDrawer({
    * CV rattaché au mauvais candidat lors d'un dépôt en lot — et ne justifie
    * pas de supprimer tout le dossier.
    */
+  const retyper = useMutation({
+    mutationFn: ({ pieceId, type }: { pieceId: string; type: string }) =>
+      recrutementApi.retyperPiece(candidatureId, pieceId, type),
+    onSuccess: () => {
+      setErreur(null)
+      rafraichir()
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Correction impossible'),
+  })
+
   const retirer = useMutation({
     mutationFn: (pieceId: string) => recrutementApi.retirerPiece(candidatureId, pieceId),
     onSuccess: () => {
@@ -978,12 +988,26 @@ export default function CandidatureDrawer({
                     className="flex items-center gap-2 rounded-lg border border-ink-200 px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-ink-800">
-                        {/* Le nom donné par le candidat l'emporte : « Lettre de
-                            recommandation — BOAD » en dit plus que « Autre
-                            document », qui est tout ce que le code exprime. */}
-                        {libellePiece(piece.type_piece, piece.intitule_libre)}
-                      </p>
+                      {/* Le type se corrige sur place : le classement d'une
+                          pièce reçue par courriel se devine et se trompe
+                          parfois — un passeport rangé en CV fausse la
+                          complétude. Le nom donné par le candidat reste
+                          affiché pour un « autre document ». */}
+                      <select
+                        className="-ml-1 max-w-full truncate rounded border-0 bg-transparent px-1 py-0 text-sm text-ink-800 hover:bg-ink-50 focus:ring-1 focus:ring-brand-400"
+                        aria-label={`Type de ${piece.nom_fichier ?? 'la pièce'}`}
+                        value={piece.type_piece}
+                        disabled={retyper.isPending}
+                        onChange={(e) => retyper.mutate({ pieceId: piece.id, type: e.target.value })}
+                      >
+                        {Object.entries(LIBELLE_PIECE).map(([code, libelle]) => (
+                          <option key={code} value={code}>
+                            {code === 'AUTRE' && piece.type_piece === 'AUTRE' && piece.intitule_libre
+                              ? libellePiece(code, piece.intitule_libre)
+                              : libelle}
+                          </option>
+                        ))}
+                      </select>
                       <p className="truncate text-xs text-ink-500">
                         {piece.nom_fichier ?? 'reçue, fichier non classé'}
                       </p>
