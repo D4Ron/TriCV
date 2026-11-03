@@ -28,8 +28,8 @@ from app.services import depouillement, storage
 pytestmark = pytest.mark.anyio
 
 CV_TEXTE = """
-Tchodie-Magla Ronald
-ron4ever4@gmail.com — 98032961
+Kpodar-Mensah Komlan
+komlan.kpodar@example.tg — 90112233
 Né le 12/05/1990 — Nationalité : Togolaise — Sexe : Masculin
 Lomé, Tokoin
 
@@ -129,9 +129,9 @@ async def monter_dossier(db, *, avec_piece: bool = True, texte: str = CV_TEXTE) 
     db.add(Avis(poste_id=poste.id, reference="AVIS-1", date_cloture=date(2026, 7, 31)))
 
     candidat = Candidat(
-        nom="Tchodie-Magla",
-        prenom="Ronald",
-        email="ron4ever4@gmail.com",
+        nom="Kpodar-Mensah",
+        prenom="Komlan",
+        email="komlan.kpodar@example.tg",
         provenance=Provenance.EXTRAIT_IA,
     )
     db.add(candidat)
@@ -180,7 +180,7 @@ def texte_pdf(monkeypatch):
     """Court-circuite le lecteur PDF : on teste le dépouillement, pas fitz."""
     from app.services import extraction
 
-    async def faux_extract(donnees, mime, nom=""):
+    async def faux_extract(donnees, mime, nom="", min_chars=0):
         return extraction.ExtractedDocument(
             text=CV_TEXTE, page_count=1, mime_type="application/pdf"
         )
@@ -199,10 +199,10 @@ async def test_le_modele_ne_recoit_jamais_l_identite(fournisseur, texte_pdf):
         envoye = fournisseur.texte_recu
         assert envoye is not None
         for fuite in (
-            "Tchodie-Magla",
-            "Ronald",
-            "ron4ever4@gmail.com",
-            "98032961",
+            "Kpodar-Mensah",
+            "Komlan",
+            "komlan.kpodar@example.tg",
+            "90112233",
             "12/05/1990",
             "Togolaise",
         ):
@@ -395,7 +395,8 @@ async def test_un_dossier_sans_piece_lisible_ne_plante_pas(fournisseur):
         assert fournisseur.texte_recu is None
 
 
-async def test_une_panne_du_modele_laisse_le_dossier_intact(monkeypatch, texte_pdf):
+async def test_une_panne_du_modele_se_rabat_sur_la_lecture_locale(monkeypatch, texte_pdf):
+    """Le fournisseur gratuit sature : le dossier n'en reste pas vide pour autant."""
     from app.llm.base import LLMError
 
     class Panne(FournisseurExtraction):
@@ -411,9 +412,33 @@ async def test_une_panne_du_modele_laisse_le_dossier_intact(monkeypatch, texte_p
         resultat = await depouillement.depouiller(db, candidature)
         await db.commit()
 
-        assert resultat.a_produit_quelque_chose is False
-        assert any("Extraction indisponible" in a for a in resultat.avertissements)
-        assert (await db.execute(select(DiplomeCandidat))).scalars().all() == []
+        assert resultat.lecture == "locale"
+        assert any("IA indisponible" in a for a in resultat.avertissements)
+        diplomes = (await db.execute(select(DiplomeCandidat))).scalars().all()
+        assert [(d.niveau, d.annee) for d in diplomes] == [(5, 2014)]
+
+
+async def test_une_panne_du_modele_n_ecrase_pas_une_lecture_precedente(
+    fournisseur, monkeypatch, texte_pdf
+):
+    from app.llm.base import LLMError
+
+    async with SessionLocal() as db:
+        candidature = await monter_dossier(db)
+        await depouillement.depouiller(db, candidature)
+        await db.commit()
+
+        class Panne(FournisseurExtraction):
+            async def extraire_dossier(self, texte, domaines=()):
+                raise LLMError("fournisseur injoignable")
+
+        monkeypatch.setattr("app.services.depouillement.get_provider", lambda: Panne())
+        resultat = await depouillement.depouiller(db, await charger(db, candidature.id))
+        await db.commit()
+
+        assert any("conservées" in a for a in resultat.avertissements)
+        experiences = (await db.execute(select(ExperienceCandidat))).scalars().all()
+        assert [e.employeur for e in experiences] == ["Hôtel du 2 Février"]
 
 
 def test_lecture_des_dates_partielles():
@@ -626,8 +651,11 @@ async def test_un_second_depouillement_remplace_les_propositions(fournisseur, te
             "Master en gestion hôtelière",
             "Licence en tourisme",
         }
-        # Rien n'est resté du premier passage.
-        assert (await db.execute(select(ExperienceCandidat))).scalars().all() == []
+        # Rien n'est resté du premier passage : l'IA n'a pas rendu
+        # d'expérience cette fois, c'est donc la lecture locale qui la donne.
+        experiences = (await db.execute(select(ExperienceCandidat))).scalars().all()
+        assert len(experiences) == 1 and experiences[0].poste == "Directeur adjoint"
+        assert any("lecture locale" in a for a in resultat.avertissements)
 
 
 async def test_ce_que_le_candidat_a_declare_n_est_jamais_ecrase(fournisseur, texte_pdf):

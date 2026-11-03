@@ -228,11 +228,15 @@ async def telecharger(lien: LienDocument, client: httpx.AsyncClient | None = Non
     # Une page HTML à la place du fichier : connexion demandée, ou fichier privé.
     if extraction.sniff_mime(donnees, nom) not in extraction.ALLOWED_MIME_TYPES:
         raise LienInaccessible(
-            f"Le lien {lien.service} ne mène pas à un PDF ou un document Word lisible "
-            "(lien privé, ou autre format)."
+            f"Le lien {lien.service} ne mène pas à un PDF, un document Word ou une image "
+            "lisible (lien privé, ou autre format)."
         )
     if "." not in nom:
-        nom = f"{nom}.pdf" if donnees[:4] == b"%PDF" else f"{nom}.docx"
+        extensions = {
+            extraction.PDF_MIME: "pdf", extraction.JPEG_MIME: "jpg", extraction.PNG_MIME: "png",
+            extraction.TIFF_MIME: "tif", extraction.WEBP_MIME: "webp",
+        }
+        nom = f"{nom}.{extensions.get(extraction.sniff_mime(donnees, nom), 'docx')}"
     return nom[:200], donnees
 
 

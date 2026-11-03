@@ -21,7 +21,7 @@ import { PUBLIC_URL } from '@/lib/config'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import ChoisirDestinataires from '@/components/ChoisirDestinataires'
 import TelechargerDossiers from '@/components/TelechargerDossiers'
-import { useInterfaceClassique } from '@/lib/interface'
+import { resumeRelectureNoms, useInterfaceClassique } from '@/lib/interface'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
 import FichePosteEditeur from '@/components/FichePosteEditeur'
 import GrilleEntretienEditeur from '@/components/GrilleEntretienEditeur'
@@ -1350,6 +1350,16 @@ export default function PosteDetailPage() {
       void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
     },
   })
+  // Les dossiers arrivés avant que le nom ne soit lu dans le CV.
+  const relireNoms = useMutation({
+    mutationFn: () => recrutementApi.relireNoms({ poste_id: posteId }),
+    onSuccess: (r) => {
+      setCompteRendu(resumeRelectureNoms(r))
+      void queryClient.invalidateQueries({ queryKey: ['grille', posteId] })
+      void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Relecture impossible'),
+  })
 
   /**
    * Les CV des candidats proposés, sous une présentation unique.
@@ -1573,6 +1583,11 @@ export default function PosteDetailPage() {
                       exporterCv.isPending || g.nombre_preselectionnes === 0,
                     ],
                     ['Recalculer les notes', () => reevaluer.mutate(), reevaluer.isPending],
+                    [
+                      relireNoms.isPending ? 'Lecture des CV…' : 'Relire les noms dans les CV',
+                      () => relireNoms.mutate(),
+                      relireNoms.isPending || g.nombre_candidatures === 0,
+                    ],
                   ] as Array<[string, () => void, boolean]>
                 ).map(([libelle, action, inactif]) => (
                   <button

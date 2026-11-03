@@ -1,6 +1,31 @@
 import { useQuery } from '@tanstack/react-query'
 import { settingsApi } from '@/lib/api'
 
+/** Le compte rendu de « Relire les noms », en une phrase. */
+export function resumeRelectureNoms(r: {
+  examines: number
+  corriges: Array<{ avant: string; apres: string }>
+  a_verifier: Array<{ nom: string; motif: string }>
+}): string {
+  const parts: string[] = []
+  if (r.corriges.length) {
+    const exemples = r.corriges.slice(0, 3).map((c) => `${c.avant || '—'} → ${c.apres}`)
+    parts.push(
+      `${r.corriges.length} nom(s) corrigé(s) d'après le CV (${exemples.join(' ; ')}${r.corriges.length > 3 ? '…' : ''})`,
+    )
+  } else {
+    parts.push(`Aucun nom à corriger sur ${r.examines} dossier(s) non confirmé(s)`)
+  }
+  if (r.a_verifier.length)
+    parts.push(
+      `${r.a_verifier.length} à vérifier, le CV porte un autre nom : ${r.a_verifier
+        .slice(0, 3)
+        .map((v) => v.nom)
+        .join(', ')}`,
+    )
+  return parts.join('. ') + '.'
+}
+
 /**
  * L'interface d'avant la refonte de la revue et de la boîte est-elle demandée ?
  *

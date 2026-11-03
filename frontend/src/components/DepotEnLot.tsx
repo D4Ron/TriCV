@@ -150,7 +150,7 @@ export default function DepotEnLot({ posteId }: { posteId: string }) {
         ref={fichierRef}
         type="file"
         multiple
-        accept=".pdf,.docx,.doc,.zip"
+        accept=".pdf,.docx,.doc,.zip,.jpg,.jpeg,.png,.webp,.tif,.tiff"
         className="hidden"
         onChange={(e) => {
           choisir(Array.from(e.target.files ?? []))

@@ -664,8 +664,19 @@ export const recrutementApi = {
       remplacees: number
       /** L'adresse lue dans le dossier, quand elle change ce qu'on avait. */
       email_trouve: string | null
+      /** Le nom lu dans le CV, quand il remplace celui qu'on avait deviné. */
+      nom_corrige: string | null
+      /** « ia » quand le modèle a répondu, « locale » pour la lecture par règles seule. */
+      lecture: 'ia' | 'locale'
       avertissements: string[]
     }>(`/candidatures/${id}/depouiller`, { method: 'POST' }),
+  /** Relit dans les CV le nom des candidats que personne n'a confirmés. */
+  relireNoms: (portee: { poste_id?: string; sans_poste?: boolean }) =>
+    request<{
+      examines: number
+      corriges: Array<{ candidature_id: string; avant: string; apres: string }>
+      a_verifier: Array<{ candidature_id: string; nom: string; motif: string }>
+    }>('/candidatures/noms/relire', { method: 'POST', body: portee }),
   verifier: (id: string, payload: Record<string, boolean>) =>
     request<Candidature>(`/candidatures/${id}/verifier`, { method: 'POST', body: payload }),
   leverMotif: (id: string, motif: string, justification: string) =>
@@ -734,6 +745,9 @@ export const recrutementApi = {
     }),
   retirerPiece: (id: string, pieceId: string) =>
     request<Candidature>(`/candidatures/${id}/pieces/${pieceId}`, { method: 'DELETE' }),
+  /** Découpe un PDF qui réunit plusieurs pièces (CV, diplômes, attestations…). */
+  decouperPiece: (id: string, pieceId: string) =>
+    request<Candidature>(`/candidatures/${id}/pieces/${pieceId}/decouper`, { method: 'POST' }),
   /**
    * Supprime un dossier entré par erreur.
    *

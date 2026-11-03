@@ -103,14 +103,15 @@ def test_extraction_des_references():
 
 
 def test_nom_devine_depuis_l_entete():
+    """(nom, prénom) : une messagerie affiche « Prénom Nom »."""
     assert courriel.nom_prenom(courriel.depuis_message(construire_message())) == (
-        "Amina",
         "Kodjo",
+        "Amina",
     )
     sans_nom = courriel.depuis_message(
         construire_message(expediteur="kofi.mensah@example.com")
     )
-    assert courriel.nom_prenom(sans_nom) == ("Kofi", "Mensah")
+    assert courriel.nom_prenom(sans_nom) == ("Mensah", "Kofi")
 
 
 def test_classement_des_pieces_jointes():

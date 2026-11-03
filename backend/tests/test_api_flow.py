@@ -267,7 +267,7 @@ async def test_unreadable_cv_fails_with_a_clear_message(client, auth, stub_provi
     listing = await client.get(f"{API}/sessions/{session['id']}/candidates", headers=auth)
     candidate = listing.json()["items"][0]
     assert candidate["analysis_status"] == "FAILED"
-    assert "machine-readable" in candidate["analysis_error"]
+    assert "pas de texte lisible" in candidate["analysis_error"]
 
 
 async def test_non_document_uploads_are_rejected_on_magic_bytes(client, auth):
@@ -283,7 +283,7 @@ async def test_non_document_uploads_are_rejected_on_magic_bytes(client, auth):
     # Le refus nomme le fichier : sur un lot, « un fichier a été refusé » sans
     # dire lequel n'aide personne.
     erreur = response.json()["results"][0]["error"]
-    assert "evil.pdf" in erreur and "Word" in erreur
+    assert "evil.pdf" in erreur and "ne s'ouvre pas" in erreur
 
 
 async def test_duplicate_files_are_flagged_not_blocked(client, auth, stub_provider):

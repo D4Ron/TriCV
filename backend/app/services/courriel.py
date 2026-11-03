@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import email
 import hashlib
-from pathlib import PurePosixPath
 import logging
 import re
+import time
 import unicodedata
 
 from dataclasses import dataclass, field
@@ -48,10 +48,13 @@ from app.models import (
     StatutAvis,
 )
 from app.models import boite as traces
-from app.services import doublons, extraction, liens, lots, storage
+from app.services import decoupage, doublons, extraction, identite, liens, lots, storage
 from app.services.preselection import charger_candidature, evaluer_candidature
 
 logger = logging.getLogger(__name__)
+
+# Secondes de travail par relevé, au-delà desquelles on rend la main.
+BUDGET_DU_RELEVE = 40
 
 
 @dataclass(slots=True)
@@ -270,19 +273,13 @@ async def poste_du_message(db: AsyncSession, message: MessageEntrant) -> Poste |
 def nom_prenom(message: MessageEntrant) -> tuple[str, str]:
     """Devine un nom et un prénom depuis l'en-tête From.
 
-    Purement indicatif : le résultat porte la provenance EXTRAIT_IA et sera
-    corrigé à la relecture. En dernier recours, la partie locale de l'adresse
-    sert de nom pour que le dossier reste identifiable dans la liste.
+    Purement indicatif : le résultat porte la provenance EXTRAIT_IA, le CV le
+    corrige dès qu'il est lu (`identite.proposer`), et la relecture tranche.
+    Le libellé ne sert que s'il désigne une personne — « Yahoo! » n'en est pas
+    une —, sinon l'adresse.
     """
-    brut = message.nom_expediteur.strip()
-    if not brut:
-        brut = message.expediteur.split("@")[0].replace(".", " ").replace("_", " ")
-    morceaux = [m for m in re.split(r"[\s,]+", brut) if m]
-    if not morceaux:
-        return "Inconnu", ""
-    if len(morceaux) == 1:
-        return morceaux[0].title(), ""
-    return morceaux[0].title(), " ".join(morceaux[1:]).title()
+    nom, prenom = identite.depuis_entete(message.nom_expediteur, message.expediteur)
+    return (nom or "Inconnu")[:255], prenom[:255]
 
 
 def type_de_piece(nom_fichier: str) -> str:
@@ -395,44 +392,36 @@ async def creer_depuis_message(
     db.add(candidature)
     await db.flush()
 
-    await enregistrer_pieces(db, candidature, message)
+    preparees = await ranger_pieces(db, candidature, message)
+
+    # Le CV dit le nom mieux que l'en-tête du courriel.
+    cv = next((p for p in preparees if p.type_piece == PieceDossier.CV.value and p.texte), None)
+    if cv is not None:
+        proposition = identite.proposer(nom, prenom, cv.texte, message.expediteur, cv.titre)
+        if proposition is not None:
+            candidat.nom, candidat.prenom = proposition.nom[:255], proposition.prenom[:255]
+            if proposition.avertissement:
+                candidature.notes_rh = f"{candidature.notes_rh}\n{proposition.avertissement}"
 
     chargee = await charger_candidature(db, candidature.id)
-    await evaluer_candidature(db, chargee)
+    await lire_sans_ia(db, chargee)
     return chargee
 
 
-async def _classer_pieces(
-    pieces: list[tuple[PieceJointe, str]],
-) -> list[tuple[str, str | None]]:
-    """(type, intitulé) de chaque pièce d'un envoi : le nom, puis le contenu.
+async def lire_sans_ia(db: AsyncSession, candidature: Candidature) -> None:
+    """La lecture locale du dossier, aussitôt reçu : rien ne part au modèle.
 
-    Un envoi sans CV reconnu prend sa première pièce restée sans type pour CV —
-    c'est presque toujours ce qu'elle est (« scan001.pdf ») ; les autres pièces
-    inconnues deviennent des « autres documents » sous leur nom, plutôt que
-    d'être toutes comptées comme des CV.
+    Le dossier n'arrive plus vide dans la grille : diplômes, expériences et
+    langues lus par règles, à confirmer. La lecture par l'IA reste à la
+    demande. Une erreur ici ne doit jamais coûter l'import.
     """
-    resultats: list[tuple[str | None, str | None]] = []
-    for piece, type_mime in pieces:
-        type_piece, intitule = lots.classer(piece.nom)
-        if type_piece is None:
-            try:
-                document = await extraction.extract(piece.donnees, type_mime, piece.nom)
-                type_piece = lots.type_par_contenu(document.text)
-            except (extraction.UnreadableDocument, OSError, ValueError):
-                type_piece = None
-        resultats.append((type_piece, intitule))
+    from app.services import depouillement
 
-    cv_reconnu = any(t == PieceDossier.CV.value for t, _ in resultats)
-    definitifs: list[tuple[str, str | None]] = []
-    for (piece, _), (type_piece, intitule) in zip(pieces, resultats):
-        if type_piece is None and not cv_reconnu:
-            type_piece, cv_reconnu = PieceDossier.CV.value, True
-        elif type_piece is None:
-            type_piece = PieceDossier.AUTRE.value
-            intitule = intitule or PurePosixPath(piece.nom).stem[:255]
-        definitifs.append((type_piece, intitule))
-    return definitifs
+    try:
+        await depouillement.depouiller(db, candidature, ia=False)
+    except Exception as exc:  # noqa: BLE001 — le dossier est acquis, la lecture est un plus
+        logger.warning("lecture locale impossible pour %s : %s", candidature.id, exc)
+        await evaluer_candidature(db, candidature)
 
 
 async def enregistrer_pieces(
@@ -444,45 +433,57 @@ async def enregistrer_pieces(
     « j'ai oublié les diplômes ». Une pièce déjà présente, au même contenu,
     n'est pas ajoutée deux fois.
     """
+    return len(await ranger_pieces(db, candidature, message))
+
+
+async def ranger_pieces(
+    db: AsyncSession, candidature: Candidature, message: MessageEntrant
+) -> list[decoupage.PiecePreparee]:
+    """Lit, découpe et classe les pièces d'un message, puis les enregistre.
+
+    Un PDF qui réunit tout le dossier est découpé en pièces (`decoupage`) ; un
+    scan ou une photo est lu par OCR ; le texte lu est gardé avec la pièce pour
+    ne pas refaire ce travail à chaque lecture du dossier.
+    """
     deja = {
         e for e in (await db.execute(
             select(PieceCandidature.empreinte).where(PieceCandidature.candidature_id == candidature.id)
         )).scalars() if e
     }
-    depot = storage.get_storage()
-    ajoutees = 0
-    lisibles = []
+    preparees: list[decoupage.PiecePreparee] = []
     for piece in message.pieces:
-        type_mime = extraction.sniff_mime(piece.donnees, piece.nom)
-        if type_mime not in extraction.ALLOWED_MIME_TYPES:
-            # Signatures, images inline : ignorées sans faire échouer le reste.
-            logger.info("pièce jointe ignorée (%s) : %s", type_mime, piece.nom)
+        type_mime = extraction.piece_retenue(piece.donnees, piece.nom)
+        if type_mime is None:
+            # Signatures, logos, images en ligne : ignorés sans faire échouer le reste.
+            logger.info("pièce jointe ignorée : %s", piece.nom)
             continue
-        lisibles.append((piece, type_mime))
-    types = await _classer_pieces(lisibles)
-
-    for (piece, type_mime), (type_piece, intitule) in zip(lisibles, types):
-        empreinte = hashlib.sha256(piece.donnees).hexdigest()
         # Comparée à ce que le dossier avait *avant* ce message seulement : deux
         # pièces d'un même envoi sont deux pièces, même au contenu identique.
-        if empreinte in deja:
+        if hashlib.sha256(piece.donnees).hexdigest() in deja:
             continue
-        cle = await depot.save(storage.build_key(type_mime), piece.donnees)
+        preparees.extend(await decoupage.preparer(piece.nom, piece.donnees, type_mime))
+    decoupage.completer_types(preparees)
+
+    # Le même dossier fusionné renvoyé : ses morceaux sont déjà là.
+    preparees = [p for p in preparees if hashlib.sha256(p.donnees).hexdigest() not in deja]
+    depot = storage.get_storage()
+    for piece in preparees:
+        cle = await depot.save(storage.build_key(piece.type_mime), piece.donnees)
         db.add(
             PieceCandidature(
                 candidature_id=candidature.id,
-                type_piece=type_piece,
-                intitule_libre=intitule,
+                type_piece=piece.type_piece or PieceDossier.AUTRE.value,
+                intitule_libre=piece.intitule,
                 nom_fichier=piece.nom[:255],
                 chemin_stockage=cle,
-                type_mime=type_mime,
+                type_mime=piece.type_mime,
                 taille_octets=len(piece.donnees),
-                empreinte=empreinte,
+                empreinte=hashlib.sha256(piece.donnees).hexdigest(),
+                texte_extrait=piece.texte or None,
             )
         )
-        ajoutees += 1
     await db.flush()
-    return ajoutees
+    return preparees
 
 
 async def apercu(
@@ -502,8 +503,7 @@ async def apercu(
                 "nom": p.nom,
                 "octets": len(p.donnees),
                 "type": extraction.sniff_mime(p.donnees, p.nom) or "inconnu",
-                "retenue": extraction.sniff_mime(p.donnees, p.nom)
-                in extraction.ALLOWED_MIME_TYPES,
+                "retenue": extraction.piece_retenue(p.donnees, p.nom) is not None,
             }
             for p in message.pieces
         ]
@@ -619,7 +619,14 @@ async def relever(
 
     messages = source.relever(limite, exclure=await deja_traites(db))
     resultat.reste = bool(getattr(source, "reste", False))
+    debut = time.monotonic()
     for message in messages:
+        # Lire un dossier scanné prend du temps (OCR) : passé le budget, on rend
+        # la main avec « il en reste », et le relevé suivant reprend là. Une
+        # requête de plusieurs minutes serait coupée par le proxy, au milieu.
+        if time.monotonic() - debut > BUDGET_DU_RELEVE:
+            resultat.reste = True
+            break
         if await _deja_recu(db, message.message_id):
             resultat.ignores += 1
             source.marquer_traite(message.message_id)
@@ -664,7 +671,7 @@ async def relever(
         empreintes = [
             hashlib.sha256(p.donnees).hexdigest()
             for p in message.pieces
-            if extraction.sniff_mime(p.donnees, p.nom) in extraction.ALLOWED_MIME_TYPES
+            if extraction.piece_retenue(p.donnees, p.nom)
         ]
         if not empreintes:
             # Sans référence *et* sans pièce, il n'y a rien à en tirer : le

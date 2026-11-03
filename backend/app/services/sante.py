@@ -206,6 +206,22 @@ async def verifications(db: AsyncSession) -> list[Verification]:
 
     resultats.append(_verifier_ia(reglages))
 
+    # La lecture des scans : sans elle, un diplôme scanné n'a pas de texte.
+    from app.services import ocr
+
+    resultats.append(
+        Verification(
+            "ocr",
+            "Lecture des scans",
+            OK if ocr.disponible() else A_REGLER,
+            "Les scans et les photos de documents sont lus (Tesseract)."
+            if ocr.disponible()
+            else "Tesseract n'est pas installé sur le serveur : les scans et les photos de "
+            "documents restent sans texte. Mettre l'application à jour l'installe.",
+            "" if ocr.disponible() else "serveur",
+        )
+    )
+
     # Le relevé et l'envoi du courriel.
     if reglages.courriel_utilisable:
         resultats.append(

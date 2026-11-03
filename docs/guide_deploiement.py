@@ -381,7 +381,7 @@ def contenu() -> list:
     )
 
     h.append(para("2.4 — Démarrer", "etape"))
-    h.extend(bloc_code(["docker compose up -d", "docker compose exec api alembic upgrade head"]))
+    h.extend(bloc_code(["docker compose up -d", "docker compose exec backend alembic upgrade head"]))
     h.append(
         para(
             "La seconde commande crée le schéma de la base. Elle est <b>obligatoire</b> "
@@ -498,9 +498,9 @@ def contenu() -> list:
     h.extend(
         bloc_code(
             [
-                "docker compose exec api python comptes.py lister",
-                "docker compose exec api python comptes.py promouvoir adresse@exemple.tg",
-                "docker compose exec api python comptes.py desactiver adresse@exemple.tg",
+                "docker compose exec backend python comptes.py lister",
+                "docker compose exec backend python comptes.py promouvoir adresse@exemple.tg",
+                "docker compose exec backend python comptes.py desactiver adresse@exemple.tg",
             ]
         )
     )
@@ -525,7 +525,7 @@ def contenu() -> list:
             "dossiers ?</b>"
         )
     )
-    h.extend(bloc_code(["docker compose exec api python preflight.py"]))
+    h.extend(bloc_code(["docker compose exec backend python preflight.py"]))
     h.append(
         tableau(
             ["Niveau", "Ce que cela veut dire"],
@@ -859,7 +859,7 @@ def contenu() -> list:
                 "git pull",
                 "docker compose build",
                 "docker compose up -d",
-                "docker compose exec api alembic upgrade head",
+                "docker compose exec backend alembic upgrade head",
             ]
         )
     )
@@ -963,6 +963,9 @@ _ENV_MODELE = [
 _ENV_CONFIDENTIALITE = [
     ("PII_REDACTION", "Extrait le texte sur place et retire nom, adresse, téléphone, courriel et date de naissance avant tout envoi.", "<b>true.</b> Le passer à false envoie le fichier d'origine tel quel : une décision à documenter."),
     ("REDACT_DEMOGRAPHICS", "Retire âge, sexe et nationalité du contenu servant à noter. Ces données restent visibles des RH et servent aux conditions.", "<b>true.</b> Noter sur ces attributs est discriminatoire dans la plupart des droits applicables."),
+    ("OCR_LANGUES", "Les langues de lecture des scans et des photos (Tesseract, installé par l'image Docker).", "<font face='Courier'>fra+eng</font>. Vérifier dans Paramètres › État la ligne « Lecture des scans »."),
+    ("OCR_PAGES_MAX", "Pages scannées lues au plus par fichier.", "40. Au-delà, un dossier entièrement scanné immobiliserait le serveur."),
+    ("OCR_COMMANDE, OCR_DOSSIER_LANGUES", "Le chemin de Tesseract et de ses langues, hors Docker.", "Vides sous Docker. Utiles sur un poste Windows, où l'installeur ne fournit pas le français."),
 ]
 
 _ENV_STOCKAGE = [

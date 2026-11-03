@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.referentiel import PieceDossier as P
-from app.services import courriel, lots
+from app.services import decoupage, lots
 
 pytestmark = pytest.mark.anyio
 
@@ -71,37 +71,35 @@ def test_le_contenu_dit_le_type_quand_le_nom_se_tait(texte, attendu):
     assert lots.type_par_contenu(texte) == attendu
 
 
-async def test_un_envoi_sans_cv_reconnu_prend_sa_premiere_piece_inconnue_pour_cv(monkeypatch):
+def _preparee(nom, type_piece=None):
+    return decoupage.PiecePreparee(nom, b"x", "application/pdf", type_piece, None)
+
+
+def test_un_envoi_sans_cv_reconnu_prend_sa_premiere_piece_inconnue_pour_cv():
     """Les inconnues suivantes deviennent des « autres documents », pas des CV."""
-
-    async def extraire(donnees, type_mime, nom):
-        raise courriel.extraction.UnreadableDocument("scan")
-
-    monkeypatch.setattr(courriel.extraction, "extract", extraire)
     pieces = [
-        (courriel.PieceJointe(nom="scan001.pdf", donnees=b"a"), "application/pdf"),
-        (courriel.PieceJointe(nom="scan002.pdf", donnees=b"b"), "application/pdf"),
-        (courriel.PieceJointe(nom="Passport X.pdf", donnees=b"c"), "application/pdf"),
+        _preparee("scan001.pdf"),
+        _preparee("scan002.pdf"),
+        _preparee("Passport X.pdf", P.PASSEPORT.value),
     ]
-    types = await courriel._classer_pieces(pieces)
-    assert types == [
+    decoupage.completer_types(pieces)
+    assert [(p.type_piece, p.intitule) for p in pieces] == [
         (P.CV.value, None),
         (P.AUTRE.value, "scan002"),
         (P.PASSEPORT.value, None),
     ]
 
 
-async def test_un_envoi_avec_cv_ne_fait_pas_de_cv_d_une_inconnue(monkeypatch):
-    async def extraire(donnees, type_mime, nom):
-        raise courriel.extraction.UnreadableDocument("scan")
+def test_un_envoi_avec_cv_ne_fait_pas_de_cv_d_une_inconnue():
+    pieces = [_preparee("CV X.pdf", P.CV.value), _preparee("scan001.pdf")]
+    decoupage.completer_types(pieces)
+    assert (pieces[1].type_piece, pieces[1].intitule) == (P.AUTRE.value, "scan001")
 
-    monkeypatch.setattr(courriel.extraction, "extract", extraire)
-    pieces = [
-        (courriel.PieceJointe(nom="CV X.pdf", donnees=b"a"), "application/pdf"),
-        (courriel.PieceJointe(nom="scan001.pdf", donnees=b"b"), "application/pdf"),
-    ]
-    types = await courriel._classer_pieces(pieces)
-    assert types[1] == (P.AUTRE.value, "scan001")
+
+def test_une_photo_n_est_jamais_prise_pour_un_cv():
+    photo = decoupage.PiecePreparee("IMG_2041.jpg", b"x", "image/jpeg", None, None)
+    decoupage.completer_types([photo])
+    assert photo.type_piece == P.AUTRE.value
 
 
 def test_la_migration_ne_touche_que_ce_que_l_ancienne_regle_a_produit():
@@ -172,3 +170,15 @@ async def _poste(client, auth) -> str:
             headers=auth,
         )
     ).json()["id"]
+
+
+def test_la_migration_des_noms_remet_prenom_et_nom_dans_l_ordre():
+    """0009 : l'ancienne règle stockait « Prénom Nom » comme (nom, prénom)."""
+    chemin = Path(__file__).parents[1] / "alembic" / "versions" / "0009_noms_des_courriels.py"
+    spec = importlib.util.spec_from_file_location("migration_0009", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.nom_corrige("Amina", "Kodjo", "amina.kodjo@example.com") == ("Kodjo", "Amina")
+    assert module.nom_corrige("Yahoo!", "", "essi.kouma92@example.fr") == ("Kouma", "Essi")
+    assert module.nom_corrige("Afi", "DOSSOU", "x@example.tg") == ("Dossou", "Afi")
+    assert module.nom_corrige("Inconnu", "", "contact@example.tg") == ("Inconnu", "")

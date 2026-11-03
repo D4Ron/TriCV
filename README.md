@@ -123,6 +123,45 @@ those three can never disagree.
 The model is used for one thing: reading an unstructured CV into structured fields when no one has
 typed them in. Everything it produces is stamped `EXTRAIT_IA`.
 
+### Reading the documents
+
+Candidates mostly apply by email, merge everything into one PDF under any name, and send scans and
+phone photos. Every received file goes through the same local pipeline before any model is involved
+(`backend/app/services/`):
+
+1. **Text, page by page** (`extraction`). PDF text layer through PyMuPDF; a page with no text, or
+   with an unreadable text layer, is rendered and read by **Tesseract** (`ocr`, French + English,
+   orientation detected), as OCRmyPDF and paperless-ngx do. Photos are read the same way. Word
+   files are read whole — headers and text boxes included, where CV templates put the name.
+2. **Split and classify** (`decoupage`). Each page is classified — CV, letter, diploma, work
+   certificate, ID card, passport, criminal record… — from titles at the top of the page and CV
+   section headings standing on their own line. Consecutive pages of the same kind form one piece;
+   a page with no title continues the previous one. A merged « Dossier.pdf » becomes
+   « Dossier (p. 1).pdf », « Dossier (p. 2-3).pdf »… The type still comes from the file name first;
+   the content overrides a « CV.pdf » that is plainly a letter. Older dossiers can be split after the
+   fact with **Découper** on a PDF piece.
+3. **The name** (`identite`). From the CV: « Nom : / Prénoms : » fields, else the header line chosen
+   by score (largest font, short, letters only, not a section or a job title, a word in capitals is
+   the surname — OpenResume's approach, adapted to French CVs), cross-checked with the email address.
+   A CV bearing a wholly different name is flagged, not applied. **Relire les noms dans les CV**
+   (poste menu, and *Candidatures sans poste*) re-runs this on dossiers nobody has confirmed.
+4. **The parcours, by rules** (`lecture_locale`). Sections are found from their heading lines, then
+   diplomas (LMD, BTS/DUT, « Ingénieur des travaux », Master 1 vs 2…), experiences (French and
+   English month names, `03/2019`, `du 01/03/2019 au 30/06/2021`, `depuis`, `à ce jour`, dates
+   before or after the job line, table rows), languages and certifications are read with
+   pyresparser-style keyword lists. A scanned diploma is read on its own. This runs on every dossier
+   **on arrival**, with no model call.
+5. **The model, once, on request.** *Relancer le dépouillement* sends the redacted parcours to the
+   model; what it finds wins family by family, and the local reading fills whatever it left empty. If
+   the provider is down or out of quota, the local reading stands and an earlier reading is never
+   overwritten.
+
+Measured on the hand-written corpus (`python -m tools.banc_lecture_locale`), the local reading alone
+finds 14/14 diplomas, 18/18 experiences, 16/16 languages and 7/7 certifications. A second set of
+deliberately awkward dossiers — merged PDFs with rotated scans, phone photos, a letter named
+« CV.pdf », a password-protected PDF, a « Yahoo! » sender — is generated and checked by
+`python -m tools.jeu_d_essai` (12/12; `--garder` keeps the files for a manual upload).
+
 ### Provenance is the safety property
 
 Every piece of candidate data carries where it came from:
@@ -451,19 +490,20 @@ In order, stopping at the first failure:
 3. **Attached to a poste** by the bracketed reference in the **subject** — `[AVIS-2026-014]` — which
    must match an existing avis. No reference, or an unknown one, and the message is reported as
    *non rattaché*: nothing is created and it stays unread for a human. This is the only gate.
-4. **Attachments** are checked on their **magic bytes**, never the extension: only real PDF, DOCX
-   and DOC survive. Signatures and inline images are dropped. Nothing usable → reported as *sans
-   pièce jointe*, no application created. This is what filters out acknowledgements and auto-replies.
+4. **Attachments** are checked on their **magic bytes**, never the extension: PDF, DOCX, DOC and
+   photos (JPEG, PNG, TIFF, WebP) survive. Logos, signature banners and icons — images under 400 px
+   or 25 KB — are dropped. Nothing usable → reported as *sans pièce jointe*, no application created.
+   This is what filters out acknowledgements and auto-replies.
 5. **Identical file** already received for this poste → ignored.
-6. **Created**, with the sender's name guessed from the `From` header and marked `EXTRAIT_IA`, so
-   the file lands at *À vérifier*.
-7. **Each attachment is classified by filename keyword** — `motivation`/`lm`/`lettre`, then
-   `diplome`/`attestation`, then `cv`/`resume`/`curriculum`.
+6. **Created**, with the name guessed from the `From` header — only when that label is a person
+   (« Yahoo! » is not), otherwise from the address — and corrected from the CV as soon as it is read
+   (see *Reading the documents*). Marked `EXTRAIT_IA`, so the file lands at *À vérifier*.
+7. **Each attachment is read, split and classified** — see *Reading the documents*: a PDF holding
+   the whole dossier becomes one piece per document, scans are read by OCR, and the dossier is read
+   by rules on arrival, without calling the model.
 
-Two known limits, both deliberate for now: step 7 **falls back to "CV"** for any unrecognised
-filename, and step 3 puts all the weight on the subject line. Once the firm's imposed CV format is
-settled, the candidate's name can be parsed from a standardised subject instead of guessed, and an
-unrecognised attachment name can be flagged rather than assumed to be a CV.
+Step 3 still puts all the weight on the subject line. Once the firm's imposed CV format is settled,
+a standardised subject can carry the poste reliably.
 
 **Aperçu** shows exactly what a fetch would create, without writing anything. Use it first on a real
 mailbox.
@@ -941,11 +981,16 @@ stored with each score, so editing a poste never rewrites a grid already deliver
   costs one, a report section costs one. A mandate with 150 applications fits, but two such
   mandates in a morning do not. See *Choosing a provider* above: Mistral's free tier is the better
   fit for French and for volume, and `LLM_PROVIDER=ollama` removes the ceiling entirely.
-- Extraction accuracy is measured against a small hand-written corpus
-  (`backend/tools/evaluer_extraction.py`), not against real files — which is deliberate, since a
-  real application has no place in a repository, but it does mean the corpus only covers the layouts
-  someone thought to write down. When a real CV is read badly, the fix is to add the equivalent
-  invented CV to the corpus and measure.
+- Extraction accuracy is measured against hand-written and generated corpora
+  (`backend/tools/evaluer_extraction.py`, `banc_lecture_locale.py`, `jeu_d_essai.py`), not against
+  real files — which is deliberate, since a real application has no place in a repository, but it
+  does mean the corpora only cover the layouts someone thought to write down, and the local rules
+  were tuned on them. When a real CV is read badly, the fix is to add the equivalent invented CV to
+  a corpus and measure.
+- OCR quality follows the scan: a blurred photo can turn `jm.` into `im.` in an email address. The
+  review screen shows the document beside the values read from it for that reason.
+- PyMuPDF is AGPL-licensed. Fine for an internal tool; replacing it with pypdfium2 (Apache/BSD)
+  would matter only if TriCV were ever distributed.
 - The match between the *formation complémentaire* an avis asks for and what a file contains is a
   word comparison, not an understanding of either. It proposes; the score line names what it matched
   so a reader can refuse it.

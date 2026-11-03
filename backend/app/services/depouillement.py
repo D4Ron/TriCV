@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.referentiel import (
     NiveauDiplome,
+    PieceDossier,
     Sexe,
     domaine_correspond,
     normaliser_domaine,
@@ -40,9 +41,10 @@ from app.models import (
     Candidature,
     DiplomeCandidat,
     ExperienceCandidat,
+    PieceCandidature,
     Provenance,
 )
-from app.services import extraction, parametres, redaction, storage
+from app.services import extraction, identite, lecture_locale, parametres, redaction, storage
 from app.services.preselection import charger_candidature, evaluer_candidature
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,10 @@ class ResultatDepouillement:
     remplacees: int = 0
     # L'adresse relevée dans le dossier, quand elle change ce qu'on avait.
     email_trouve: str | None = None
+    # Le nom lu dans le CV, quand il remplace celui qu'on avait deviné.
+    nom_corrige: str | None = None
+    # « ia » quand le modèle a répondu, « locale » sinon.
+    lecture: str = "locale"
     avertissements: list[str] = field(default_factory=list)
 
     @property
@@ -89,33 +95,68 @@ def _mois_vers_date(valeur: str | None) -> date | None:
         return None
 
 
-async def texte_du_dossier(candidature: Candidature) -> tuple[str, list[str]]:
-    """Concatène le texte lisible des pièces. Renvoie aussi les avertissements."""
+# L'ordre de lecture : le CV d'abord, puis ce qui décrit un parcours. Les
+# pièces d'état civil ne disent rien du parcours ; elles ne partent pas au
+# modèle, mais leur texte sert à la détection locale (nationalité, naissance).
+_ORDRE_DE_LECTURE = {
+    PieceDossier.CV.value: 0,
+    PieceDossier.LETTRE_MOTIVATION.value: 1,
+    PieceDossier.COPIE_DIPLOMES.value: 2,
+    PieceDossier.ATTESTATIONS_TRAVAIL.value: 3,
+    PieceDossier.LETTRE_RECOMMANDATION.value: 4,
+    PieceDossier.AUTRE.value: 5,
+}
+_ETAT_CIVIL = frozenset(
+    {
+        PieceDossier.PIECE_IDENTITE.value, PieceDossier.PASSEPORT.value,
+        PieceDossier.CERTIFICAT_NATIONALITE.value, PieceDossier.CASIER_JUDICIAIRE.value,
+        PieceDossier.CERTIFICAT_MEDICAL.value, PieceDossier.PHOTO.value,
+    }
+)
+# Une pièce plus courte que cela n'apporte rien (page blanche, photo).
+MIN_PAR_PIECE = 40
+
+
+async def textes_des_pieces(candidature: Candidature) -> tuple[list[tuple[PieceCandidature, str]], list[str]]:
+    """Le texte de chaque pièce lisible, CV en tête. Rend aussi les avertissements.
+
+    Le texte lu à l'arrivée de la pièce est réutilisé : refaire l'OCR d'un
+    dossier scanné à chaque lecture coûterait des minutes.
+    """
     depot = storage.get_storage()
-    morceaux: list[str] = []
+    lus: list[tuple[PieceCandidature, str]] = []
     avertissements: list[str] = []
-
-    for piece in candidature.pieces:
-        if not piece.chemin_stockage:
-            continue
-        try:
-            donnees = await depot.read(piece.chemin_stockage)
-            document = await extraction.extract(
-                donnees, piece.type_mime or "", piece.nom_fichier or ""
-            )
-        except (extraction.UnreadableDocument, OSError, ValueError) as exc:
-            avertissements.append(f"{piece.nom_fichier or piece.type_piece} : {exc}")
-            continue
-
-        if len(document.text.strip()) < MIN_CARACTERES:
+    pieces = sorted(
+        (p for p in candidature.pieces if p.chemin_stockage),
+        key=lambda p: _ORDRE_DE_LECTURE.get(p.type_piece, 9),
+    )
+    for piece in pieces:
+        texte = piece.texte_extrait
+        if not texte:
+            try:
+                donnees = await depot.read(piece.chemin_stockage)
+                document = await extraction.extract(
+                    donnees, piece.type_mime or "", piece.nom_fichier or "", min_chars=0
+                )
+            except (extraction.UnreadableDocument, OSError, ValueError) as exc:
+                avertissements.append(f"{piece.nom_fichier or piece.type_piece} : {exc}")
+                continue
+            texte = document.text
+            piece.texte_extrait = texte or None
+        if len(texte.strip()) < MIN_PAR_PIECE:
             avertissements.append(
-                f"{piece.nom_fichier or piece.type_piece} : trop peu de texte "
-                "(document scanné ?)"
+                f"{piece.nom_fichier or piece.type_piece} : trop peu de texte, même après "
+                "lecture de l'image (scan illisible, photo ou page blanche)."
             )
             continue
-        morceaux.append(document.text)
+        lus.append((piece, texte))
+    return lus, avertissements
 
-    return "\n\n".join(morceaux), avertissements
+
+async def texte_du_dossier(candidature: Candidature) -> tuple[str, list[str]]:
+    """Le texte des pièces qui décrivent un parcours, CV en tête."""
+    lus, avertissements = await textes_des_pieces(candidature)
+    return "\n\n".join(t for p, t in lus if p.type_piece not in _ETAT_CIVIL), avertissements
 
 
 # Le mois écrit en toutes lettres, réduit à ce qui le distingue. « juin » et
@@ -431,35 +472,66 @@ def _appliquer_parcours(
     return nouveaux
 
 
-async def depouiller(db: AsyncSession, candidature: Candidature) -> ResultatDepouillement:
-    """Lit les pièces, propose un parcours, réévalue. Ne commit pas."""
+async def depouiller(
+    db: AsyncSession, candidature: Candidature, *, ia: bool = True
+) -> ResultatDepouillement:
+    """Lit les pièces, propose un parcours, réévalue. Ne commit pas.
+
+    `ia=False` : lecture locale seule, sans appel au modèle — c'est ce qui
+    tourne à l'arrivée de chaque dossier. Avec `ia=True`, le modèle est
+    consulté une fois ; ce qu'il ne trouve pas, la lecture locale le comble,
+    et s'il ne répond pas, la lecture locale tient lieu de résultat.
+    """
     resultat = ResultatDepouillement()
     candidat = candidature.candidat
 
-    texte, avertissements = await texte_du_dossier(candidature)
+    lus, avertissements = await textes_des_pieces(candidature)
     resultat.avertissements.extend(avertissements)
-    resultat.pieces_lues = sum(1 for p in candidature.pieces if p.chemin_stockage)
+    resultat.pieces_lues = len(lus)
+    parcours = [(p, t) for p, t in lus if p.type_piece not in _ETAT_CIVIL]
+    texte = "\n\n".join(t for _, t in parcours)
+    texte_cv = "\n\n".join(t for p, t in parcours if p.type_piece == PieceDossier.CV.value) or texte
 
     if len(texte.strip()) < MIN_CARACTERES:
         resultat.avertissements.append(
             "Aucun texte exploitable dans le dossier. Saisie manuelle nécessaire."
         )
+        # Évalué quand même : un dossier qui vient d'arriver doit prendre sa
+        # place dans la grille, à vérifier.
+        await db.flush()
+        await evaluer_candidature(db, await charger_candidature(db, candidature.id))
         return resultat
+
+    # 0. Le nom : celui que porte le CV vaut mieux qu'un en-tête de courriel
+    #    ou un nom de fichier. Seulement tant que personne ne l'a confirmé.
+    if candidat.provenance is Provenance.EXTRAIT_IA:
+        proposition = identite.proposer(candidat.nom, candidat.prenom, texte_cv, candidat.email or "")
+        if proposition is not None:
+            if proposition.avertissement:
+                resultat.avertissements.append(proposition.avertissement)
+            elif (proposition.nom, proposition.prenom) != (candidat.nom, candidat.prenom):
+                resultat.nom_corrige = f"{proposition.prenom} {proposition.nom}".strip()
+                candidat.nom, candidat.prenom = proposition.nom[:255], proposition.prenom[:255]
 
     # 1. Expurgation locale. Les attributs sensibles sont détectés ici et
     #    n'iront pas plus loin.
     reglages = await parametres.lire(db)
-    expurge = await redaction.redact(
-        texte,
-        redaction.KnownValues(
-            full_name=f"{candidat.nom} {candidat.prenom}".strip(),
-            email=candidat.email,
-            phone=candidat.telephone,
-        ),
-        redact_demographics=reglages.redact_demographics,
+    connus = redaction.KnownValues(
+        full_name=f"{candidat.nom} {candidat.prenom}".strip(),
+        email=candidat.email,
+        phone=candidat.telephone,
     )
-    resultat.demographiques = dict(expurge.demographics)
-    _appliquer_demographiques(candidat, expurge.demographics)
+    expurge = await redaction.redact(texte, connus, redact_demographics=reglages.redact_demographics)
+    demographiques = dict(expurge.demographics)
+    # La pièce d'identité dit la nationalité et la naissance mieux que le CV ;
+    # elle n'est lue que localement, et seulement si le CV ne les donne pas.
+    etat_civil = "\n\n".join(t for p, t in lus if p.type_piece in _ETAT_CIVIL)
+    if etat_civil and not {"nationality", "date_of_birth"} <= demographiques.keys():
+        complement = await redaction.redact(etat_civil, connus, redact_demographics=True)
+        for cle, valeur in complement.demographics.items():
+            demographiques.setdefault(cle, valeur)
+    resultat.demographiques = demographiques
+    _appliquer_demographiques(candidat, demographiques)
     _appliquer_contacts(candidat, expurge.contacts, resultat)
 
     # 2. Le modèle ne reçoit que le texte expurgé — et, s'il y a un poste, les
@@ -480,15 +552,42 @@ async def depouiller(db: AsyncSession, candidature: Candidature) -> ResultatDepo
         for exigence in poste.experiences_specifiques or ():
             vocabulaire.extend(exigence.get("domaines") or ())
 
-    try:
-        dossier = await get_provider().extraire_dossier(expurge.text, vocabulaire)
-    except (LLMError, OSError) as exc:
-        logger.warning("dépouillement impossible pour %s : %s", candidature.id, exc)
-        resultat.avertissements.append(f"Extraction indisponible : {exc}")
-        return resultat
+    # 3. La lecture locale : toujours, elle ne coûte rien.
+    locale = lecture_locale.lire(texte_cv, vocabulaire)
+    for piece, texte_piece in parcours:
+        if piece.type_piece == PieceDossier.COPIE_DIPLOMES.value:
+            copie = lecture_locale.diplome_d_une_copie(texte_piece)
+            if copie is not None and not any(
+                d.niveau == copie.niveau and (d.annee == copie.annee or not copie.annee)
+                for d in locale.diplomes
+            ):
+                locale.diplomes.append(copie)
 
-    # La place ne se fait qu'une fois la réponse obtenue : effacer avant
-    # l'appel viderait le dossier quand le fournisseur est injoignable.
+    dossier_ia: DossierExtrait | None = None
+    if ia:
+        try:
+            dossier_ia = await get_provider().extraire_dossier(expurge.text, vocabulaire)
+        except (LLMError, OSError) as exc:
+            logger.warning("dépouillement par l'IA impossible pour %s : %s", candidature.id, exc)
+            resultat.avertissements.append(
+                f"IA indisponible ({exc}) : seule la lecture locale a été faite."
+            )
+            if any(x.provenance is Provenance.EXTRAIT_IA for x in [*candidat.diplomes, *candidat.experiences]):
+                # Une lecture précédente — peut-être par l'IA — vaut mieux
+                # qu'une lecture locale : on ne l'écrase pas.
+                resultat.avertissements.append(
+                    "Les propositions précédentes sont conservées ; relancez plus tard."
+                )
+                await db.flush()
+                rechargee = await charger_candidature(db, candidature.id)
+                await evaluer_candidature(db, rechargee)
+                return resultat
+    dossier, notes = lecture_locale.fusionner(locale, dossier_ia)
+    resultat.avertissements.extend(notes)
+    resultat.lecture = "ia" if dossier_ia is not None else "locale"
+
+    # La place ne se fait qu'une fois la lecture faite : effacer avant l'appel
+    # viderait le dossier quand le fournisseur est injoignable.
     if await _faire_place(db, candidat, resultat):
         for objet in _appliquer_parcours(candidat, dossier, resultat):
             db.add(objet)

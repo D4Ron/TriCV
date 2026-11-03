@@ -213,7 +213,7 @@ async def importer(payload: ImportIn, db: DbSession, user: CurrentUser) -> dict:
                     liens_inaccessibles.extend(joints.inaccessibles)
                 lisibles = [
                     p for p in m.pieces
-                    if extraction.sniff_mime(p.donnees, p.nom) in extraction.ALLOWED_MIME_TYPES
+                    if extraction.piece_retenue(p.donnees, p.nom)
                 ]
                 if not lisibles:
                     sans_piece.append(m.sujet or m.expediteur)

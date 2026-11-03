@@ -18,8 +18,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Tesseract lit les scans et les photos de documents (diplômes, pièces
+# d'identité, CV scannés) ; le français en plus de l'anglais et de « osd »,
+# qui détecte une page tournée.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential curl \
+    tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng tesseract-ocr-osd \
  && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .

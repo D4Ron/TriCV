@@ -63,12 +63,14 @@ def valider_octets(
     mime_type = extraction.sniff_mime(data, nom)
     if mime_type is None or mime_type not in extraction.ALLOWED_MIME_TYPES:
         raise RejectedUpload(
-            f"« {nom[:60]} » n'est ni un PDF ni un document Word : son contenu ne "
-            "correspond à aucun de ces formats."
+            f"« {nom[:60]} » n'est ni un PDF ni un document Word, ni une image : son "
+            "contenu ne correspond à aucun de ces formats."
         )
 
     if pdf_seulement and mime_type != extraction.PDF_MIME:
         raise RejectedUpload(_refus_hors_pdf(nom, mime_type))
+    if mime_type in extraction.IMAGE_MIME_TYPES and not extraction.image_lisible(data):
+        raise RejectedUpload(f"« {nom[:60]} » porte l'en-tête d'une image mais ne s'ouvre pas.")
 
     return AcceptedFile(
         data=data,

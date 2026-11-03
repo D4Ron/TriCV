@@ -67,6 +67,8 @@ _ALIAS_NIVEAU: dict[str, NiveauDiplome] = {
     "phd": NiveauDiplome.BAC_PLUS_8,
     "bac+5": NiveauDiplome.BAC_PLUS_5,
     "master2": NiveauDiplome.BAC_PLUS_5,
+    # Avant « master », sans quoi un Master 1 passait pour un BAC+5.
+    "master1": NiveauDiplome.BAC_PLUS_4,
     "master": NiveauDiplome.BAC_PLUS_5,
     "ingenieur": NiveauDiplome.BAC_PLUS_5,
     "dea": NiveauDiplome.BAC_PLUS_5,

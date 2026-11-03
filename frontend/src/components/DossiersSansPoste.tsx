@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dossiersApi, recrutementApi } from '@/lib/api'
 import { useAnnulable } from '@/lib/annulable'
-import { estDomainePublic } from '@/lib/interface'
+import { estDomainePublic, resumeRelectureNoms } from '@/lib/interface'
 import { Callout, Modal } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 import RattacherPoste from '@/components/RattacherPoste'
@@ -76,6 +76,15 @@ export default function DossiersSansPoste() {
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Suppression impossible'),
   })
 
+  const relireNoms = useMutation({
+    mutationFn: () => recrutementApi.relireNoms({ sans_poste: true }),
+    onSuccess: (r) => {
+      setCompteRendu({ texte: resumeRelectureNoms(r) })
+      void queryClient.invalidateQueries({ queryKey: ['dossiers-sans-poste'] })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Relecture impossible'),
+  })
+
   const ouvrir = async (candidatureId: string, pieceId: string) => {
     setErreur(null)
     // Ouverte avant l'attente : un onglet ouvert après coup serait bloqué
@@ -117,7 +126,16 @@ export default function DossiersSansPoste() {
         <h2 className="text-sm font-semibold text-ink-900">
           Candidatures sans poste <span className="font-normal text-ink-400">({dossiers.length})</span>
         </h2>
-        <Link to="/boite" className="ml-auto text-xs font-medium text-brand-700 underline">
+        <button
+          type="button"
+          className="ml-auto text-xs font-medium text-brand-700 underline disabled:opacity-50"
+          disabled={relireNoms.isPending || dossiers.length === 0}
+          onClick={() => relireNoms.mutate()}
+          title="Corrige les noms inversés ou pris au libellé du courriel (« Yahoo! »), d'après le CV."
+        >
+          {relireNoms.isPending ? 'Lecture des CV…' : 'Relire les noms dans les CV'}
+        </button>
+        <Link to="/boite" className="text-xs font-medium text-brand-700 underline">
           Ouvrir la boîte de recrutement
         </Link>
       </div>

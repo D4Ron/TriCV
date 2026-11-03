@@ -7,6 +7,7 @@ manuelle. Toutes les trois exigent un motif écrit et passent au journal.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 
@@ -58,6 +59,9 @@ from app.schemas.recrutement import (
 from app.services import (
     lots,
     audit,
+    decoupage,
+    extraction,
+    identite,
     courriel,
     depouillement,
     doublons,
@@ -343,6 +347,16 @@ async def depot_multiple(
             except uploads.RejectedUpload as exc:
                 resultats.append({"fichier": recu.nom, "accepte": False, "erreur": str(exc)})
                 continue
+            if accepte.mime_type in extraction.IMAGE_MIME_TYPES and not extraction.image_utile(accepte.data):
+                # Logo de signature, icône : une archive de courriels en est pleine.
+                resultats.append(
+                    {
+                        "fichier": recu.nom,
+                        "accepte": False,
+                        "erreur": "Image trop petite pour être un document (logo, icône) : ignorée.",
+                    }
+                )
+                continue
             acceptees.append((recu, accepte))
 
         if not acceptees:
@@ -395,55 +409,57 @@ async def depot_multiple(
         db.add(candidature)
         await db.flush()
 
+        # Le type imposé prime ; sinon le nom, puis le contenu — page par page
+        # pour un PDF qui réunit tout le dossier, qui est alors découpé.
+        preparees: list[decoupage.PiecePreparee] = []
         for recu, accepte in acceptees:
-            chemin = await uploads.store(accepte)
-            # Le type imposé prime, puis ce que le nom laisse penser, puis le
-            # type par défaut du lot. Un fichier dont on ne sait rien est classé
-            # « AUTRE » plutôt que compté comme un CV : une complétude fausse se
-            # repère bien plus tard qu'une pièce à ranger.
-            devine = recu.type_piece or lots.type_devine(recu.nom)
-            if devine is None:
-                devine = type_piece if len(acceptees) == 1 else PieceDossier.AUTRE.value
+            preparees.extend(
+                await decoupage.preparer(
+                    accepte.filename, accepte.data, accepte.mime_type, recu.type_piece or None
+                )
+            )
+        if len(preparees) == 1 and preparees[0].type_piece is None:
+            preparees[0].type_piece = type_piece
+        decoupage.completer_types(preparees)
+        depot = storage.get_storage()
+        for piece in preparees:
             db.add(
                 PieceCandidature(
                     candidature_id=candidature.id,
-                    type_piece=devine,
-                    nom_fichier=accepte.filename,
-                    chemin_stockage=chemin,
-                    type_mime=accepte.mime_type,
-                    taille_octets=len(accepte.data),
-                    empreinte=accepte.sha256,
-                    intitule_libre=(
-                        recu.nom if devine == PieceDossier.AUTRE.value else None
-                    ),
+                    type_piece=piece.type_piece or PieceDossier.AUTRE.value,
+                    nom_fichier=piece.nom[:255],
+                    chemin_stockage=await depot.save(storage.build_key(piece.type_mime), piece.donnees),
+                    type_mime=piece.type_mime,
+                    taille_octets=len(piece.donnees),
+                    empreinte=hashlib.sha256(piece.donnees).hexdigest(),
+                    intitule_libre=piece.intitule,
+                    texte_extrait=piece.texte or None,
                 )
             )
         await db.flush()
 
         chargee = await charger_candidature(db, candidature.id)
-        await evaluer_candidature(db, chargee)
+        # Lecture locale toujours — elle ne coûte rien et corrige le nom tiré
+        # du fichier ; l'IA seulement si on l'a demandée.
+        lecture: str | None = None
+        try:
+            resume = await depouillement.depouiller(db, chargee, ia=depouiller_aussitot)
+            lecture = f"{resume.diplomes} diplôme(s), {resume.experiences} expérience(s)"
+        except Exception as exc:
+            # Le dépôt est acquis ; la lecture est un service rendu en plus.
+            # Sans ce garde-fou, un seul CV illisible — ou une panne du
+            # fournisseur sur le trentième fichier — remontait en 500, le
+            # `commit` final n'avait jamais lieu, et **tout le lot était
+            # perdu**. Cent dossiers déposés à la main disparaissaient parce
+            # qu'un modèle n'avait pas répondu.
+            logger.warning("dépouillement impossible au dépôt de %s : %s", candidature.id, exc)
+            lecture = f"lecture impossible : {exc}"
+            await evaluer_candidature(db, chargee)
 
         # Le lot est le cas où les doublons apparaissent : on les signale tout
         # de suite plutôt que de laisser les RH les découvrir dans la grille.
+        # Après la lecture, qui a pu corriger le nom.
         repetitions = await doublons.detecter(db, chargee)
-        lecture: str | None = None
-        if depouiller_aussitot:
-            try:
-                resume = await depouillement.depouiller(db, chargee)
-                lecture = (
-                    f"{resume.diplomes} diplôme(s), {resume.experiences} expérience(s)"
-                )
-            except Exception as exc:
-                # Le dépôt est acquis ; la lecture est un service rendu en plus.
-                # Sans ce garde-fou, un seul CV illisible — ou une panne du
-                # fournisseur sur le trentième fichier — remontait en 500, le
-                # `commit` final n'avait jamais lieu, et **tout le lot était
-                # perdu**. Cent dossiers déposés à la main disparaissaient parce
-                # qu'un modèle n'avait pas répondu.
-                logger.warning(
-                    "dépouillement impossible au dépôt de %s : %s", candidature.id, exc
-                )
-                lecture = f"lecture impossible : {exc}"
 
         resultats.append(
             {
@@ -1185,32 +1201,39 @@ async def joindre_pieces(
         if any(p.empreinte == accepte.sha256 for p in candidature.pieces):
             continue
 
-        type_piece = recu.type_piece or lots.type_devine(recu.nom) or PieceDossier.AUTRE.value
-        chemin = await uploads.store(accepte)
-
-        # Si la pièce était constatée reçue sans fichier, le fichier vient s'y
-        # attacher plutôt que d'en créer une seconde.
-        existante = next(
-            (
-                p
-                for p in candidature.pieces
-                if p.type_piece == type_piece and p.chemin_stockage is None
-            ),
-            None,
+        # Le type donné prime ; sinon le nom, puis le contenu — et un PDF qui
+        # réunit plusieurs pièces est découpé.
+        preparees = await decoupage.preparer(
+            accepte.filename, accepte.data, accepte.mime_type, recu.type_piece or None
         )
-        piece = existante or PieceCandidature(
-            candidature_id=candidature.id, type_piece=type_piece
-        )
-        piece.nom_fichier = accepte.filename
-        piece.chemin_stockage = chemin
-        piece.type_mime = accepte.mime_type
-        piece.taille_octets = len(accepte.data)
-        piece.empreinte = accepte.sha256
-        if type_piece == PieceDossier.AUTRE.value:
-            piece.intitule_libre = recu.nom[:255]
-        if existante is None:
-            db.add(piece)
-        ajoutees.append(recu.nom)
+        for preparee in preparees:
+            type_piece = preparee.type_piece or PieceDossier.AUTRE.value
+            # Si la pièce était constatée reçue sans fichier, le fichier vient
+            # s'y attacher plutôt que d'en créer une seconde.
+            existante = next(
+                (
+                    p
+                    for p in candidature.pieces
+                    if p.type_piece == type_piece and p.chemin_stockage is None
+                ),
+                None,
+            )
+            piece = existante or PieceCandidature(
+                candidature_id=candidature.id, type_piece=type_piece
+            )
+            piece.nom_fichier = preparee.nom[:255]
+            piece.chemin_stockage = await storage.get_storage().save(
+                storage.build_key(preparee.type_mime), preparee.donnees
+            )
+            piece.type_mime = preparee.type_mime
+            piece.taille_octets = len(preparee.donnees)
+            piece.empreinte = hashlib.sha256(preparee.donnees).hexdigest()
+            piece.texte_extrait = preparee.texte or None
+            if type_piece == PieceDossier.AUTRE.value:
+                piece.intitule_libre = (preparee.intitule or preparee.nom)[:255]
+            if existante is None:
+                db.add(piece)
+            ajoutees.append(preparee.nom)
     await db.flush()
 
     # La liste des pièces a changé : la complétude est réévaluée.
@@ -1318,6 +1341,67 @@ async def retirer_piece(
         entity_id=candidature.id,
         user_id=user.id,
         details={"type": piece.type_piece},
+    )
+    await db.commit()
+    return _vers_sortie(await get_candidature_or_404(db, candidature_id))
+
+
+@router.post("/candidatures/{candidature_id}/pieces/{piece_id}/decouper", response_model=CandidatureOut)
+async def decouper_piece(
+    candidature_id: str, piece_id: str, db: DbSession, user: CurrentUser
+) -> CandidatureOut:
+    """Découpe un PDF qui réunit plusieurs pièces — CV, diplômes, attestations…
+
+    Pour les dossiers reçus avant que le découpage ne se fasse à l'arrivée : le
+    PDF fusionné y est rangé comme une seule pièce, souvent « CV ». Chaque
+    page est classée, les pages consécutives du même type forment une pièce ;
+    l'original est remplacé par ses morceaux, qui gardent ses pages dans leur
+    nom. Rien n'est fait quand une seule pièce s'y reconnaît.
+    """
+    candidature = await get_candidature_or_404(db, candidature_id)
+    piece = next((p for p in candidature.pieces if p.id == piece_id), None)
+    if piece is None or not piece.chemin_stockage:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Pièce introuvable")
+    if piece.type_mime != extraction.PDF_MIME:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Seul un PDF se découpe.")
+
+    depot = storage.get_storage()
+    donnees = await depot.read(piece.chemin_stockage)
+    morceaux = await decoupage.preparer(piece.nom_fichier or "dossier.pdf", donnees, extraction.PDF_MIME)
+    if len(morceaux) < 2:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Une seule pièce se reconnaît dans ce PDF : rien à découper. Son type se corrige "
+            "dans la liste.",
+        )
+    decoupage.completer_types(morceaux)
+    for morceau in morceaux:
+        db.add(
+            PieceCandidature(
+                candidature_id=candidature.id,
+                type_piece=morceau.type_piece or PieceDossier.AUTRE.value,
+                intitule_libre=morceau.intitule,
+                nom_fichier=morceau.nom[:255],
+                chemin_stockage=await depot.save(storage.build_key(morceau.type_mime), morceau.donnees),
+                type_mime=morceau.type_mime,
+                taille_octets=len(morceau.donnees),
+                empreinte=hashlib.sha256(morceau.donnees).hexdigest(),
+                texte_extrait=morceau.texte or None,
+            )
+        )
+    await depot.delete(piece.chemin_stockage)
+    await db.delete(piece)
+    await db.flush()
+
+    rechargee = await get_candidature_or_404(db, candidature_id)
+    await evaluer_candidature(db, rechargee)
+    await audit.record(
+        db,
+        action="candidature.piece_decoupee",
+        entity_type="candidature",
+        entity_id=candidature.id,
+        user_id=user.id,
+        details={"fichier": piece.nom_fichier, "pieces": [m.type_piece for m in morceaux]},
     )
     await db.commit()
     return _vers_sortie(await get_candidature_or_404(db, candidature_id))
@@ -1526,8 +1610,80 @@ async def depouiller_dossier(
         "pieces_lues": resultat.pieces_lues,
         "remplacees": resultat.remplacees,
         "email_trouve": resultat.email_trouve,
+        "nom_corrige": resultat.nom_corrige,
+        "lecture": resultat.lecture,
         "avertissements": resultat.avertissements,
     }
+
+
+class RelectureNomsIn(BaseModel):
+    # Un poste, ou les dossiers sans poste ; ni l'un ni l'autre : tous.
+    poste_id: str | None = None
+    sans_poste: bool = False
+
+
+@router.post("/candidatures/noms/relire")
+async def relire_les_noms(payload: RelectureNomsIn, db: DbSession, user: CurrentUser) -> dict:
+    """Relit le nom de chaque candidat non confirmé dans son CV.
+
+    Pour les dossiers arrivés avant que le nom ne soit lu dans le CV : l'en-tête
+    du courriel inversait nom et prénom, et prenait parfois « Yahoo! » pour un
+    nom. Rien de ce qu'un humain a confirmé n'est touché, et rien ne part au
+    modèle. Quand le CV porte un tout autre nom, il n'est pas appliqué : il est
+    signalé, c'est peut-être le CV de quelqu'un d'autre.
+    """
+    requete = (
+        select(Candidature.id)
+        .join(Candidat, Candidat.id == Candidature.candidat_id)
+        .where(Candidat.provenance == Provenance.EXTRAIT_IA)
+    )
+    if payload.poste_id:
+        requete = requete.where(Candidature.poste_id == payload.poste_id)
+    elif payload.sans_poste:
+        requete = requete.where(Candidature.poste_id.is_(None))
+    identifiants = list((await db.execute(requete)).scalars())
+
+    depot = storage.get_storage()
+    corriges: list[dict] = []
+    a_verifier: list[dict] = []
+    for identifiant in identifiants:
+        candidature = await charger_candidature(db, identifiant)
+        candidat = candidature.candidat
+        cvs = [p for p in candidature.pieces if p.type_piece == PieceDossier.CV.value and p.chemin_stockage]
+        for piece in cvs:
+            if piece.texte_extrait is None:
+                try:
+                    donnees = await depot.read(piece.chemin_stockage)
+                    piece.texte_extrait = (
+                        await extraction.extract(donnees, piece.type_mime or "", piece.nom_fichier or "", min_chars=0)
+                    ).text or None
+                except (extraction.UnreadableDocument, OSError, ValueError):
+                    continue
+        texte = "\n\n".join(p.texte_extrait for p in cvs if p.texte_extrait)
+        if not texte:
+            continue
+        avant = f"{candidat.prenom} {candidat.nom}".strip()
+        proposition = identite.proposer(candidat.nom, candidat.prenom, texte, candidat.email or "")
+        if proposition is None:
+            continue
+        if proposition.avertissement:
+            a_verifier.append({"candidature_id": identifiant, "nom": avant, "motif": proposition.avertissement})
+            continue
+        candidat.nom, candidat.prenom = proposition.nom[:255], proposition.prenom[:255]
+        corriges.append(
+            {"candidature_id": identifiant, "avant": avant, "apres": f"{candidat.prenom} {candidat.nom}".strip()}
+        )
+
+    await audit.record(
+        db,
+        action="candidatures.noms_relus",
+        entity_type="poste",
+        entity_id=payload.poste_id,
+        user_id=user.id,
+        details={"examines": len(identifiants), "corriges": len(corriges), "a_verifier": len(a_verifier)},
+    )
+    await db.commit()
+    return {"examines": len(identifiants), "corriges": corriges, "a_verifier": a_verifier}
 
 
 @router.post("/candidatures/{candidature_id}/evaluer", response_model=CandidatureOut)

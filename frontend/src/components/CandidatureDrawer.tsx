@@ -719,9 +719,11 @@ export default function CandidatureDrawer({
       if (resultat.email_trouve) {
         parts.push(`adresse relevée : ${resultat.email_trouve}`)
       }
+      if (resultat.nom_corrige) parts.push(`nom lu dans le CV : ${resultat.nom_corrige}`)
+      const source = resultat.lecture === 'ia' ? 'Lu avec l’IA' : 'Lu sans IA (règles locales)'
       setCompteRendu(
         parts.length
-          ? `Proposé : ${parts.join(', ')}. À relire avant confirmation.${remplacement}`
+          ? `${source} — proposé : ${parts.join(', ')}. À relire avant confirmation.${remplacement}`
           : "Rien n'a pu être lu dans les pièces.",
       )
       setAvertissements(resultat.avertissements)
@@ -766,6 +768,17 @@ export default function CandidatureDrawer({
       rafraichir()
     },
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Correction impossible'),
+  })
+
+  // Les dossiers reçus avant le découpage à l'arrivée : un PDF fusionné y
+  // est rangé comme une seule pièce.
+  const decouper = useMutation({
+    mutationFn: (pieceId: string) => recrutementApi.decouperPiece(candidatureId, pieceId),
+    onSuccess: () => {
+      setErreur(null)
+      rafraichir()
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Découpage impossible'),
   })
 
   const retirer = useMutation({
@@ -1021,6 +1034,18 @@ export default function CandidatureDrawer({
                         Ouvrir
                       </button>
                     )}
+                    {piece.nom_fichier?.toLowerCase().endsWith('.pdf') &&
+                      !/\(p\. \d/.test(piece.nom_fichier) && (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-ink-600 hover:underline disabled:opacity-50"
+                          disabled={decouper.isPending}
+                          title="Le PDF réunit plusieurs pièces ? Chaque page est classée et le fichier découpé en pièces."
+                          onClick={() => decouper.mutate(piece.id)}
+                        >
+                          {decouper.isPending && decouper.variables === piece.id ? 'Découpage…' : 'Découper'}
+                        </button>
+                      )}
                     {/* Deux temps plutôt qu'une boîte de dialogue : le reste
                         de l'application demande confirmation sur place, et un
                         clic mal placé effacerait un fichier. */}
@@ -1061,7 +1086,7 @@ export default function CandidatureDrawer({
                   ref={fichierRef}
                   type="file"
                   multiple
-                  accept=".pdf,.docx,.doc,.zip"
+                  accept=".pdf,.docx,.doc,.zip,.jpg,.jpeg,.png,.webp,.tif,.tiff"
                   className="hidden"
                   onChange={(e) => {
                     const fichiers = Array.from(e.target.files ?? [])
@@ -1082,7 +1107,8 @@ export default function CandidatureDrawer({
               <p className="mt-1.5 text-xs text-ink-500">
                 Un seul fichier prend le type choisi ci-dessus. Plusieurs fichiers — ou une
                 archive <code className="rounded bg-ink-100 px-1">.zip</code> — sont classés
-                d&apos;après leur nom.
+                d&apos;après leur nom et leur contenu ; un PDF qui réunit plusieurs pièces est
+                découpé.
               </p>
 
               <div className="mt-3 border-t border-ink-100 pt-3">

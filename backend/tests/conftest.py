@@ -111,6 +111,21 @@ async def database():
         await connection.run_sync(Base.metadata.drop_all)
 
 
+@pytest.fixture(autouse=True)
+def sans_ocr(request, monkeypatch):
+    """Les essais ne dépendent pas de la présence de Tesseract sur la machine.
+
+    Ceux qui portent la marque `ocr` le gardent, et sont sautés s'il manque.
+    """
+    from app.services import ocr
+
+    if request.node.get_closest_marker("ocr"):
+        if not ocr.disponible():
+            pytest.skip("Tesseract n'est pas installé")
+        return
+    monkeypatch.setattr(ocr, "disponible", lambda: False)
+
+
 @pytest.fixture
 def stub_provider(monkeypatch) -> StubProvider:
     provider = StubProvider()

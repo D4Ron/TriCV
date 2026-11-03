@@ -115,6 +115,17 @@ class Settings(BaseSettings):
     pii_redaction: bool = True
     redact_demographics: bool = True
 
+    # Lecture des scans et des photos de documents. Vide : `tesseract` trouvé
+    # dans le PATH (l'image Docker l'installe). `ocr_dossier_langues` pointe
+    # vers un tessdata posé à la main — utile sous Windows, où l'installeur ne
+    # fournit pas le français.
+    ocr_commande: str = ""
+    ocr_dossier_langues: str = ""
+    ocr_langues: str = "fra+eng"
+    # Au-delà, les pages scannées restantes ne sont pas lues : un dossier de
+    # cent pages de scans immobiliserait le serveur plusieurs minutes.
+    ocr_pages_max: int = 40
+
     storage_backend: Literal["local", "s3"] = "local"
     storage_path: str = "/data/cv"
     s3_bucket: str = ""

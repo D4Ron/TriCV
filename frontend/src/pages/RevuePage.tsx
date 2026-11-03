@@ -47,14 +47,27 @@ function Propose({ provenance }: { provenance: Provenance }) {
   )
 }
 
+// Le CV d'abord : c'est lui qu'on relit contre la fiche de droite.
+const ORDRE_DES_PIECES: Record<string, number> = {
+  CV: 0,
+  COPIE_DIPLOMES: 1,
+  ATTESTATIONS_TRAVAIL: 2,
+  LETTRE_MOTIVATION: 3,
+}
+
 /** Le document du candidat, affiché dans la page plutôt que dans un autre onglet. */
 function Document({ candidature }: { candidature: Candidature }) {
-  const pieces = candidature.pieces.filter((p) => p.nom_fichier)
+  const pieces = candidature.pieces
+    .filter((p) => p.nom_fichier)
+    .sort((a, b) => (ORDRE_DES_PIECES[a.type_piece] ?? 9) - (ORDRE_DES_PIECES[b.type_piece] ?? 9))
   const [actif, setActif] = useState(pieces[0]?.id ?? null)
   const [url, setUrl] = useState<string | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
   const piece = pieces.find((p) => p.id === actif) ?? null
-  const estPdf = (piece?.nom_fichier ?? '').toLowerCase().endsWith('.pdf')
+  const nomFichier = (piece?.nom_fichier ?? '').toLowerCase()
+  const estPdf = nomFichier.endsWith('.pdf')
+  // Les photos de diplômes ou de pièces d'identité, prises au téléphone.
+  const estImage = /\.(jpe?g|png|webp)$/.test(nomFichier)
 
   useEffect(() => {
     setActif(pieces[0]?.id ?? null)
@@ -118,7 +131,12 @@ function Document({ candidature }: { candidature: Candidature }) {
         {url && estPdf && (
           <iframe title={piece?.nom_fichier ?? 'document'} src={url} className="h-full w-full bg-white" />
         )}
-        {url && !estPdf && (
+        {url && estImage && (
+          <div className="h-full overflow-auto bg-white p-2">
+            <img src={url} alt={piece?.nom_fichier ?? 'document'} className="mx-auto max-w-full" />
+          </div>
+        )}
+        {url && !estPdf && !estImage && (
           <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-ink-600">
             <p>Ce document ({piece?.nom_fichier}) ne s&apos;affiche pas dans la page.</p>
             <a href={url} download={piece?.nom_fichier ?? undefined} className="btn-secondary">
