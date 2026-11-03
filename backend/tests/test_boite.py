@@ -257,7 +257,8 @@ async def test_les_dossiers_inutiles_se_suppriment_en_lot_et_ne_reviennent_pas(c
         await courriel.relever(db, factice)
         await db.commit()
     dossiers = await _candidatures()
-    assert len(dossiers) == 3
+    # Trois messages de la même adresse : un seul dossier, pas trois doublons.
+    assert len(dossiers) == 1
 
     reponse = await client.post(
         f"{API}/dossiers/suppression",
@@ -270,7 +271,7 @@ async def test_les_dossiers_inutiles_se_suppriment_en_lot_et_ne_reviennent_pas(c
     )
     assert reponse.status_code == 200, reponse.text
     corps = reponse.json()
-    assert corps["supprimes"] == 3
+    assert corps["supprimes"] == 1
     assert corps["expediteurs_ignores"] == ["lettre@journal.test"]
     assert await _candidatures() == []
 

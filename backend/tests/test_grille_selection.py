@@ -177,6 +177,8 @@ async def test_la_releve_rattache_par_l_intitule_et_toujours_par_la_reference(cl
     poste_id = await monter_poste(client, auth, intitule="Chargé d'Études Économiques")
     avis = (await client.get(f"{API}/postes/{poste_id}/avis", headers=auth)).json()[0]
     await client.patch(f"{API}/avis/{avis['id']}", json={"reference": "CEE-01"}, headers=auth)
+    # Une clôture passée bloque la publication : on la repousse.
+    await client.patch(f"{API}/avis/{avis['id']}", json={"date_cloture": "2099-12-31"}, headers=auth)
     publie = await client.post(f"{API}/avis/{avis['id']}/publier", headers=auth)
     assert publie.status_code == 200, publie.text
 
@@ -203,6 +205,8 @@ async def test_la_releve_rattache_par_l_intitule_et_toujours_par_la_reference(cl
 async def test_le_lien_court_et_l_ancien_lien_menent_au_meme_avis(client, auth):
     poste_id = await monter_poste(client, auth)
     avis = (await client.get(f"{API}/postes/{poste_id}/avis", headers=auth)).json()[0]
+    # Une clôture passée bloque la publication : on la repousse.
+    await client.patch(f"{API}/avis/{avis['id']}", json={"date_cloture": "2099-12-31"}, headers=auth)
     assert (await client.post(f"{API}/avis/{avis['id']}/publier", headers=auth)).status_code == 200
     code = avis["code_court"]
     assert code and len(code) == 8 and code.isupper()

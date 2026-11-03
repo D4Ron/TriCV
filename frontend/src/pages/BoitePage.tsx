@@ -103,6 +103,7 @@ function Importer({
     onSuccess: (r) => {
       const parts = [`${r.crees} dossier(s) créé(s)`]
       if (r.completes) parts.push(`${r.completes} dossier(s) complété(s)`)
+      if (r.fusionnes) parts.push(`${r.fusionnes} candidat(s) qui avai(en)t déjà un dossier : pièces versées, aucun doublon`)
       if (r.deja_importes.length) parts.push(`${r.deja_importes.length} déjà importé(s)`)
       if (r.sans_piece.length) parts.push(`${r.sans_piece.length} sans pièce lisible`)
       if (r.liens_recuperes) parts.push(`${r.liens_recuperes} document(s) récupéré(s) depuis un lien`)
@@ -193,6 +194,7 @@ function ReleverTout({ onClose, onFait }: { onClose: () => void; onFait: () => v
     expediteurs: 0,
     sansPiece: 0,
     liens: 0,
+    fusionnes: 0,
     liensInaccessibles: [] as string[],
     fini: false,
     erreur: null as string | null,
@@ -216,6 +218,7 @@ function ReleverTout({ onClose, onFait }: { onClose: () => void; onFait: () => v
             expediteurs: e.expediteurs + r.expediteurs_ignores,
             sansPiece: e.sansPiece + r.sans_piece.length + r.non_rattaches.length,
             liens: e.liens + r.liens_recuperes,
+            fusionnes: e.fusionnes + r.fusionnes,
             liensInaccessibles: [...e.liensInaccessibles, ...r.liens_inaccessibles],
           }))
         } catch (err) {
@@ -249,6 +252,7 @@ function ReleverTout({ onClose, onFait }: { onClose: () => void; onFait: () => v
             ['Sans pièce lisible — laissés non lus', etat.sansPiece],
             ['Expéditeurs ignorés', etat.expediteurs],
             ['Déjà reçus', etat.ignores],
+            ['Versés à un dossier existant (pas de doublon)', etat.fusionnes],
             ['Documents récupérés depuis un lien', etat.liens],
           ].map(([libelle, n]) => (
             <div key={libelle as string} className="rounded-lg border border-ink-200 px-3 py-2">

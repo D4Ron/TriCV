@@ -98,6 +98,16 @@ export default function ApplyPage() {
     )
 
   const a = avis.data!
+  // L'exemple des documents libres ne cite pas une pièce qui a déjà son champ :
+  // le candidat la joindrait deux fois.
+  const dejaDemandees = new Set([
+    ...a.pieces_attendues.map((p) => p.code),
+    ...a.pieces_facultatives.map((p) => p.code),
+    ...a.groupes_pieces.flatMap((g) => g.pieces.map((p) => p.code)),
+  ])
+  const exempleLibre = dejaDemandees.has('LETTRE_RECOMMANDATION')
+    ? 'attestation de formation, certificat de langue'
+    : 'lettre de recommandation, attestation de formation'
 
   if (termine)
     return enveloppe(
@@ -577,7 +587,7 @@ export default function ApplyPage() {
                 <p className="text-sm font-medium text-ink-800">
                   Autres documents
                   <span className="ml-1 font-normal text-ink-500">
-                    — tout ce que vous jugez utile : lettre de recommandation, attestation…
+                    — ce que les champs ci-dessus ne demandent pas : {exempleLibre}…
                   </span>
                 </p>
                 {libres.map((libre, index) => (

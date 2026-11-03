@@ -55,10 +55,27 @@ _INDICES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("motivation", "lettre", "lm", "coverletter", "cover letter"),
     ),
     (PieceDossier.CV.value, ("cv", "curriculum", "resume", "vitae")),
+    # Avant les attestations : « attestation d'identité » est une pièce
+    # d'identité, constaté sur un dossier réel.
+    (PieceDossier.PASSEPORT.value, ("passeport", "passport", "pass")),
+    (PieceDossier.PHOTO.value, ("photo d identite", "photos d identite", "photo identite")),
+    (
+        PieceDossier.PIECE_IDENTITE.value,
+        ("cni", "carte identite", "carte nationale", "identite", "piece identite", "attestation d identite"),
+    ),
+    (
+        PieceDossier.CERTIFICAT_NATIONALITE.value,
+        ("nationalite", "certificat nationalite", "nationality"),
+    ),
+    (PieceDossier.CASIER_JUDICIAIRE.value, ("casier", "judiciaire", "casier judiciaire")),
+    (PieceDossier.CERTIFICAT_MEDICAL.value, ("certificat medical", "medical", "visite medicale")),
+    # Avant les diplômes : « driving licence » n'est pas une licence.
+    (f"{PieceDossier.AUTRE.value}:Permis de conduire", ("permis", "driving", "driven licence", "driving licence")),
     (
         PieceDossier.COPIE_DIPLOMES.value,
         (
-            "diplome", "diplomes", "master", "licence", "doctorat", "degree",
+            "diplome", "diplomes", "diploma", "diplomas", "master", "licence", "doctorat", "degree",
+            "bachelor", "maitrise",
             "attestation reussite", "attestation de reussite", "releve de notes",
             "bac", "baccalaureat", "bts", "dut", "maitrise",
         ),
@@ -82,15 +99,8 @@ _INDICES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "travail", "stage", "emploi", "experience", "employeur",
         ),
     ),
-    (PieceDossier.PASSEPORT.value, ("passeport", "passport")),
-    (
-        PieceDossier.PIECE_IDENTITE.value,
-        ("cni", "carte identite", "carte nationale", "identite", "piece identite"),
-    ),
-    (
-        PieceDossier.CERTIFICAT_NATIONALITE.value,
-        ("nationalite", "certificat nationalite"),
-    ),
+    # En dernier : « Photo diplôme.pdf » est un diplôme.
+    (PieceDossier.PHOTO.value, ("photo", "photos", "photo identite")),
 )
 
 
@@ -100,8 +110,12 @@ def _sans_accents(texte: str) -> str:
 
 
 def _normaliser(texte: str) -> str:
-    """Minuscules, sans accents, séparateurs ramenés à l'espace."""
+    """Minuscules, sans accents, séparateurs ramenés à l'espace.
+
+    Lettres et chiffres collés se séparent : « degree2 », « master2 ».
+    """
     plat = _sans_accents(texte).lower()
+    plat = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", plat)
     return re.sub(r"[^a-z0-9]+", " ", plat).strip()
 
 
@@ -270,6 +284,8 @@ def separer_identite(libelle: str) -> tuple[str, str]:
     Tout dans le nom quand il n'y a qu'un mot : inventer un prénom serait pire
     que de laisser la case vide.
     """
+    # « 005 - DOSSOU Afi » : le numéro d'un dossier exporté n'est pas un nom.
+    libelle = re.sub(r"^\s*\d+\s*[-–.)_]\s*", "", libelle)
     mots = libelle.split()
     if len(mots) < 2:
         return libelle.strip()[:255], ""

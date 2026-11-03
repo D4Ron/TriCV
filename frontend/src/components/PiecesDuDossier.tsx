@@ -108,6 +108,12 @@ export default function PiecesDuDossier({
   const bascule = (liste: string[], code: string, present: boolean) =>
     present ? [...liste.filter((c) => c !== code), code] : liste.filter((c) => c !== code)
 
+  // Une pièce prise dans un groupe coché n'a plus de statut propre : l'exiger
+  // aussi seule la ferait demander deux fois, et contredirait le groupe — la
+  // CNI exigée seule écarterait qui n'a joint que son passeport.
+  const groupeDe = new Map<string, string>()
+  valeur.groupes.forEach((i) => GROUPES_TYPES[i].codes.forEach((c) => groupeDe.set(c, GROUPES_TYPES[i].libelle)))
+
   return (
     <>
       <Field
@@ -135,22 +141,28 @@ export default function PiecesDuDossier({
                   />
                   PDF
                 </label>
-                <select
-                  className="input w-auto py-1 text-xs"
-                  value={etat}
-                  aria-label={libelle}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    modifier({
-                      requises: bascule(valeur.requises, code, v === 'exigee'),
-                      facultatives: bascule(valeur.facultatives, code, v === 'facultative'),
-                    })
-                  }}
-                >
-                  <option value="aucune">Non demandée</option>
-                  <option value="exigee">Exigée</option>
-                  <option value="facultative">Facultative</option>
-                </select>
+                {groupeDe.has(code) ? (
+                  <span className="w-[8.5rem] text-right text-xs text-ink-500">
+                    dans « {groupeDe.get(code)} »
+                  </span>
+                ) : (
+                  <select
+                    className="input w-auto py-1 text-xs"
+                    value={etat}
+                    aria-label={libelle}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      modifier({
+                        requises: bascule(valeur.requises, code, v === 'exigee'),
+                        facultatives: bascule(valeur.facultatives, code, v === 'facultative'),
+                      })
+                    }}
+                  >
+                    <option value="aucune">Non demandée</option>
+                    <option value="exigee">Exigée</option>
+                    <option value="facultative">Facultative</option>
+                  </select>
+                )}
               </div>
             )
           })}
@@ -169,11 +181,16 @@ export default function PiecesDuDossier({
                 className="mt-0.5"
                 checked={valeur.groupes.includes(index)}
                 onChange={(e) =>
-                  modifier({
-                    groupes: e.target.checked
-                      ? [...valeur.groupes, index]
-                      : valeur.groupes.filter((i) => i !== index),
-                  })
+                  modifier(
+                    e.target.checked
+                      ? {
+                          groupes: [...valeur.groupes, index],
+                          // Le groupe prend ses pièces : elles quittent les listes simples.
+                          requises: valeur.requises.filter((c) => !groupe.codes.includes(c)),
+                          facultatives: valeur.facultatives.filter((c) => !groupe.codes.includes(c)),
+                        }
+                      : { groupes: valeur.groupes.filter((i) => i !== index) },
+                  )
                 }
               />
               <span>

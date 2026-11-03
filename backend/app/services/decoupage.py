@@ -133,25 +133,28 @@ def type_de_page(texte: str) -> tuple[str | None, str | None]:
         return PieceDossier.LETTRE_MOTIVATION.value, None
 
     atteste = re.search(r" (certifi|attest)\w* ", t)
+    if " attestation de travail " in tete or " certificat de travail " in tete or " attestation d emploi " in tete:
+        return PieceDossier.ATTESTATIONS_TRAVAIL.value, None
     if atteste and any(m in t for m in (" a participe ", " participation ", " seminaire ", " atelier ", " a suivi ", " webinaire ")):
         return AUTRE, "Attestation de formation"
-    if " certificat de travail " in tete or (
+    if (
         atteste
         and any(
             m in t
             for m in (
                 " travaille ", " stage ", " emploi ", " en qualite de ", " occupe ", " employe ",
-                " a servi ", " exerce ", " fonction de ", " poste de ", " stagiaire ",
+                " a servi ", " exerce ", " fonction de ", " poste de ", " stagiaire ", " a ete nomme ",
+                " en tant que ", " ses fonctions ", " contrat de travail ",
             )
         )
     ):
         return PieceDossier.ATTESTATIONS_TRAVAIL.value, None
-    if any(m in t for m in (" toefl ", " ielts ", " toeic ", " delf ", " dalf ", " test of english ")):
+    if any(m in tete for m in (" toefl ", " ielts ", " toeic ", " delf ", " dalf ", " test of english ")):
         return AUTRE, "Certificat de langue"
     if rubriques >= 2:
         return CV, None
     if any(
-        m in t
+        m in tete
         for m in (
             " diplome ", " grade de ", " releve de notes ", " attestation de reussite ", " baccalaureat ",
             " brevet de technicien ", " degree ", " diploma ", " awarded ", " conferred ",
@@ -168,13 +171,30 @@ def type_de_page(texte: str) -> tuple[str | None, str | None]:
 
 
 def _segments(types: list[tuple[str | None, str | None]]) -> list[tuple[int, int, str | None, str | None]]:
-    """Regroupe les pages consécutives : (début, fin, type, intitulé), pages de 0 à n-1."""
+    """Regroupe les pages consécutives : (début, fin, type, intitulé), pages de 0 à n-1.
+
+    Une première page sans type — page de garde, scan illisible — rejoint la
+    pièce qui la suit plutôt que de faire une pièce à elle seule.
+    """
     segments: list[list] = []
     for numero, (type_page, intitule) in enumerate(types):
         if segments and (type_page is None or (type_page, intitule) == (segments[-1][2], segments[-1][3])):
             segments[-1][1] = numero
             continue
+        if segments and segments[-1][2] is None and len(segments) == 1:
+            segments[-1][1:] = [numero, type_page, intitule]
+            continue
         segments.append([numero, numero, type_page, intitule])
+    # Une page « autre document » prise entre deux pages du même type — la
+    # page d'un CV qui énumère ses certificats de langue — en fait partie.
+    i = 1
+    while i < len(segments) - 1:
+        avant, page, apres = segments[i - 1], segments[i], segments[i + 1]
+        if page[2] == AUTRE and avant[2] is not None and (avant[2], avant[3]) == (apres[2], apres[3]):
+            avant[1] = apres[1]
+            del segments[i : i + 2]
+            continue
+        i += 1
     return [tuple(s) for s in segments]  # type: ignore[misc]
 
 

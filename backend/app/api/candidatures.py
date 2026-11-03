@@ -39,6 +39,7 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.models.boite import SUPPRIME as MessageTraite_SUPPRIME
+from app.models.boite import MessageTraite
 from app.schemas.recrutement import (
     AppreciationIn,
     CandidatureCreate,
@@ -438,6 +439,15 @@ async def depot_multiple(
             )
         await db.flush()
 
+        # Le nom lu dans le CV — avec la ligne en plus gros caractères, connue
+        # ici seulement — vaut mieux que celui du fichier ou du dossier.
+        cv = next((p for p in preparees if p.type_piece == PieceDossier.CV.value and p.texte), None)
+        if cv is not None:
+            proposition = identite.proposer(candidat.nom, candidat.prenom, cv.texte, "", cv.titre)
+            if proposition is not None and not proposition.avertissement:
+                candidat.nom, candidat.prenom = proposition.nom[:255], proposition.prenom[:255]
+                await db.flush()
+
         chargee = await charger_candidature(db, candidature.id)
         # Lecture locale toujours — elle ne coûte rien et corrige le nom tiré
         # du fichier ; l'IA seulement si on l'a demandée.
@@ -456,10 +466,26 @@ async def depot_multiple(
             lecture = f"lecture impossible : {exc}"
             await evaluer_candidature(db, chargee)
 
-        # Le lot est le cas où les doublons apparaissent : on les signale tout
-        # de suite plutôt que de laisser les RH les découvrir dans la grille.
-        # Après la lecture, qui a pu corriger le nom.
-        repetitions = await doublons.detecter(db, chargee)
+        # Le lot est le cas où les doublons apparaissent. Un doublon n'est plus
+        # ouvert puis signalé : ses pièces nouvelles rejoignent le dossier
+        # existant, et rien d'autre n'est créé. Après la lecture, qui a pu
+        # trouver l'adresse ou la date de naissance qui le révèlent.
+        absorbe = await doublons.absorber(db, chargee)
+        if absorbe is not None:
+            gardee, doublon = absorbe
+            resultats.append(
+                {
+                    "fichier": origines,
+                    "accepte": False,
+                    "doublon_de": doublon.nom_complet,
+                    "candidature_id": gardee.id,
+                    "erreur": (
+                        f"Doublon du dossier de {doublon.nom_complet} ({doublon.libelle.lower()}) : "
+                        "ses pièces nouvelles y ont été versées, aucun second dossier."
+                    ),
+                }
+            )
+            continue
 
         resultats.append(
             {
@@ -468,10 +494,7 @@ async def depot_multiple(
                 "candidature_id": candidature.id,
                 "pieces": len(acceptees),
                 "lecture": lecture,
-                "doublons": [
-                    {"candidature_id": d.candidature_id, "nom": d.nom_complet, "motif": d.libelle}
-                    for d in repetitions
-                ],
+                "doublons": [],
             }
         )
 
@@ -1093,6 +1116,7 @@ async def relever_courriel(
         "expediteurs_ignores": resultat.expediteurs_ignores,
         "liens_recuperes": resultat.liens_recuperes,
         "liens_inaccessibles": resultat.liens_inaccessibles,
+        "fusionnes": resultat.fusionnes,
         "reste": resultat.reste,
     }
 
@@ -1553,6 +1577,15 @@ async def preparer_suppression(
             utilisateur=user_id,
         )
 
+    # Un dossier peut réunir plusieurs courriels (pièces oubliées, renvoi) :
+    # tous sont marqués supprimés, sans quoi le relevé suivant recréerait le
+    # dossier à partir de l'un d'eux.
+    await db.execute(
+        update(MessageTraite)
+        .where(MessageTraite.candidature_id == candidature.id)
+        .values(statut=MessageTraite_SUPPRIME, motif=motif[:500], candidature_id=None)
+    )
+
     await db.delete(candidature)
     if profil_supprime:
         await db.delete(candidat)
@@ -1614,6 +1647,36 @@ async def depouiller_dossier(
         "lecture": resultat.lecture,
         "avertissements": resultat.avertissements,
     }
+
+
+class FusionDoublonsIn(BaseModel):
+    poste_id: str | None = None
+    sans_poste: bool = False
+
+
+@router.post("/doublons/fusionner")
+async def fusionner_les_doublons(payload: FusionDoublonsIn, db: DbSession, user: CurrentUser) -> dict:
+    """Ne laisse aucun doublon déjà présent sur un poste (ou sans poste).
+
+    Les dossiers arrivés avant que les doublons ne soient refusés à l'entrée.
+    Le dossier gardé reçoit les pièces nouvelles de l'autre ; deux dossiers
+    travaillés l'un et l'autre restent à trancher par une personne.
+    """
+    if payload.poste_id:
+        await get_poste_or_404(db, payload.poste_id)
+    elif not payload.sans_poste:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Précisez un poste, ou les candidatures sans poste.")
+    fusion = await doublons.fusionner_poste(db, payload.poste_id)
+    await audit.record(
+        db,
+        action="doublons.fusionner",
+        entity_type="poste",
+        entity_id=payload.poste_id,
+        user_id=user.id,
+        details={"fusionnes": fusion.fusionnes, "a_trancher": fusion.a_trancher},
+    )
+    await db.commit()
+    return {"fusionnes": fusion.fusionnes, "a_trancher": fusion.a_trancher}
 
 
 class RelectureNomsIn(BaseModel):

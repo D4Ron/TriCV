@@ -116,14 +116,16 @@ class Proposition:
 async def lire_document(donnees: bytes, nom_fichier: str) -> tuple[str, str]:
     """Le texte d'un PDF ou d'un Word, et son type. Lève `FicheIllisible`."""
     mime = extraction.sniff_mime(donnees, nom_fichier)
-    if mime not in (extraction.PDF_MIME, extraction.DOCX_MIME):
+    if mime in extraction.IMAGE_MIME_TYPES and not extraction.image_lisible(donnees):
+        mime = None
+    if mime not in (extraction.PDF_MIME, extraction.DOCX_MIME, *extraction.IMAGE_MIME_TYPES):
         if mime == extraction.DOC_MIME:
             raise FicheIllisible(
                 "Les fichiers Word anciens (.doc) ne se lisent pas. Enregistrez la "
                 "fiche au format .docx ou PDF, puis déposez-la de nouveau."
             )
         raise FicheIllisible(
-            f"« {nom_fichier[:60]} » n'est ni un PDF ni un document Word."
+            f"« {nom_fichier[:60]} » n'est ni un PDF ni un document Word, ni une image lisible."
         )
     try:
         document = await extraction.extract(donnees, mime, nom_fichier, min_chars=0)
@@ -131,9 +133,9 @@ async def lire_document(donnees: bytes, nom_fichier: str) -> tuple[str, str]:
         raise FicheIllisible(f"La fiche n'a pas pu être ouverte : {exc}") from exc
     if len(document.text.strip()) < TEXTE_MINIMUM:
         raise FicheIllisible(
-            "Ce document ne contient pas de texte lisible — c'est probablement un "
-            "scan. Demandez la fiche au format Word ou en PDF texte, ou collez son "
-            "contenu dans la zone prévue."
+            "Ce document ne contient pas de texte lisible, même après lecture de "
+            "l'image (scan flou, page blanche). Demandez la fiche au format Word ou "
+            "en PDF texte, ou collez son contenu dans la zone prévue."
         )
     return document.text, mime
 
@@ -156,17 +158,33 @@ _PUCE = re.compile(r"^\s*(?:[-–—•·▪■□◦●○*►➢✓✔]|\d{1,2
 def _rubrique(titre: str) -> str | None:
     """Le nom interne d'une rubrique, d'après son intitulé. None = à ignorer."""
     t = _sans_accents(titre)
-    if "finalit" in t or "objectifs du poste" in t:
+    if "finalit" in t or "objectifs du poste" in t or "objectives" in t:
         return "missions"
-    if "responsabilit" in t or "activites" in t or "taches" in t or "missions" in t:
+    if (
+        "responsabilit" in t or "responsibilit" in t or "activites" in t or "taches" in t or "missions" in t
+        or "duties" in t or "key tasks" in t or "accountabilit" in t
+    ):
         return "responsabilites"
-    if "mission" in t or "raison d'etre" in t or "raison d’etre" in t:
+    if (
+        "mission" in t or "raison d'etre" in t or "raison d’etre" in t
+        or "purpose" in t or "job summary" in t or "role summary" in t or "contexte" in t
+    ):
         return "description"
-    if "comportement" in t or "savoir-etre" in t or "savoir etre" in t or "qualites" in t:
+    if (
+        "comportement" in t or "savoir-etre" in t or "savoir etre" in t or "qualites" in t
+        or "soft skills" in t or "aptitudes personnelles" in t
+    ):
         return "competences_comportementales"
-    if "competence" in t or "savoir-faire" in t or "connaissances" in t:
+    if "competen" in t or "savoir-faire" in t or "connaissances" in t or "skills" in t:
         return "competences_techniques"
-    if "profil" in t or "qualification" in t or "exigences" in t or "formation et experience" in t:
+    # Le profil se présente souvent en morceaux — « Formation », « Expérience
+    # professionnelle », « Langues » —, chacun sous son titre. Non reconnus,
+    # ces titres laissaient leurs lignes grossir la rubrique précédente, et le
+    # niveau ou les années n'étaient jamais lus.
+    if (
+        "profil" in t or "qualification" in t or "exigences" in t or "requirements" in t
+        or t.startswith(("formation", "experience", "diplome", "niveau d", "education", "langue", "language"))
+    ):
         return "profil"
     if "identification" in t or "description du poste" in t:
         return "identification"
@@ -258,7 +276,7 @@ def _elements(lignes: list[str]) -> list[str]:
 _PIECES_CONNUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("LETTRE_MOTIVATION", ("lettre de motivation", "lettre de candidature", "demande manuscrite")),
     ("CV", ("curriculum", "cv detaille", "cv actualise", "cv a jour")),
-    ("COPIE_DIPLOMES", ("diplome", "parchemin")),
+    ("COPIE_DIPLOMES", ("diplome", "parchemin", "releve de notes", "attestation de reussite")),
     (
         "ATTESTATIONS_TRAVAIL",
         (
@@ -269,6 +287,9 @@ _PIECES_CONNUES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "attestation d'emploi",
             "attestation de service",
             "attestations de service",
+            "attestation de stage",
+            "attestations de stage",
+            "preuves d'experience",
         ),
     ),
     (
@@ -277,11 +298,16 @@ _PIECES_CONNUES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("PASSEPORT", ("passeport",)),
     ("CERTIFICAT_NATIONALITE", ("certificat de nationalite", "preuve de nationalite")),
+    ("CASIER_JUDICIAIRE", ("casier judiciaire", "bulletin n 3", "bulletin no 3", "bulletin numero 3")),
+    ("CERTIFICAT_MEDICAL", ("certificat medical", "aptitude physique", "visite medicale")),
+    ("PHOTO", ("photo d'identite", "photos d'identite", "photographie", "photo recente")),
     ("LETTRE_RECOMMANDATION", ("recommandation", "reference professionnelle")),
 )
 
 # « CV » seul, en capitales ou non, mais pas le « cv » d'un autre mot.
 _CV_SEUL = re.compile(r"\bcv\b", re.I)
+# « CNI » : la carte nationale d'identité, presque toujours abrégée.
+_CNI_SEULE = re.compile(r"\bcni\b", re.I)
 # « CNI ou passeport », « l'un ou l'autre » : un choix, pas deux exigences.
 # Le « ou » doit être un mot entier — « oui », « pourvoir » et « ou » ne se
 # distinguent que par là.
@@ -295,13 +321,16 @@ _FACULTATIF = ("facultat", "optionnel", "le cas echeant", "si disponible", "even
 
 def _codes_de(ligne: str) -> list[str]:
     """Les pièces que cette ligne nomme, dans l'ordre du référentiel."""
-    cle = _sans_accents(_nettoyer_element(ligne))
+    cle = _sans_accents(_nettoyer_element(ligne)).replace("°", " ").replace("’", "'")
+    cle = re.sub(r"\s+", " ", cle)
     if not cle:
         return []
     return [
         code
         for code, mots in _PIECES_CONNUES
-        if any(m in cle for m in mots) or (code == "CV" and _CV_SEUL.search(cle))
+        if any(m in cle for m in mots)
+        or (code == "CV" and _CV_SEUL.search(cle))
+        or (code == "PIECE_IDENTITE" and _CNI_SEULE.search(cle))
     ]
 
 
@@ -322,11 +351,18 @@ def _pieces(lignes: list[str]) -> dict[str, object]:
     requises: list[str] = []
     facultatives: list[str] = []
     groupes: list[dict[str, object]] = []
+    inconnues: list[str] = []
     vus: set[str] = set()
 
     for ligne in lignes:
-        codes = [c for c in _codes_de(ligne) if c not in vus]
+        tous = _codes_de(ligne)
+        codes = [c for c in tous if c not in vus]
         if not codes:
+            propre = _nettoyer_element(ligne)
+            # Une ligne d'au moins deux mots, qui n'est pas un titre ni une
+            # consigne de dépôt : une pièce que le référentiel ne connaît pas.
+            if not tous and len(propre.split()) >= 2 and not propre.endswith(":") and len(propre) <= 120:
+                inconnues.append(propre)
             continue
         cle = _sans_accents(_nettoyer_element(ligne))
         vus.update(codes)
@@ -350,18 +386,30 @@ def _pieces(lignes: list[str]) -> dict[str, object]:
         trouve["pieces_facultatives"] = facultatives
     if groupes:
         trouve["groupes_pieces"] = groupes
+    if inconnues:
+        trouve["_pieces_inconnues"] = inconnues[:10]
     return trouve
 
 
 # Les étiquettes « clé : valeur » de la rubrique d'identification.
 _ETIQUETTES = (
-    ("intitule", re.compile(r"^intitul[eé]\s+(?:du\s+)?poste\s*:\s*(.+)$", re.I)),
-    ("departement", re.compile(r"^(?:direction|d[ée]partement|service|entit[ée])\s*:\s*(.+)$", re.I)),
+    (
+        "intitule",
+        re.compile(
+            r"^(?:intitul[eé](?:\s+(?:du\s+)?poste)?|titre\s+du\s+poste|poste|fonction|emploi"
+            r"|job\s+title|position(?:\s+title)?)\s*:\s*(.+)$",
+            re.I,
+        ),
+    ),
+    (
+        "departement",
+        re.compile(r"^(?:direction|d[ée]partement|department|service|entit[ée]|unit[ée]?)\s*:\s*(.+)$", re.I),
+    ),
     (
         "rattachement",
         re.compile(
             r"^(?:rattachement(?:\s+hi[ée]rarchique)?|hi[ée]rarchique|sup[ée]rieur\s+hi[ée]rarchique"
-            r"|n\s*\+\s*1|rend\s+compte\s+[àa])\s*:\s*(.+)$",
+            r"|n\s*\+\s*1|rend\s+compte\s+[àa]|reports?\s+to|line\s+manager)\s*:\s*(.+)$",
             re.I,
         ),
     ),
@@ -369,13 +417,17 @@ _ETIQUETTES = (
         "localisation",
         re.compile(
             r"^(?:localisation|lieu\s+(?:d['’]affectation|de\s+travail|d['’]exercice)|"
-            r"poste\s+bas[ée]\s+[àa]|lieu)\s*:?\s*(.+)$",
+            r"poste\s+bas[ée]\s+[àa]|lieu|location|duty\s+station|based\s+in)\s*:?\s*(.+)$",
             re.I,
         ),
     ),
     (
         "nombre_a_pourvoir",
-        re.compile(r"^(?:nombre\s+de\s+postes?(?:\s+[àa]\s+pourvoir)?|effectif\s+recherch[ée])\s*:\s*(\d{1,3})", re.I),
+        re.compile(
+            r"^(?:nombre\s+de\s+postes?(?:\s+[àa]\s+pourvoir)?|effectif\s+recherch[ée]"
+            r"|number\s+of\s+(?:positions|posts))\s*:\s*(\d{1,3})",
+            re.I,
+        ),
     ),
 )
 
@@ -525,6 +577,9 @@ def _responsabilites(lignes: list[str]) -> list[str]:
 _NIVEAUX_NOMMES = (
     ("doctorat", 8),
     ("phd", 8),
+    ("master 1", 4),
+    ("m1", 4),
+    ("mba", 5),
     ("master", 5),
     ("ingenieur", 5),
     ("dess", 5),
@@ -532,17 +587,46 @@ _NIVEAUX_NOMMES = (
     ("maitrise", 4),
     ("licence", 3),
     ("bachelor", 3),
+    ("ingenieur des travaux", 3),
     ("bts", 2),
     ("dut", 2),
+    ("deug", 2),
+    ("baccalaureat", 0),
 )
 _BAC_PLUS = re.compile(r"bac\s*\+\s*(\d)", re.I)
 # Le chiffre en toutes lettres suivi du nombre entre parenthèses est la forme
 # courante des avis de la sous-région : « huit (08) années d'expérience ». Sans
 # la parenthèse fermante, le motif butait dessus et la trame ne lisait aucune
 # durée — l'assistance rattrapait, mais elle n'est ni obligatoire ni gratuite.
-_UNITE_ANNEES = r"\(?\s*(\d{1,2})\s*\)?\s*(?:ans|annees|annee)"
+_UNITE_ANNEES = r"\(?\s*(\d{1,2})\s*\)?\s*(?:ans|annees|annee|years?)"
 # « Minimum 10 années d'expérience », « 7 ans d'expérience professionnelle »
-_ANNEES_GENERALES = re.compile(_UNITE_ANNEES + r"\s+(?:d['’]\s*)?experience", re.I)
+_ANNEES_GENERALES = re.compile(
+    _UNITE_ANNEES + r"\s+(?:d['’]\s*|of\s+)?(?:\w+\s+)?experience"
+    # « une expérience professionnelle d'au moins cinq (05) ans »
+    + r"|experience[^.;\n]{0,60}?(?:d['’]\s*)?(?:au\s+moins|minimum|minimale\s+de|at\s+least|de)\s+"
+    + r"(?:[a-z]+\s+)?\(?\s*(\d{1,2})\s*\)?\s*(?:ans|annees|annee|years?)",
+    re.I,
+)
+
+# « cinq (05) ans », « huit années » : le nombre en toutes lettres.
+_NOMBRES = {
+    "un": 1, "une": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5, "six": 6, "sept": 7,
+    "huit": 8, "neuf": 9, "dix": 10, "onze": 11, "douze": 12, "treize": 13, "quatorze": 14,
+    "quinze": 15, "vingt": 20, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twelve": 12, "fifteen": 15,
+}
+_NOMBRE_ECRIT = re.compile(
+    r"\b(" + "|".join(sorted(_NOMBRES, key=len, reverse=True)) + r")\b(?=\s*(?:ans|annees|annee|years?)\b)"
+)
+
+
+def _chiffres(cle: str) -> str:
+    """« cinq ans » → « 5 ans » ; « huit (08) années » reste lisible par sa parenthèse."""
+    return _NOMBRE_ECRIT.sub(lambda m: str(_NOMBRES[m.group(1)]), cle)
+
+
+def _annees_de(trouvee: re.Match[str]) -> int:
+    return int(next(g for g in trouvee.groups() if g and g.isdigit()))
 # « Au moins 5 ans à un poste de management dans les secteurs : … »
 _ANNEES_SPECIFIQUES = re.compile(
     r"(?:dont|au\s+moins|au\s+minimum|minimum)\s+(?:[a-z]+\s+)?"
@@ -603,12 +687,15 @@ def _profil(lignes: list[str]) -> dict[str, object]:
     """Niveau, domaines et expérience, lus dans la rubrique « Profil requis »."""
     trouve: dict[str, object] = {}
     for index, ligne in enumerate(lignes):
-        cle = _sans_accents(ligne)
+        cle = _chiffres(_sans_accents(ligne))
 
         if "niveau_min" not in trouve:
             bac = _BAC_PLUS.search(cle)
             if bac:
-                trouve["niveau_min"] = int(bac.group(1))
+                # « BAC+3 minimum, BAC+5 souhaité », « Bac+4/5 » : le plancher est
+                # le plus bas des niveaux cités sur la ligne.
+                trouve["niveau_min"] = min(int(n) for n in re.findall(r"bac\s*\+\s*(\d)", cle)
+                                            + re.findall(r"bac\s*\+\s*\d\s*/\s*(\d)", cle))
                 # « Bac+5 en : » annonce la liste des domaines acceptés ;
                 # « Bac+5 en finance ou gestion » la donne sur la même ligne.
                 reste = cle[bac.end() :].strip()
@@ -626,10 +713,10 @@ def _profil(lignes: list[str]) -> dict[str, object]:
                     if domaines:
                         trouve["domaines_acceptes"] = domaines
             else:
-                for mot, niveau in _NIVEAUX_NOMMES:
-                    if re.search(rf"\b{mot}\b", cle):
-                        trouve["niveau_min"] = niveau
-                        break
+                cites = [niveau for mot, niveau in _NIVEAUX_NOMMES if re.search(rf"\b{mot}\b", cle)]
+                if cites:
+                    # « Licence minimum, Master souhaité » : le plancher, pas le souhait.
+                    trouve["niveau_min"] = min(cites)
 
         # « Au moins 10 ans d'expérience » ne passe pas ici : après « ans »,
         # le motif spécifique veut une préposition (« à », « dans », « en »),
@@ -646,7 +733,7 @@ def _profil(lignes: list[str]) -> dict[str, object]:
             if "annees_experience_min" not in trouve:
                 amont = _ANNEES_GENERALES.search(cle[: specifique.start()])
                 if amont:
-                    trouve["annees_experience_min"] = int(amont.group(1))
+                    trouve["annees_experience_min"] = _annees_de(amont)
             trouve["annees_experience_specifique_min"] = int(specifique.group(1))
             if ligne.rstrip().endswith(":"):
                 domaines = _liste_apres_deux_points(lignes, index)
@@ -662,12 +749,20 @@ def _profil(lignes: list[str]) -> dict[str, object]:
         if "annees_experience_min" not in trouve:
             general = _ANNEES_GENERALES.search(cle)
             if general:
-                trouve["annees_experience_min"] = int(general.group(1))
+                trouve["annees_experience_min"] = _annees_de(general)
 
+    texte_profil = _sans_accents(" ".join(lignes))
     langues = [
         l
-        for l in ("français", "anglais", "portugais", "espagnol", "arabe", "allemand")
-        if _sans_accents(l) in _sans_accents(" ".join(lignes))
+        for l, variantes in (
+            ("français", ("francais", "french")),
+            ("anglais", ("anglais", "english")),
+            ("portugais", ("portugais", "portuguese")),
+            ("espagnol", ("espagnol", "spanish")),
+            ("arabe", ("arabe", "arabic")),
+            ("allemand", ("allemand", "german")),
+        )
+        if any(re.search(rf"\b{v}\b", texte_profil) for v in variantes)
     ]
     if langues:
         trouve["langues_requises"] = langues
@@ -807,6 +902,38 @@ async def proposer(
     if du_fichier and not _etiquette_intitule(texte):
         trame["intitule"] = du_fichier
 
+    remarques: list[str] = []
+    inconnues = trame.pop("_pieces_inconnues", None)
+    if inconnues:
+        remarques.append(
+            "Pièces demandées par la fiche que le formulaire ne sait pas réclamer : "
+            + " ; ".join(inconnues)
+            + ". Ajoutez-les à l'avis à la main, ou autorisez les documents libres."
+        )
+    if any(k in trame for k in ("pieces_requises", "pieces_facultatives", "groupes_pieces")):
+        from app.domain import pieces
+
+        rangees = pieces.normaliser(
+            trame.get("pieces_requises"), trame.get("pieces_facultatives"), trame.get("groupes_pieces")
+        )
+        for cle, valeur in (
+            ("pieces_requises", rangees.requises),
+            ("pieces_facultatives", rangees.facultatives),
+            ("groupes_pieces", rangees.groupes),
+        ):
+            if valeur:
+                trame[cle] = valeur
+            else:
+                trame.pop(cle, None)
+    niveaux = sorted(
+        {int(n) for n in re.findall(r"bac\s*\+\s*(\d)", _sans_accents(" ".join(_decouper(texte).get("profil", []))))}
+    )
+    if len(niveaux) > 1 and trame.get("niveau_min") == niveaux[0]:
+        remarques.append(
+            f"La fiche cite plusieurs niveaux ({', '.join(f'BAC+{n}' for n in niveaux)}) : "
+            f"BAC+{niveaux[0]} est retenu comme minimum. Vérifiez que c'est bien le plancher."
+        )
+
     proposition = Proposition(texte=texte)
     for champ, valeur in trame.items():
         proposition.valeurs[champ] = valeur
@@ -836,4 +963,6 @@ async def proposer(
             "Aucune rubrique n'a été reconnue dans ce texte. Remplissez le formulaire "
             "à la main ; le texte reste joint au poste et servira à rédiger l'avis."
         )
+    if remarques:
+        proposition.avertissement = " ".join(filter(None, [proposition.avertissement, *remarques]))
     return proposition

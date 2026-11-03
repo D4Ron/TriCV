@@ -243,6 +243,30 @@ creation. They are stripped from anything sent to a model when `REDACT_DEMOGRAPH
 Attachments are fingerprinted (SHA-256). An identical file arriving twice for the same poste is
 dropped rather than tagged, with a note in the report. Replaying a mailbox fetch is therefore safe.
 
+No second dossier is ever kept for the same person on a poste. When a new arrival matches an existing
+dossier — identical file, same email, or same name and birth date — its *new* pieces are added to the
+existing dossier, identical ones are dropped, and a note says so (`doublons.absorber`, on email
+import, the mailbox screen and bulk upload). Duplicates created before this rule are merged with
+**Fusionner les doublons** (poste menu, and *Candidatures sans poste*); the dossier kept is the one
+someone has worked on, else the oldest, and two dossiers both worked on are left for a person to
+decide.
+
+### Lifting a criterion the system got wrong
+
+Most eliminations HR lifts at review are reading errors, not exceptions: a piece present but filed
+under the wrong type, a diploma misread, a blurred scan. The review screen and the dossier panel
+offer one-click reasons for those cases; any other reason is typed. Lifts are logged and survive
+re-scoring.
+
+### What the avis asks for
+
+Required pieces, optional pieces, groups (« CNI ou passeport », « diplôme et attestation ») and free
+documents are tidied on every save so each piece is asked for exactly once (`domain/pieces.py`): a
+group takes its pieces out of the simple lists, required beats optional, « Autre document » belongs
+to the free documents. The editor shows a grouped piece as « dans « Pièce d'identité » », and the save
+message lists what was tidied. An avis cannot be published with a closing date already past, or
+without the CV being asked for.
+
 ---
 
 ## The screens

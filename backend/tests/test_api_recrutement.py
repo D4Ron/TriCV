@@ -273,7 +273,12 @@ async def test_publier_un_avis_sans_cloture_est_refuse(client, auth):
     assert refus.status_code == 422
     assert "clôture" in refus.json()["detail"]
 
-    await client.patch(f"{API}/avis/{avis_id}", json={"date_cloture": "2026-09-30"}, headers=auth)
+    # Une clôture déjà passée est refusée aussi : le lien fermerait aussitôt.
+    await client.patch(f"{API}/avis/{avis_id}", json={"date_cloture": "2020-09-30"}, headers=auth)
+    passee = await client.post(f"{API}/avis/{avis_id}/publier", headers=auth)
+    assert passee.status_code == 422 and "passée" in passee.json()["detail"]
+
+    await client.patch(f"{API}/avis/{avis_id}", json={"date_cloture": "2099-09-30"}, headers=auth)
     publie = await client.post(f"{API}/avis/{avis_id}/publier", headers=auth)
     assert publie.status_code == 200
     assert publie.json()["statut"] == "PUBLIE"
@@ -783,12 +788,13 @@ async def test_un_avis_cloture_refuse_les_depots(client, auth):
     avis = (
         await client.post(
             f"{API}/postes/{poste_id}/avis",
-            # Clôture dépassée : le dépôt se ferme sans intervention.
-            json={"date_cloture": "2020-01-01"},
+            json={"date_cloture": "2099-01-01"},
             headers=auth,
         )
     ).json()
     await client.post(f"{API}/avis/{avis['id']}/publier", headers=auth)
+    # Clôture dépassée après publication : le dépôt se ferme sans intervention.
+    await client.patch(f"{API}/avis/{avis['id']}", json={"date_cloture": "2020-01-01"}, headers=auth)
     cle = avis["cle_publique"]
 
     assert (await client.get(f"{API}/public/avis")).json() == []

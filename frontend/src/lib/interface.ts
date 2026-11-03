@@ -26,6 +26,20 @@ export function resumeRelectureNoms(r: {
   return parts.join('. ') + '.'
 }
 
+/** Le compte rendu de « Fusionner les doublons ». */
+export function resumeFusion(r: { fusionnes: string[]; a_trancher: string[] }): string {
+  const parts = [
+    r.fusionnes.length
+      ? `${r.fusionnes.length} doublon(s) versé(s) dans le dossier qu'ils doublaient`
+      : 'Aucun doublon à fusionner',
+  ]
+  if (r.a_trancher.length)
+    parts.push(
+      `${r.a_trancher.length} à trancher — les deux dossiers ont été travaillés : ${r.a_trancher.join(', ')}`,
+    )
+  return parts.join('. ') + '.'
+}
+
 /**
  * L'interface d'avant la refonte de la revue et de la boîte est-elle demandée ?
  *

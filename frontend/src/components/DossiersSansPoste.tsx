@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { dossiersApi, recrutementApi } from '@/lib/api'
 import { useAnnulable } from '@/lib/annulable'
-import { estDomainePublic, resumeRelectureNoms } from '@/lib/interface'
+import { estDomainePublic, resumeFusion, resumeRelectureNoms } from '@/lib/interface'
 import { Callout, Modal } from '@/components/ui'
 import { formatDate } from '@/lib/format'
 import RattacherPoste from '@/components/RattacherPoste'
@@ -85,6 +85,15 @@ export default function DossiersSansPoste() {
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Relecture impossible'),
   })
 
+  const fusionner = useMutation({
+    mutationFn: () => recrutementApi.fusionnerDoublons({ sans_poste: true }),
+    onSuccess: (r) => {
+      setCompteRendu({ texte: resumeFusion(r) })
+      void queryClient.invalidateQueries({ queryKey: ['dossiers-sans-poste'] })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Fusion impossible'),
+  })
+
   const ouvrir = async (candidatureId: string, pieceId: string) => {
     setErreur(null)
     // Ouverte avant l'attente : un onglet ouvert après coup serait bloqué
@@ -134,6 +143,15 @@ export default function DossiersSansPoste() {
           title="Corrige les noms inversés ou pris au libellé du courriel (« Yahoo! »), d'après le CV."
         >
           {relireNoms.isPending ? 'Lecture des CV…' : 'Relire les noms dans les CV'}
+        </button>
+        <button
+          type="button"
+          className="text-xs font-medium text-brand-700 underline disabled:opacity-50"
+          disabled={fusionner.isPending || dossiers.length < 2}
+          onClick={() => fusionner.mutate()}
+          title="Verse chaque doublon (même adresse, même fichier, même identité) dans le dossier qu'il double."
+        >
+          {fusionner.isPending ? 'Fusion…' : 'Fusionner les doublons'}
         </button>
         <Link to="/boite" className="text-xs font-medium text-brand-700 underline">
           Ouvrir la boîte de recrutement

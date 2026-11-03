@@ -159,8 +159,12 @@ def test_deux_pieces_liees_par_et_restent_deux_exigences():
     assert "groupes_pieces" not in lu
 
 
-def test_une_piece_hors_nomenclature_est_ignoree():
-    """Le vocabulaire des pièces est fermé : un code inventé n'exigerait rien."""
+def test_une_piece_hors_nomenclature_est_signalee_sans_etre_inventee():
+    """Le vocabulaire des pièces est fermé : un code inventé n'exigerait rien.
+
+    Mais la pièce n'est plus perdue en silence : elle est rendue à part, pour
+    que l'écran dise de l'ajouter à la main.
+    """
     lu = fiche_poste.lire_trame(
         "Intitulé du poste : Comptable\n"
         "DOSSIER DE CANDIDATURE\n"
@@ -168,8 +172,9 @@ def test_une_piece_hors_nomenclature_est_ignoree():
         "Une fiche de renseignements du candidat\n"
         "Trois photos d'identité\n"
     )
-    assert lu["pieces_requises"] == ["CV"]
+    assert lu["pieces_requises"] == ["CV", "PHOTO"]
     assert "pieces_facultatives" not in lu
+    assert lu["_pieces_inconnues"] == ["Une fiche de renseignements du candidat"]
 
 
 def test_le_nombre_entre_parentheses_se_lit_comme_une_duree():
@@ -458,6 +463,8 @@ async def test_les_rubriques_de_presentation_s_enregistrent(client, auth):
 async def test_un_poste_a_completer_ne_publie_pas_son_avis(client, auth):
     poste_id = await monter_poste(client, auth, a_completer=True)
     avis = (await client.get(f"{API}/postes/{poste_id}/avis", headers=auth)).json()[0]
+    # Une clôture passée bloque la publication : on la repousse.
+    await client.patch(f"{API}/avis/{avis['id']}", json={"date_cloture": "2099-12-31"}, headers=auth)
 
     refus = await client.post(f"{API}/avis/{avis['id']}/publier", headers=auth)
     assert refus.status_code == 409
@@ -673,6 +680,8 @@ async def test_la_page_publique_donne_le_lieu_et_le_contact(client, auth):
         f"{API}/settings", json={"contact_candidats": "aide@kapi.tg"}, headers=auth
     )
     avis = (await client.get(f"{API}/postes/{poste_id}/avis", headers=auth)).json()[0]
+    # Une clôture passée bloque la publication : on la repousse.
+    await client.patch(f"{API}/avis/{avis['id']}", json={"date_cloture": "2099-12-31"}, headers=auth)
     await client.post(f"{API}/avis/{avis['id']}/publier", headers=auth)
 
     public = (await client.get(f"{API}/public/avis/{avis['cle_publique']}")).json()

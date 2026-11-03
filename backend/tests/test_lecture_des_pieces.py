@@ -468,3 +468,188 @@ async def test_un_dossier_fusionne_renvoye_ne_double_pas_ses_pieces():
         pieces = (await db.execute(select(PieceCandidature))).scalars().all()
         assert len(pieces) == 3
         assert len((await db.execute(select(Candidature))).scalars().all()) == 1
+
+
+# --- les doublons : versés, jamais ouverts --------------------------------------
+
+
+async def test_un_dossier_renvoye_en_lot_n_ouvre_pas_de_doublon(client, auth):
+    poste_id = await _poste(client, auth)
+
+    async def deposer(fichiers):
+        return (
+            await client.post(
+                f"{API}/postes/{poste_id}/candidatures/depot-multiple",
+                files=[("fichiers", (nom, donnees, "application/pdf")) for nom, donnees in fichiers],
+                data={"groupes": ["Essi KOUMA"] * len(fichiers)},
+                headers=auth,
+            )
+        ).json()
+
+    premier = await deposer([("CV.pdf", pdf(CV_P1, CV_P2))])
+    assert premier["deposes"] == 1
+    # Le même candidat, son CV (même adresse) et l'attestation oubliée.
+    second = await deposer([("CV_v2.pdf", pdf(CV_P1, CV_P2, "Mise à jour")), ("attestation.pdf", pdf(ATTESTATION))])
+    assert second["deposes"] == 0
+    assert "aucun second dossier" in second["resultats"][0]["erreur"]
+
+    page = (await client.get(f"{API}/postes/{poste_id}/candidatures", headers=auth)).json()
+    assert page["total"] == 1
+    dossier = (await client.get(f"{API}/candidatures/{page['items'][0]['id']}", headers=auth)).json()
+    assert sorted(p["type_piece"] for p in dossier["pieces"]) == sorted(
+        [P.CV.value, P.CV.value, P.ATTESTATIONS_TRAVAIL.value]
+    )
+
+
+async def test_un_second_courriel_complete_le_dossier():
+    """« J'ai oublié mon attestation » : versée au dossier, aucun doublon."""
+
+    def message(identifiant, pieces):
+        return courriel.MessageEntrant(
+            message_id=identifiant,
+            expediteur="essi.kouma92@example.fr",
+            nom_expediteur="Essi Kouma",
+            sujet="Candidature",
+            recu_le=datetime(2026, 11, 2, 9, 0),
+            pieces=pieces,
+        )
+
+    messages = [
+        message("<m1@example.tg>", [courriel.PieceJointe(nom="CV.pdf", donnees=pdf(CV_P1, CV_P2))]),
+        message("<m2@example.tg>", [courriel.PieceJointe(nom="attestation.pdf", donnees=pdf(ATTESTATION))]),
+    ]
+
+    class Boite:
+        reste = False
+
+        def relever(self, limite=50, exclure=frozenset()):
+            return [m for m in messages if m.message_id not in exclure]
+
+        def marquer_traite(self, message_id):
+            pass
+
+    async with SessionLocal() as db:
+        resultat = await courriel.relever(db, Boite())
+        await db.commit()
+        from app.models import Candidature, MessageTraite
+
+        assert (resultat.spontanees, resultat.fusionnes) == (1, 1)
+        assert len((await db.execute(select(Candidature))).scalars().all()) == 1
+        traces = (await db.execute(select(MessageTraite))).scalars().all()
+        assert len({t.candidature_id for t in traces}) == 1
+
+
+async def test_les_doublons_deja_presents_se_fusionnent(client, auth):
+    from app.models import Candidature, Entretien
+    from app.services.preselection import charger_candidature
+
+    poste_id = await _poste(client, auth)
+    # Deux dossiers ouverts avant la règle : même adresse, pièces différentes.
+    async with SessionLocal() as db:
+        ids = []
+        for nom, donnees in (("cv.pdf", pdf(CV_P1)), ("attestation.pdf", pdf(ATTESTATION))):
+            candidat = Candidat(nom="Kouma", prenom="Essi", email="essi.kouma92@example.fr")
+            db.add(candidat)
+            await db.flush()
+            candidature = Candidature(poste_id=poste_id, candidat_id=candidat.id)
+            db.add(candidature)
+            await db.flush()
+            db.add(PieceCandidature(candidature_id=candidature.id, type_piece="CV", nom_fichier=nom, empreinte=nom))
+            ids.append(candidature.id)
+        await db.commit()
+
+    corps = (await client.post(f"{API}/doublons/fusionner", json={"poste_id": poste_id}, headers=auth)).json()
+    assert len(corps["fusionnes"]) == 1 and corps["a_trancher"] == []
+    async with SessionLocal() as db:
+        restantes = (await db.execute(select(Candidature))).scalars().all()
+        assert [c.id for c in restantes] == [ids[0]]
+        assert len((await charger_candidature(db, ids[0])).pieces) == 2
+
+    # Deux dossiers travaillés l'un et l'autre : à trancher, pas fusionnés.
+    async with SessionLocal() as db:
+        candidat = Candidat(nom="Kouma", prenom="Essi", email="essi.kouma92@example.fr")
+        db.add(candidat)
+        await db.flush()
+        autre = Candidature(poste_id=poste_id, candidat_id=candidat.id)
+        db.add(autre)
+        await db.flush()
+        db.add(Entretien(candidature_id=autre.id))
+        db.add(Entretien(candidature_id=ids[0]))
+        await db.commit()
+    corps = (await client.post(f"{API}/doublons/fusionner", json={"poste_id": poste_id}, headers=auth)).json()
+    assert corps["fusionnes"] == [] and len(corps["a_trancher"]) == 1
+
+
+# --- relevé sur un vrai lot (formes reproduites, contenus inventés) ---------------
+
+
+@pytest.mark.parametrize(
+    ("nom", "attendu"),
+    [
+        ("attestation d identite.pdf", P.PIECE_IDENTITE.value),
+        ("driven licence.pdf", P.AUTRE.value),
+        ("bachelor degree2.pdf", P.COPIE_DIPLOMES.value),
+        ("Pass DOSSOU AFI.pdf", P.PASSEPORT.value),
+        ("Photo diplome master.pdf", P.COPIE_DIPLOMES.value),
+        ("photo d identite.jpg", P.PHOTO.value),
+        ("Casier judiciaire.pdf", P.CASIER_JUDICIAIRE.value),
+    ],
+)
+def test_les_noms_de_fichiers_vus_sur_un_vrai_lot(nom, attendu):
+    from app.services import lots
+
+    assert lots.classer(nom)[0] == attendu
+
+
+def test_le_numero_d_un_dossier_exporte_n_est_pas_un_nom():
+    from app.services import lots
+
+    assert lots.separer_identite("005 - DOSSOU Afi") == ("DOSSOU", "Afi")
+
+
+def test_une_bonne_maitrise_n_est_pas_une_maitrise():
+    lu = lecture_locale.lire(
+        "FORMATION\n2015 : Master en Logistique, Université de Lomé\n"
+        "Bonne maîtrise des normes et pratiques HSE\n"
+    )
+    assert [d.niveau for d in lu.diplomes] == [5]
+
+
+def test_la_mention_d_un_diplome_n_est_pas_son_domaine():
+    texte = "UNIVERSITÉ DE LOMÉ\nDIPLÔME DE LICENCE\nMention : Assez bien\nSession de juillet 2014"
+    assert lecture_locale.diplome_d_une_copie(texte, date(2026, 11, 3)).domaine == ""
+
+
+def test_une_annee_et_un_domaine_sur_deux_lignes_font_un_seul_diplome():
+    lu = lecture_locale.lire("FORMATION\nDIPLÔME DE MASTER — 2014\nMASTER : Droit des affaires\n")
+    assert [(d.niveau, d.annee, d.domaine) for d in lu.diplomes] == [(5, 2014, "droit des affaires")]
+
+
+def test_les_etiquettes_poste_et_entreprise_et_les_durees():
+    lu = lecture_locale.lire(
+        "EXPÉRIENCE PROFESSIONNELLE\n"
+        "Janvier 2020 – Décembre 2022 — 2 ans 11 mois\n"
+        "Poste : Responsable logistique\n"
+        "Entreprise : Société Togolaise de Transit\n",
+        aujourd_hui=date(2026, 11, 3),
+    )
+    assert [(e.poste, e.employeur) for e in lu.experiences] == [
+        ("Responsable logistique", "Société Togolaise de Transit")
+    ]
+
+
+def test_une_page_de_cv_qui_cite_ses_certificats_reste_dans_le_cv():
+    assert decoupage._segments([(P.CV.value, None), (P.AUTRE.value, "Certificat de langue"), (P.CV.value, None)]) == [
+        (0, 2, P.CV.value, None)
+    ]
+    # Une page de garde sans type rejoint la pièce qui la suit.
+    assert decoupage._segments([(None, None), (P.ATTESTATIONS_TRAVAIL.value, None)]) == [
+        (0, 1, P.ATTESTATIONS_TRAVAIL.value, None)
+    ]
+
+
+def test_le_nom_d_un_cv_a_deux_colonnes_se_trouve_plus_bas():
+    """La colonne latérale (contact, compétences) passe avant le nom dans le texte."""
+    colonne = "\n".join(["CONTACT", "Téléphone : 90 00 00 00", "COMPÉTENCES"] + [f"• Compétence {i}" for i in range(30)])
+    texte = colonne + "\nKOUMA Essi Afi\nDirectrice logistique\n"
+    assert identite.depuis_cv(texte) == ("Kouma", "Essi Afi")

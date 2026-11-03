@@ -234,7 +234,7 @@ _MOIS_ORIGINE = (
 _DATE_ORIGINE = re.compile(
     r"\(?\b(?:(?:de|du|from|depuis|since)\s+)?(?:(?:" + _MOIS_ORIGINE + r")\.?\s*|(?:0?[1-9]|1[0-2])\s*/\s*)?"
     r"(?:19|20)\d\d\b\)?"
-    r"|\b(?:" + _MOIS_ORIGINE + r")\.?(?=\s*[-–—/]\s*(?:" + _MOIS_ORIGINE + r"))",
+    r"|\b(?:" + _MOIS_ORIGINE + r")\.?(?=\s*(?:[-–—/]|[àa]|au|to)\s*(?:" + _MOIS_ORIGINE + r"))",
     re.IGNORECASE,
 )
 _PRESENT_ORIGINE = re.compile(
@@ -283,10 +283,20 @@ _ETABLISSEMENTS = frozenset(
 _COUPURES = re.compile(r"\s*[,;|•·(]\s*|\s+[-–—]\s+|\s*[–—]\s*")
 
 
+_MAITRISE_NON_DIPLOME = re.compile(
+    r"(?:bonne|parfaite|excellente|tres bonne|bon|une|la|sa|avec)\s+maitrise\b|\bmaitrise\s+(?:des|du|de la|d|parfaite|des outils|de l)\b"
+)
+
+
 def _niveau_de(ligne_plate: str) -> tuple[int, re.Match] | None:
     for motif, niveau in _DIPLOME:
-        m = motif.search(ligne_plate)
-        if m:
+        for m in motif.finditer(ligne_plate):
+            # Constaté sur un CV réel : « bonne maîtrise des normes HSE » lue
+            # comme un diplôme de Maîtrise (BAC+4).
+            if m.group(0) == "maitrise" and _MAITRISE_NON_DIPLOME.search(
+                ligne_plate[max(0, m.start() - 14) : m.end() + 14]
+            ):
+                continue
             return niveau, m
     return None
 
@@ -375,12 +385,42 @@ def diplomes(sections: dict[str, list[str]], texte: str) -> list[DiplomeExtrait]
     uniques: dict[tuple, DiplomeExtrait] = {}
     for d in trouves:
         uniques.setdefault((d.niveau, d.domaine, d.annee), d)
-    return list(uniques.values())
+    # « DIPLÔME DE MASTER — 2014 » puis « MASTER Droit » : une ligne donne
+    # l'année, la suivante le domaine. Même niveau, chacun ce qui manque à
+    # l'autre : c'est un seul diplôme.
+    restants = list(uniques.values())
+    fusionnes: list[DiplomeExtrait] = []
+    for d in restants:
+        partenaire = next(
+            (
+                f for f in fusionnes
+                if f.niveau == d.niveau
+                and ((f.annee is None) != (d.annee is None))
+                and (not f.domaine or not d.domaine or f.domaine == d.domaine)
+                and not getattr(f, "_complete", False)
+            ),
+            None,
+        )
+        if partenaire is None:
+            fusionnes.append(d)
+            continue
+        partenaire.annee = partenaire.annee or d.annee
+        if not partenaire.domaine:
+            partenaire.domaine = partenaire.domaine_dossier = d.domaine
+        partenaire.etablissement = partenaire.etablissement or d.etablissement
+        if len(d.intitule) > len(partenaire.intitule) and d.domaine:
+            partenaire.intitule = d.intitule
+    return fusionnes
 
 
 _MENTION_DOMAINE = re.compile(
     r"^\s*(?:mention|sp[ée]cialit[ée]|option|parcours|domaine|fili[èe]re|field of study|major)\s*[:：]?\s*(.+)$",
     re.IGNORECASE,
+)
+
+
+_APPRECIATIONS = frozenset(
+    {"passable", "assez bien", "bien", "tres bien", "honorable", "tres honorable", "excellent", "excellente"}
 )
 
 
@@ -404,8 +444,16 @@ def diplome_d_une_copie(texte: str, aujourd_hui: date | None = None) -> DiplomeE
         if etablissement is None and _est_etablissement(ligne) and len(p.split()) <= 12:
             etablissement = retirer_dates(ligne)[:255] or None
         if not domaine and (m := _MENTION_DOMAINE.match(ligne)):
-            domaine = " ".join(plat(m.group(1)).split()[:8])
+            valeur = " ".join(plat(m.group(1)).split()[:8])
+            # Sur un diplôme français, la mention est souvent l'appréciation du
+            # jury — « Passable le 19/07/03 », « Assez bien ».
+            if not any(valeur == a or valeur.startswith(a + " ") for a in _APPRECIATIONS):
+                domaine = valeur
         reconnu = _niveau_de(p)
+        # Un sigle (« DEA », « BTS ») lu dans un scan bruité n'est cru que sur
+        # une ligne qui parle de diplôme : l'OCR fabrique des « dea ».
+        if reconnu and len(reconnu[1].group(0)) <= 4 and "diplom" not in p and "bac" not in reconnu[1].group(0):
+            reconnu = None
         if reconnu and len(p.split()) <= 15 and (meilleur is None or reconnu[0] > meilleur[0]):
             meilleur = (reconnu[0], p, reconnu[1], ligne)
     if meilleur is None:
@@ -425,7 +473,7 @@ def diplome_d_une_copie(texte: str, aujourd_hui: date | None = None) -> DiplomeE
 
 # --- expériences -------------------------------------------------------------
 
-_PUCE = re.compile(r"^\s*(?:[•●▪■◦○◆➢➤►✓✔\-–—*·]|\d+[.)]\s)\s*")
+_PUCE = re.compile(r"^\s*(?:[•●▪■◦○◆◇➢➤►▸▹➔→⇒➣❖✦✓✔✗◾◼\-–—*·]|\d+[.)]\s)\s*")
 _MARQUES_EMPLOYEUR = frozenset(
     {
         "sa", "sarl", "sas", "suarl", "ltd", "limited", "inc", "llc", "plc", "group", "groupe",
@@ -531,11 +579,33 @@ def _score(morceau: str, marques: frozenset[str]) -> int:
     return score
 
 
+_DUREE = re.compile(r"^\(?\s*\d+\s*(?:an|ans|annees?|mois|years?|months?)\b", re.IGNORECASE)
+_LIAISON_RESTEE = re.compile(
+    r"^(?:[àa]|au|aux|jusqu['’]?\s*[àa]|de|du|from|to|since|depuis)\b\s*:?\s*", re.IGNORECASE
+)
+_ETIQUETTE_POSTE = re.compile(r"^(?:poste|fonction|titre|intitul[ée]|position|role)\s*:\s*", re.IGNORECASE)
+_ETIQUETTE_EMPLOYEUR = re.compile(
+    r"^(?:entreprise|employeur|soci[ée]t[ée]|structure|organisme|organisation|company|employer|client)\s*:\s*",
+    re.IGNORECASE,
+)
+
+
 def _morceaux_utiles(lignes: list[str]) -> list[str]:
     utiles: list[str] = []
     for ligne in lignes:
-        for part in re.split(r"\s+[—–|@]\s+|\s+-\s+|\s+chez\s+|\s+at\s+|,\s+|\s*[|•·]\s*|\s{2,}|\s+:\s+", ligne):
+        ligne = _PUCE.sub("", ligne)
+        # « Poste : … », « Entreprise : … » : l'étiquette reste attachée, c'est
+        # elle qui dit ce qu'est le morceau.
+        if _ETIQUETTE_POSTE.match(ligne) or _ETIQUETTE_EMPLOYEUR.match(ligne):
+            propre = retirer_dates(ligne).strip(" ,;-–—|()")
+            if re.search(r":\s*\S", propre):
+                utiles.append(re.sub(r"\s*:\s*", " : ", propre, count=1).replace(" : ", ": ", 1))
+                continue
+        for part in re.split(r"\s+[—–|@]\s+|\s+-\s+|\s+chez\s+|\s+at\s+|,\s+|\s*[|•·]\s*|\s{2,}|\s+:\s+(?![A-Z]{2})", ligne):
             part = retirer_dates(part).strip(" ,;:-–—|()")
+            part = _LIAISON_RESTEE.sub("", part).strip(" ,;:-–—|()")
+            if _DUREE.match(part):
+                continue
             if part and not _n_est_qu_un_lieu(part) and re.search(r"[^\W\d_]{2,}", part):
                 utiles.append(part)
     return utiles
@@ -545,6 +615,16 @@ def _poste_et_employeur(utiles: list[str]) -> tuple[str, str]:
     """Range des morceaux de texte en (poste, employeur)."""
     if not utiles:
         return "", ""
+    # « Poste : … » et « Entreprise : … » disent eux-mêmes ce qu'ils sont.
+    poste_dit = next((_ETIQUETTE_POSTE.sub("", u) for u in utiles if _ETIQUETTE_POSTE.match(u)), "")
+    employeur_dit = next((_ETIQUETTE_EMPLOYEUR.sub("", u) for u in utiles if _ETIQUETTE_EMPLOYEUR.match(u)), "")
+    if poste_dit or employeur_dit:
+        reste = [u for u in utiles if not (_ETIQUETTE_POSTE.match(u) or _ETIQUETTE_EMPLOYEUR.match(u))]
+        if not poste_dit and reste:
+            poste_dit = max(reste, key=lambda x: _score(x, _MARQUES_POSTE))
+        if not employeur_dit and reste:
+            employeur_dit = next((r for r in reste if r != poste_dit), "")
+        return poste_dit, employeur_dit
     if len(utiles) == 1:
         seul = utiles[0]
         if _score(seul, _MARQUES_EMPLOYEUR) > _score(seul, _MARQUES_POSTE):
@@ -625,7 +705,11 @@ def experiences(
         entrees.append((i, trouvees[0], morceaux))
 
     resultats: list[ExperienceExtraite] = []
+    vues: set[tuple] = set()
     for n, (i, plage, morceaux) in enumerate(entrees):
+        if (plage.debut, plage.fin) in vues:
+            continue
+        vues.add((plage.debut, plage.fin))
         poste, employeur = _poste_et_employeur(_morceaux_utiles(morceaux))
         if not poste and not employeur:
             continue

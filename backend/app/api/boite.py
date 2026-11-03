@@ -28,7 +28,7 @@ from app.api.postes import get_poste_or_404
 from app.deps import CurrentUser, DbSession
 from app.models import Candidature, ExpediteurIgnore, MessageTraite
 from app.models import boite as traces
-from app.services import audit, courriel, extraction, liens, parametres
+from app.services import audit, courriel, doublons, extraction, liens, parametres
 from app.services.graph_microsoft import ErreurGraph
 from app.services.preselection import charger_candidature, evaluer_candidature
 
@@ -185,6 +185,7 @@ async def importer(payload: ImportIn, db: DbSession, user: CurrentUser) -> dict:
     deja: list[str] = []
     liens_recuperes = 0
     liens_inaccessibles: list[str] = []
+    fusionnes = 0
     try:
         messages = []
         for identifiant in dict.fromkeys(payload.identifiants):
@@ -229,6 +230,17 @@ async def importer(payload: ImportIn, db: DbSession, user: CurrentUser) -> dict:
                     db, m, traces.IMPORTE, candidature_id=dossier.id, utilisateur=user.id
                 )
                 await asyncio.to_thread(boite.marquer_traite, m.message_id)
+            if dossier is not None and dossier.id in crees:
+                # Un dossier existait déjà pour ce candidat : on le complète,
+                # on n'en garde pas un second.
+                absorbe = await doublons.absorber(db, dossier)
+                if absorbe is not None:
+                    gardee, _ = absorbe
+                    crees.remove(dossier.id)
+                    completes = [gardee.id if c == dossier.id else c for c in completes]
+                    completes.append(gardee.id)
+                    fusionnes += 1
+                    continue
             if dossier is not None and dossier.id in completes:
                 rechargee = await charger_candidature(db, dossier.id)
                 await evaluer_candidature(db, rechargee)
@@ -255,6 +267,7 @@ async def importer(payload: ImportIn, db: DbSession, user: CurrentUser) -> dict:
         "sans_piece": sans_piece,
         "deja_importes": deja,
         "candidature_ids": crees,
+        "fusionnes": fusionnes,
         "liens_recuperes": liens_recuperes,
         "liens_inaccessibles": liens_inaccessibles,
     }

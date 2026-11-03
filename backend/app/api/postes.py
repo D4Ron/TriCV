@@ -117,7 +117,7 @@ async def creer_poste(
     mandat_id: str, payload: PosteCreate, db: DbSession, user: CurrentUser
 ) -> PosteOut:
     await get_mandat_or_404(db, mandat_id)
-    donnees = payload.model_dump(exclude={"restriction"})
+    donnees = payload.model_dump(exclude={"restriction", "remarques_pieces"})
     # Les valeurs non précisées reprennent les réglages du cabinet, pour que
     # changer la pratique n'oblige pas à réécrire chaque fiche de poste.
     reglages = await parametres.lire(db)
@@ -139,6 +139,8 @@ async def creer_poste(
         # Une condition restrictive est une décision sensible : elle est
         # journalisée avec son motif dès la création du poste.
         details["restriction"] = payload.restriction.justification
+    if payload.remarques_pieces:
+        details["pieces_rangees"] = payload.remarques_pieces
     await audit.record(
         db,
         action="poste.create",
@@ -149,7 +151,9 @@ async def creer_poste(
     )
     await db.commit()
     await db.refresh(poste)
-    return await _vers_sortie(db, poste)
+    sortie = await _vers_sortie(db, poste)
+    sortie.remarques_pieces = payload.remarques_pieces
+    return sortie
 
 
 # Les champs de la fiche dont dépendent l'éligibilité ou la note. Les autres —
@@ -215,6 +219,11 @@ async def modifier_poste(
         setattr(poste, champ, valeur)
 
     details: dict = {"champs": sorted(modifications)}
+    remarques: list[str] = []
+    if _CHAMPS_PIECES & set(modifications):
+        remarques = ranger_les_pieces(poste)
+        if remarques:
+            details["pieces_rangees"] = remarques
     if payload.restriction is not None:
         _appliquer_restriction(poste, payload.restriction)
         details["restriction"] = payload.restriction.justification or "levée"
@@ -240,7 +249,31 @@ async def modifier_poste(
     )
     await db.commit()
     await db.refresh(poste)
-    return await _vers_sortie(db, poste)
+    sortie = await _vers_sortie(db, poste)
+    sortie.remarques_pieces = remarques
+    return sortie
+
+
+_CHAMPS_PIECES = frozenset(
+    {"pieces_requises", "pieces_facultatives", "groupes_pieces", "pieces_libres_autorisees"}
+)
+
+
+def ranger_les_pieces(poste: Poste) -> list[str]:
+    """Range les pièces du poste à leur place unique ; rend ce qui a changé."""
+    from app.domain import pieces
+
+    rangees = pieces.normaliser(
+        poste.pieces_requises,
+        poste.pieces_facultatives,
+        poste.groupes_pieces,
+        poste.pieces_libres_autorisees,
+    )
+    poste.pieces_requises = rangees.requises
+    poste.pieces_facultatives = rangees.facultatives
+    poste.groupes_pieces = rangees.groupes
+    poste.pieces_libres_autorisees = rangees.libres_autorisees
+    return rangees.remarques
 
 
 @router.put("/postes/{poste_id}/bareme", response_model=PosteOut)
@@ -1147,6 +1180,26 @@ async def publier_avis(avis_id: str, db: DbSession, user: CurrentUser) -> AvisOu
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Fixez la date de clôture avant de publier : elle sert de référence au calcul.",
+        )
+    if avis.date_cloture < utcnow().date():
+        # Publié ainsi, le lien refuserait tout dépôt dès le premier jour.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"La date de clôture ({avis.date_cloture.strftime('%d/%m/%Y')}) est passée : "
+            "repoussez-la avant de publier.",
+        )
+    # Les pièces à leur place unique avant que l'avis ne les annonce.
+    ranger_les_pieces(poste)
+    demandees = set(poste.pieces_requises or ())
+    for groupe in poste.groupes_pieces or ():
+        demandees |= set(groupe.get("codes") or ())
+    if "CV" not in demandees:
+        # La présélection lit le CV : un avis qui ne le demande pas produit des
+        # dossiers que personne ne peut noter.
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Le CV n'est pas exigé par la fiche : la présélection ne pourrait rien "
+            "lire. Exigez-le (« Modifier la fiche › Pièces du dossier ») avant de publier.",
         )
     avis.statut = StatutAvis.PUBLIE
     if avis.date_publication is None:

@@ -18,6 +18,9 @@ export const PIECES: ReadonlyArray<readonly [string, string]> = [
   ['PIECE_IDENTITE', "Carte nationale d'identité"],
   ['PASSEPORT', 'Passeport'],
   ['CERTIFICAT_NATIONALITE', 'Certificat de nationalité'],
+  ['CASIER_JUDICIAIRE', 'Extrait de casier judiciaire'],
+  ['CERTIFICAT_MEDICAL', 'Certificat médical'],
+  ['PHOTO', "Photo d'identité"],
   ['LETTRE_RECOMMANDATION', 'Lettre de recommandation'],
   ['AUTRE', 'Autre document'],
 ]
@@ -68,6 +71,20 @@ export const GROUPES_TYPES = [
     aide: "Les deux sont exigés : l'un sans l'autre ne prouve rien.",
   },
 ]
+
+/**
+ * Les raisons toutes faites de lever un motif quand l'erreur vient du système.
+ *
+ * Le cas le plus courant à la relecture n'est pas une exception accordée au
+ * candidat : c'est une lecture fausse — pièce présente mais classée ailleurs,
+ * diplôme mal lu, scan illisible. L'écrire chaque fois décourageait de le
+ * faire ; un clic suffit, et la raison reste journalisée.
+ */
+export const RAISONS_DE_LEVEE = [
+  'Erreur de lecture du système : le document joint le prouve',
+  'Pièce présente dans le dossier, mal classée par le système',
+  'Donnée mal extraite (scan, mise en page) : vérifiée sur le document',
+] as const
 
 /**
  * Découpe une saisie « a, b ; c » en liste propre.

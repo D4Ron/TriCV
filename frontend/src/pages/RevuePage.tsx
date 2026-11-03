@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi } from '@/lib/api'
 import { useAnnulable } from '@/lib/annulable'
 import { LIBELLE_SOURCE } from '@/lib/interface'
-import { libellePiece } from '@/lib/pieces'
+import { RAISONS_DE_LEVEE, libellePiece } from '@/lib/pieces'
 import { formatDate, formatMois } from '@/lib/format'
 import { Callout, ErrorState, PageLoader, Spinner } from '@/components/ui'
 import CandidatureDrawer from '@/components/CandidatureDrawer'
@@ -380,10 +380,27 @@ function Verification({
                     Repose sur une donnée non confirmée : il n&apos;élimine pas encore.
                   </p>
                 )}
+                {/* L'erreur vient souvent du système : un clic suffit. */}
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {RAISONS_DE_LEVEE.map((raison) => (
+                    <button
+                      key={raison}
+                      type="button"
+                      className="rounded-full border border-ink-200 bg-white px-2 py-0.5 text-[11px] text-ink-700 hover:border-brand-400"
+                      onClick={() =>
+                        annulable.programmer(`Levée du motif « ${m.libelle} »…`, () =>
+                          lever.mutate({ motif: m.motif, justification: raison }),
+                        )
+                      }
+                    >
+                      {raison}
+                    </button>
+                  ))}
+                </div>
                 <div className="mt-1.5 flex gap-1.5">
                   <input
                     className="input py-1 text-xs"
-                    placeholder="Pourquoi le lever ? (journalisé)"
+                    placeholder="Autre raison (journalisée)"
                     value={justifs[m.motif] ?? ''}
                     onChange={(e) => setJustifs((j) => ({ ...j, [m.motif]: e.target.value }))}
                   />

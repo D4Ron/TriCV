@@ -21,7 +21,7 @@ import { PUBLIC_URL } from '@/lib/config'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import ChoisirDestinataires from '@/components/ChoisirDestinataires'
 import TelechargerDossiers from '@/components/TelechargerDossiers'
-import { resumeRelectureNoms, useInterfaceClassique } from '@/lib/interface'
+import { resumeFusion, resumeRelectureNoms, useInterfaceClassique } from '@/lib/interface'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
 import FichePosteEditeur from '@/components/FichePosteEditeur'
 import GrilleEntretienEditeur from '@/components/GrilleEntretienEditeur'
@@ -1350,6 +1350,16 @@ export default function PosteDetailPage() {
       void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
     },
   })
+  // Les doublons ouverts avant qu'ils ne soient refusés à l'entrée.
+  const fusionner = useMutation({
+    mutationFn: () => recrutementApi.fusionnerDoublons({ poste_id: posteId }),
+    onSuccess: (r) => {
+      setCompteRendu(resumeFusion(r))
+      void queryClient.invalidateQueries({ queryKey: ['grille', posteId] })
+      void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Fusion impossible'),
+  })
   // Les dossiers arrivés avant que le nom ne soit lu dans le CV.
   const relireNoms = useMutation({
     mutationFn: () => recrutementApi.relireNoms({ poste_id: posteId }),
@@ -1583,6 +1593,11 @@ export default function PosteDetailPage() {
                       exporterCv.isPending || g.nombre_preselectionnes === 0,
                     ],
                     ['Recalculer les notes', () => reevaluer.mutate(), reevaluer.isPending],
+                    [
+                      fusionner.isPending ? 'Fusion…' : 'Fusionner les doublons',
+                      () => fusionner.mutate(),
+                      fusionner.isPending || g.nombre_candidatures < 2,
+                    ],
                     [
                       relireNoms.isPending ? 'Lecture des CV…' : 'Relire les noms dans les CV',
                       () => relireNoms.mutate(),

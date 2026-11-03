@@ -670,6 +670,12 @@ export const recrutementApi = {
       lecture: 'ia' | 'locale'
       avertissements: string[]
     }>(`/candidatures/${id}/depouiller`, { method: 'POST' }),
+  /** Verse chaque doublon déjà présent dans le dossier qu'il double. */
+  fusionnerDoublons: (portee: { poste_id?: string; sans_poste?: boolean }) =>
+    request<{ fusionnes: string[]; a_trancher: string[] }>('/doublons/fusionner', {
+      method: 'POST',
+      body: portee,
+    }),
   /** Relit dans les CV le nom des candidats que personne n'a confirmés. */
   relireNoms: (portee: { poste_id?: string; sans_poste?: boolean }) =>
     request<{
@@ -818,6 +824,8 @@ export const recrutementApi = {
       /** Documents envoyés en lien, récupérés ou à ouvrir à la main. */
       liens_recuperes: number
       liens_inaccessibles: string[]
+      /** Messages d'un candidat qui avait déjà un dossier : versés à celui-ci. */
+      fusionnes: number
       /** D'autres messages attendent : relancer pour le lot suivant. */
       reste: boolean
     }>(`/courriel/relever?limite=${limite}`, { method: 'POST' }),
@@ -1302,6 +1310,7 @@ export const boiteApi = {
       sans_piece: string[]
       deja_importes: string[]
       candidature_ids: string[]
+      fusionnes: number
       liens_recuperes: number
       liens_inaccessibles: string[]
     }>('/boite/importer', {

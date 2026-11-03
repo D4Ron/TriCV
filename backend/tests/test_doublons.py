@@ -160,7 +160,8 @@ async def test_un_depot_authentifie_n_a_pas_de_plafond_de_taille(client, auth):
     assert corps["refuses"] == 0, corps
 
 
-async def test_une_piece_ne_peut_etre_exigee_et_facultative(client, auth):
+async def test_une_piece_exigee_et_facultative_reste_exigee(client, auth):
+    """Rangée plutôt que refusée : l'enregistrement le dit, rien n'est perdu."""
     client_id = (
         await client.post(f"{API}/clients", json={"nom": "C"}, headers=auth)
     ).json()["id"]
@@ -178,4 +179,7 @@ async def test_une_piece_ne_peut_etre_exigee_et_facultative(client, auth):
         },
         headers=auth,
     )
-    assert reponse.status_code == 422
+    assert reponse.status_code == 201, reponse.text
+    assert reponse.json()["pieces_requises"] == ["CV"]
+    assert reponse.json()["pieces_facultatives"] == []
+    assert reponse.json()["remarques_pieces"]

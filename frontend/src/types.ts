@@ -314,6 +314,8 @@ export interface ExperienceSpecifique {
 export interface Poste {
   id: string
   mandat_id: string
+  /** Ce que le rangement des pièces a corrigé à l'enregistrement (doublons, groupes). */
+  remarques_pieces?: string[]
   intitule: string
   departement: string | null
   description: string | null

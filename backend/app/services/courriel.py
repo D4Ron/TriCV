@@ -307,6 +307,8 @@ class ResultatReleve:
     # Documents envoyés en lien : récupérés, ou à ouvrir à la main.
     liens_recuperes: int = 0
     liens_inaccessibles: list[str] = field(default_factory=list)
+    # Messages d'un candidat qui avait déjà un dossier : versés à celui-ci.
+    fusionnes: int = 0
     # D'autres messages attendent : l'appelant relance pour la suite.
     reste: bool = False
 
@@ -702,6 +704,15 @@ async def relever(
             continue
 
         cree = await creer_depuis_message(db, message, poste)
+        # Le même candidat a déjà un dossier — renvoi, pièce oubliée, CV
+        # corrigé : ses pièces nouvelles y sont versées, aucun second dossier.
+        absorbe = await doublons.absorber(db, cree)
+        if absorbe is not None:
+            gardee, _ = absorbe
+            await tracer(db, message, traces.IMPORTE, candidature_id=gardee.id, utilisateur=utilisateur)
+            resultat.fusionnes += 1
+            source.marquer_traite(message.message_id)
+            continue
         await tracer(db, message, traces.IMPORTE, candidature_id=cree.id, utilisateur=utilisateur)
         if poste is None:
             resultat.spontanees += 1

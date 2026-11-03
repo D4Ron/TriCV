@@ -83,26 +83,48 @@ def langues() -> str:
     return "+".join(voulues)
 
 
-def _arguments(psm: int) -> list[str]:
+def _arguments(psm: int, adaptatif: bool = False) -> list[str]:
     tesseract = commande()
     assert tesseract is not None
-    return [tesseract, "stdin", "stdout", *_dossier(), "-l", langues(), "--psm", str(psm)]
+    args = [tesseract, "stdin", "stdout", *_dossier(), "-l", langues(), "--psm", str(psm)]
+    if adaptatif:
+        args += ["-c", "thresholding_method=2"]
+    return args
+
+
+def _lettres(texte: str) -> int:
+    return sum(1 for c in texte if c.isalpha())
 
 
 def lire_image(png: bytes) -> str:
     """Le texte d'une image PNG. Chaîne vide si Tesseract est absent ou échoue.
+
+    Constaté sur des dossiers réels : une page scannée au téléphone, au fond
+    gris, ressortait vide — le seuillage global de Tesseract la noircissait ou
+    la blanchissait en entier, et seul le filigrane « Scanné avec CamScanner »
+    restait lisible. Quand la première lecture ne rend presque rien, on relit
+    avec un seuillage adaptatif (Sauvola), qui suit les variations du fond.
 
     Ne lève pas : une page illisible ne doit pas faire échouer la lecture du
     reste du dossier.
     """
     if not disponible():
         return ""
+    texte = _lire(png, adaptatif=False)
+    if _lettres(texte) < 120:
+        relu = _lire(png, adaptatif=True)
+        if _lettres(relu) > _lettres(texte):
+            texte = relu
+    return texte
+
+
+def _lire(png: bytes, adaptatif: bool) -> str:
     # PSM 1 (orientation détectée) a besoin du modèle « osd » ; s'il manque,
     # on retombe sur la segmentation automatique simple.
     for psm in (1, 3):
         try:
             sortie = subprocess.run(
-                _arguments(psm),
+                _arguments(psm, adaptatif),
                 input=png,
                 capture_output=True,
                 timeout=DELAI_PAR_PAGE,

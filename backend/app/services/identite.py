@@ -238,7 +238,9 @@ def _lire_cv(
     meilleure: tuple[float, list[str]] | None = None
     # La ligne en plus gros caractères concourt aussi telle quelle : un nom
     # écrit sur deux lignes (« Mawuli » / « GBEDEMAH ») s'y trouve recomposé.
-    candidates = ([titre] if titre and titre.strip() not in lignes[:3] else []) + lignes[:25]
+    # Un CV à deux colonnes livre d'abord sa colonne latérale (contact,
+    # compétences) : le nom peut venir bien après la 25e ligne.
+    candidates = ([titre] if titre and titre.strip() not in lignes[:3] else []) + lignes[:60]
     # Sans la taille des polices (texte relu plus tard, OCR), deux mots seuls
     # en tête, l'un sous l'autre, se recomposent aussi.
     for i in range(min(4, len(lignes) - 1)):
@@ -258,7 +260,7 @@ def _lire_cv(
         plats = [_plat(m) for m in mots]
         if any(p in _PAS_UN_NOM or p in _LIBELLES_NON_PERSONNES for p in plats):
             continue
-        score = 3.0 - rang * 0.25
+        score = max(0.5, 3.0 - rang * 0.25)
         if titre_plat and _plat(ligne) in titre_plat:
             score += 4
         capitales = [m for m in mots if _est_capitales(m)]
@@ -300,6 +302,10 @@ def proposer(
     nom actuel est gardé et l'écart signalé : deux noms qui n'ont rien en
     commun, c'est peut-être le CV d'un autre.
     """
+    if not adresse:
+        # L'adresse écrite dans le CV aide à reconnaître la ligne du nom.
+        trouvee = re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", texte_cv or "")
+        adresse = trouvee.group(0) if trouvee else ""
     lu = _lire_cv(texte_cv, adresse, f"{prenom_actuel} {nom_actuel}", titre)
     if lu is None:
         return None

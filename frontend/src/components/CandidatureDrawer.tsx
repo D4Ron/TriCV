@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, rapportsApi, recrutementApi } from '@/lib/api'
-import { LIBELLE_PIECE, libellePiece } from '@/lib/pieces'
+import { LIBELLE_PIECE, RAISONS_DE_LEVEE, libellePiece } from '@/lib/pieces'
 import { Callout, ErrorState, Spinner } from '@/components/ui'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import RattacherPoste from '@/components/RattacherPoste'
@@ -79,6 +79,20 @@ function MotifCard({
 
       {ouvert && !leve && (
         <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-1">
+            {RAISONS_DE_LEVEE.map((raison) => (
+              <button
+                key={raison}
+                type="button"
+                className="rounded-full border border-ink-200 bg-white px-2 py-0.5 text-[11px] text-ink-700 hover:border-brand-400"
+                disabled={enCours}
+                onClick={() => onLever(motif.motif, raison)}
+                title="Lever ce motif avec cette raison"
+              >
+                {raison}
+              </button>
+            ))}
+          </div>
           <textarea
             className="input min-h-[3.5rem] text-sm"
             value={justification}

@@ -218,14 +218,30 @@ class PosteBase(BaseModel):
     formation_complementaire_souhaitee: str | None = Field(default=None, max_length=512)
     nombre_a_retenir: int | None = Field(default=None, ge=1)
 
+    # Ce que le rangement des pièces a corrigé — dit à l'écran, jamais caché.
+    remarques_pieces: list[str] = Field(default_factory=list)
+
     @model_validator(mode="after")
     def _pieces_distinctes(self) -> PosteBase:
-        doublons = set(self.pieces_requises) & set(self.pieces_facultatives)
-        if doublons:
-            raise ValueError(
-                "Une pièce ne peut pas être à la fois exigée et facultative : "
-                + ", ".join(sorted(doublons))
-            )
+        """Chaque pièce une fois, à une seule place (voir `domain.pieces`).
+
+        Refuser l'enregistrement laissait l'erreur à la charge de qui saisit ;
+        la ranger, en disant ce qu'on a rangé, ne perd rien et évite qu'un
+        avis demande deux fois le même document.
+        """
+        from app.domain import pieces
+
+        rangees = pieces.normaliser(
+            self.pieces_requises,
+            self.pieces_facultatives,
+            [g.model_dump() for g in self.groupes_pieces],
+            self.pieces_libres_autorisees,
+        )
+        self.pieces_requises = rangees.requises
+        self.pieces_facultatives = rangees.facultatives
+        self.groupes_pieces = [GroupePiecesIn(**g) for g in rangees.groupes]
+        self.pieces_libres_autorisees = rangees.libres_autorisees
+        self.remarques_pieces = [*self.remarques_pieces, *rangees.remarques]
         return self
 
     @model_validator(mode="after")

@@ -273,15 +273,20 @@ export default function FichePosteEditeur({
       }
       return enregistrerFiche()
     },
-    onSuccess: () => {
+    onSuccess: (sortie) => {
       void queryClient.invalidateQueries({ queryKey: ['poste', poste.id] })
       void queryClient.invalidateQueries({ queryKey: ['grille', poste.id] })
       void queryClient.invalidateQueries({ queryKey: ['candidatures', poste.id] })
+      // Le serveur range les pièces demandées deux fois ; il le dit, on le répète.
+      const rangees = sortie.remarques_pieces?.length
+        ? ` Pièces rangées : ${sortie.remarques_pieces.join(' ')}`
+        : ''
       onEnregistre(
-        enregistre.a_completer
+        (enregistre.a_completer
           ? 'Fiche enregistrée. Le poste n’est plus « à compléter » : ses exigences sont ' +
             'désormais celles que vous venez de poser, et ses dossiers ont été réévalués dessus.'
-          : 'Fiche enregistrée. Les dossiers du poste ont été réévalués sur les nouvelles exigences.',
+          : 'Fiche enregistrée. Les dossiers du poste ont été réévalués sur les nouvelles exigences.') +
+          rangees,
       )
       onClose()
     },

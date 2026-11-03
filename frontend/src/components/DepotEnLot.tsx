@@ -90,18 +90,37 @@ export default function DepotEnLot({ posteId }: { posteId: string }) {
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Lecture impossible'),
   })
 
+  // Un dossier par requête : lire des scans prend du temps (OCR), et un lot
+  // entier envoyé d'un coup dépassait le délai du proxy — le navigateur
+  // voyait une erreur alors que le serveur continuait.
+  const [progression, setProgression] = useState<string | null>(null)
   const deposer = useMutation({
-    mutationFn: () =>
-      recrutementApi.depotMultiple(
-        posteId,
-        lignes.map((l) => l.fichier),
-        depouiller,
-        {
-          groupes: lignes.map((l) => l.groupe),
-          types: lignes.map((l) => l.type),
-          chemins: lignes.map((l) => l.chemin),
-        },
-      ),
+    mutationFn: async () => {
+      const ordre = [...new Set(lignes.map((l) => l.groupe))]
+      const total = { deposes: 0, pieces: 0, refuses: 0, doublons_ignores: 0, resultats: [] as Array<{ accepte: boolean; fichier: string; erreur?: string }> }
+      for (const [index, groupe] of ordre.entries()) {
+        setProgression(`Dossier ${index + 1} sur ${ordre.length} : ${groupe}`)
+        const lot = lignes.filter((l) => l.groupe === groupe)
+        const r = await recrutementApi.depotMultiple(
+          posteId,
+          lot.map((l) => l.fichier),
+          depouiller,
+          {
+            groupes: lot.map((l) => l.groupe),
+            types: lot.map((l) => l.type),
+            chemins: lot.map((l) => l.chemin),
+          },
+        )
+        total.deposes += r.deposes
+        total.pieces += r.pieces
+        total.refuses += r.refuses
+        total.doublons_ignores += r.doublons_ignores
+        total.resultats.push(...r.resultats)
+      }
+      setProgression(null)
+      return total
+    },
+    onSettled: () => setProgression(null),
     onSuccess: (r) => {
       const parts = [`${r.deposes} dossier(s) déposé(s)`]
       if (r.pieces) parts.push(`${r.pieces} pièce(s)`)
@@ -307,6 +326,11 @@ export default function DepotEnLot({ posteId }: { posteId: string }) {
               Déposer {groupes.length} dossier(s)
             </button>
           </div>
+          {progression && (
+            <p className="mt-2 text-xs text-ink-500">
+              {progression} — les scans sont lus au passage, comptez quelques secondes par dossier.
+            </p>
+          )}
         </div>
       )}
 

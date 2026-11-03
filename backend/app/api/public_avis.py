@@ -130,8 +130,16 @@ def _profil(poste: Poste) -> list[str]:
         lignes.append(f"Domaines acceptés : {', '.join(poste.domaines_acceptes)}")
     if poste.annees_experience_min:
         lignes.append(f"{poste.annees_experience_min} an(s) d'expérience professionnelle")
-    if poste.annees_experience_specifique_min:
-        domaines = ", ".join(poste.domaines_experience) or "le domaine du poste"
+    # Plusieurs expériences spécifiques : chacune, comme l'avis les énonce.
+    # Seule la forme simple était lue, et un poste qui en exigeait deux
+    # n'en annonçait aucune sur le formulaire.
+    if poste.experiences_specifiques:
+        for exigence in poste.experiences_specifiques:
+            if exigence.get("annees_min"):
+                nom = exigence.get("libelle") or ", ".join(exigence.get("domaines") or ()) or "le domaine du poste"
+                lignes.append(f"dont {exigence['annees_min']} an(s) en {nom}")
+    elif poste.annees_experience_specifique_min:
+        domaines = ", ".join(poste.domaines_experience or ()) or "le domaine du poste"
         lignes.append(
             f"dont {poste.annees_experience_specifique_min} an(s) en {domaines}"
         )
