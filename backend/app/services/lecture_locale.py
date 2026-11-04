@@ -28,6 +28,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date
 
+from app.domain import familles
 from app.llm.base import DiplomeExtrait, DossierExtrait, ExperienceExtraite
 
 
@@ -638,8 +639,14 @@ def _poste_et_employeur(utiles: list[str]) -> tuple[str, str]:
     return poste, employeur
 
 
-def _domaines(texte: str, vocabulaire: list[str]) -> list[str]:
-    """Les domaines du poste que le texte de l'expérience nomme en toutes lettres."""
+def domaines_de(
+    texte: str, vocabulaire: list[str], lexique: dict[str, list[str]] | None = None
+) -> list[str]:
+    """Les domaines du poste que le texte d'une expérience nomme ou désigne.
+
+    En toutes lettres d'abord ; sinon par ses synonymes, ses employeurs connus
+    ou le lexique propre au poste : « raffinerie » relève de « Pétrole & Gaz ».
+    """
     mots_texte = plat(texte).split()
     retenus = []
     for domaine in vocabulaire:
@@ -648,11 +655,16 @@ def _domaines(texte: str, vocabulaire: list[str]) -> list[str]:
         # « logistique » dans « logistiques », « gestion » dans « gestion ».
         if mots and all(any(t.startswith(m[: max(4, len(m) - 2)]) for t in mots_texte) for m in mots):
             retenus.append(domaine)
+        elif familles.terme_present(texte, domaine, (lexique or {}).get(domaine, ())):
+            retenus.append(domaine)
     return list(dict.fromkeys(retenus))
 
 
 def experiences(
-    sections: dict[str, list[str]], vocabulaire: list[str], aujourd_hui: date | None = None
+    sections: dict[str, list[str]],
+    vocabulaire: list[str],
+    aujourd_hui: date | None = None,
+    lexique: dict[str, list[str]] | None = None,
 ) -> list[ExperienceExtraite]:
     lignes = sections.get("experience") or []
     if not lignes:
@@ -721,7 +733,7 @@ def experiences(
                 employeur=employeur[:512] or "employeur non précisé",
                 debut=plage.debut,
                 fin=plage.fin,
-                domaines=_domaines(bloc, vocabulaire),
+                domaines=domaines_de(bloc, vocabulaire, lexique),
                 pays=_pays(" ".join(morceaux)),
             )
         )
@@ -778,12 +790,112 @@ def certifications(sections: dict[str, list[str]], texte: str) -> list[str]:
 # --- le tout -----------------------------------------------------------------
 
 
-def lire(texte: str, vocabulaire: list[str] | None = None, aujourd_hui: date | None = None) -> DossierExtrait:
+_FONCTION_ATTESTEE = re.compile(
+    r"(?:en qualit[ée] d[e']|en tant que|au poste d[e']|le poste d[e']|la fonction d[e']"
+    r"|les fonctions d[e']|comme|as an?|as)\s+(?P<poste>[^\n.,;()]{3,90})",
+    re.IGNORECASE,
+)
+# Un intitulé contient des « de » (« chef de quai ») : seul un « de » suivi d'une
+# date l'arrête.
+_FIN_DE_FONCTION = re.compile(
+    r"\s+(?:(?:du|de|d['’])\s*(?:\d|janv|f[ée]vr|mars|avr|mai|juin|juil|ao[uû]t|sept|oct|nov|d[ée]c)"
+    r"|depuis|au sein|[àa] compter|[àa] la\s|[àa] l['’]|dans|chez|pour le compte|from|since).*$",
+    re.IGNORECASE,
+)
+_EMPLOYEUR_ATTESTE = re.compile(
+    r"\b(?:soci[ée]t[ée]|entreprise|cabinet|groupe|banque|compagnie|[ée]tablissements?|ong)"
+    r"\s+(?P<nom>[A-ZÉÈ][\w&'’.-]*(?:\s+[A-ZÉÈ0-9][\w&'’.-]*){0,4})"
+)
+
+
+# « du 1er mars 2015 » : le jour ne sert à rien ici, et gêne la lecture des plages.
+_JOUR_DU_MOIS = re.compile(
+    r"\b(?:1er|\d{1,2})\s+(?=(?:janv|f[ée]vr|mars|avr|mai|juin|juil|ao[uû]t|sept|oct|nov|d[ée]c)\w*\b)",
+    re.IGNORECASE,
+)
+
+
+def experience_d_une_attestation(
+    texte: str,
+    vocabulaire: list[str] | None = None,
+    aujourd_hui: date | None = None,
+    lexique: dict[str, list[str]] | None = None,
+) -> ExperienceExtraite | None:
+    """L'emploi qu'une attestation de travail certifie, s'il se lit.
+
+    Une attestation vaut mieux qu'un CV : c'est l'employeur qui parle. Elle est
+    aussi rédigée en phrases, d'où une lecture à part : « atteste que … a
+    travaillé en qualité de chef de quai du 1er mars 2015 au 30 juin 2018 ».
+    """
+    a_plat = " ".join((texte or "").split())
+    trouvees = plages(_JOUR_DU_MOIS.sub("", a_plat), aujourd_hui)
+    if not trouvees:
+        return None
+    fonction = _FONCTION_ATTESTEE.search(a_plat)
+    poste = _FIN_DE_FONCTION.sub("", fonction.group("poste")).strip(" ,;:-") if fonction else ""
+    employeur = _EMPLOYEUR_ATTESTE.search(a_plat)
+    nom = employeur.group("nom").strip(" ,;:-") if employeur else ""
+    if not poste and not nom:
+        return None
+    plage = trouvees[0]
+    return ExperienceExtraite(
+        poste=poste[:512] or "poste non précisé",
+        employeur=nom[:512] or "employeur non précisé",
+        debut=plage.debut,
+        fin=plage.fin,
+        domaines=domaines_de(texte, list(vocabulaire or []), lexique),
+        pays=_pays(a_plat),
+    )
+
+
+def _mois(valeur: str | None, defaut: int) -> int:
+    if not valeur:
+        return defaut
+    annee, _, mois = valeur.partition("-")
+    return int(annee) * 12 + int(mois or 1)
+
+
+def _recouvrement(une: ExperienceExtraite, autre: ExperienceExtraite, maintenant: int) -> float:
+    """La part de la plus courte des deux périodes que l'autre recouvre."""
+    d1, f1 = _mois(une.debut, maintenant), _mois(une.fin, maintenant)
+    d2, f2 = _mois(autre.debut, maintenant), _mois(autre.fin, maintenant)
+    commun = min(f1, f2) - max(d1, d2)
+    courte = max(min(f1 - d1, f2 - d2), 1)
+    return commun / courte
+
+
+def verser_attestation(
+    experiences_lues: list[ExperienceExtraite],
+    attestee: ExperienceExtraite,
+    aujourd_hui: date | None = None,
+) -> bool:
+    """Verse une attestation au parcours. Rend vrai si elle y ajoute un emploi.
+
+    Le même emploi — même période, pour l'essentiel — ne se compte pas deux
+    fois : l'attestation lui apporte ses domaines. Un emploi absent du CV
+    rejoint le parcours : c'est un employeur qui le certifie.
+    """
+    jour = aujourd_hui or date.today()
+    maintenant = jour.year * 12 + jour.month
+    for experience in experiences_lues:
+        if experience.debut and _recouvrement(experience, attestee, maintenant) >= 0.6:
+            experience.domaines = list(dict.fromkeys([*experience.domaines, *attestee.domaines]))
+            return False
+    experiences_lues.append(attestee)
+    return True
+
+
+def lire(
+    texte: str,
+    vocabulaire: list[str] | None = None,
+    aujourd_hui: date | None = None,
+    lexique: dict[str, list[str]] | None = None,
+) -> DossierExtrait:
     """Ce qu'un CV dit de lui-même, lu par règles."""
     sections = rubriques(texte)
     return DossierExtrait(
         diplomes=diplomes(sections, texte),
-        experiences=experiences(sections, list(vocabulaire or []), aujourd_hui),
+        experiences=experiences(sections, list(vocabulaire or []), aujourd_hui, lexique),
         langues=langues(sections, texte),
         certifications=certifications(sections, texte),
     )

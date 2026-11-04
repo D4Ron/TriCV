@@ -154,6 +154,9 @@ class Poste(Base, TimestampMixin):
         sa.Integer, default=0, nullable=False
     )
     domaines_experience: Mapped[list | None] = mapped_column(JsonB)
+    # Les mots propres au poste, validés par les RH : {"Énergie": ["CEB", …]}.
+    # Ils complètent les familles de `app.domain.familles` pour ce poste seul.
+    lexique: Mapped[dict | None] = mapped_column(JsonB)
     # Plusieurs expériences spécifiques attendues, chacune avec ses domaines,
     # son seuil d'années et son poids :
     #   [{"libelle": "passation des marchés", "domaines": [...],
@@ -438,6 +441,9 @@ class PieceCandidature(Base, TimestampMixin):
     taille_octets: Mapped[int | None] = mapped_column(sa.Integer)
     empreinte: Mapped[str | None] = mapped_column(sa.String(64), index=True)
     texte_extrait: Mapped[str | None] = mapped_column(sa.Text)
+    # Qui a rangé la pièce : NULL pour les règles, « ia », ou « humain ». Une
+    # correction humaine n'est jamais défaite par une relecture.
+    type_source: Mapped[str | None] = mapped_column(sa.String(16))
     # Fichier supprimé après archivage du mandat. La ligne subsiste : la
     # complétude se juge sur la pièce reçue, pas sur le fichier conservé.
     purge_le: Mapped[datetime | None] = mapped_column(sa.DateTime)
@@ -609,6 +615,9 @@ class Elimination(Base, TimestampMixin):
     sur_donnee_non_verifiee: Mapped[bool] = mapped_column(
         sa.Boolean, default=False, nullable=False
     )
+    # Ce qui, ailleurs dans le dossier, pourrait contredire le motif. Tant que
+    # personne n'a relu, un motif accompagné d'un indice n'élimine pas.
+    indice: Mapped[str | None] = mapped_column(sa.Text)
 
     leve_le: Mapped[datetime | None] = mapped_column(sa.DateTime)
     leve_par_id: Mapped[str | None] = mapped_column(

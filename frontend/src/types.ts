@@ -431,8 +431,17 @@ export interface Elimination {
   constate: string | null
   justification_poste: string | null
   sur_donnee_non_verifiee: boolean
+  /** Ce qui, ailleurs dans le dossier, pourrait contredire le motif. */
+  indice: string | null
   leve_le: string | null
   leve_motif: string | null
+}
+
+export interface SyntheseDossier {
+  profil: string
+  notes: string[]
+  a_verifier: string[]
+  domaines_specifiques: string[]
 }
 
 export interface GroupePieces {
@@ -512,6 +521,7 @@ export interface Candidature {
   eliminations: Elimination[]
   pieces: Piece[]
   doublons: Array<{ candidature_id: string; nom_complet: string; libelle: string }>
+  synthese?: SyntheseDossier | null
 }
 
 export interface CandidatureListItem {

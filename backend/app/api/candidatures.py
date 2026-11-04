@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from pathlib import Path
 
@@ -41,6 +41,8 @@ from app.models.base import utcnow
 from app.models.boite import SUPPRIME as MessageTraite_SUPPRIME
 from app.models.boite import MessageTraite
 from app.schemas.recrutement import (
+    ExperienceCompteeIn,
+    SyntheseOut,
     AppreciationIn,
     CandidatureCreate,
     EntretienIn,
@@ -70,6 +72,7 @@ from app.services import (
     graph_microsoft,
     parametres,
     storage,
+    synthese,
     uploads,
 )
 from app.services.preselection import (
@@ -107,6 +110,7 @@ def _vers_sortie(candidature: Candidature) -> CandidatureOut:
             sortie.qualification_libelle = Qualification(retenue).libelle
         except ValueError:
             sortie.qualification_libelle = retenue
+    sortie.synthese = SyntheseOut(**asdict(synthese.rediger(candidature)))
     return sortie
 
 
@@ -669,6 +673,45 @@ async def verifier_donnees(
         entity_id=candidature.id,
         user_id=user.id,
         details={"confirme": confirme},
+    )
+    await db.commit()
+    return _vers_sortie(await get_candidature_or_404(db, candidature_id))
+
+
+@router.post(
+    "/candidatures/{candidature_id}/experiences/{experience_id}/domaines",
+    response_model=CandidatureOut,
+)
+async def compter_experience(
+    candidature_id: str,
+    experience_id: str,
+    payload: ExperienceCompteeIn,
+    db: DbSession,
+    user: CurrentUser,
+) -> CandidatureOut:
+    """Le recruteur a lu : cette expérience relève bien, ou pas, de ce domaine.
+
+    C'est ce qui rattrape ce que la lecture n'a pas vu — et ce qui corrige ce
+    qu'elle a compté à tort. La note et les motifs suivent aussitôt.
+    """
+    candidature = await get_candidature_or_404(db, candidature_id)
+    experience = next(
+        (e for e in candidature.candidat.experiences if e.id == experience_id), None
+    )
+    if experience is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Expérience introuvable.")
+    actuels = [d for d in (experience.domaines or []) if d != payload.domaine]
+    # Une nouvelle liste : SQLAlchemy ne voit pas une liste JSON modifiée sur place.
+    experience.domaines = [*actuels, payload.domaine] if payload.compte else actuels
+    await db.flush()
+    await evaluer_candidature(db, await charger_candidature(db, candidature.id))
+    await audit.record(
+        db,
+        action="candidature.experience_comptee",
+        entity_type="candidature",
+        entity_id=candidature.id,
+        user_id=user.id,
+        details={"domaine": payload.domaine, "compte": payload.compte},
     )
     await db.commit()
     return _vers_sortie(await get_candidature_or_404(db, candidature_id))

@@ -685,6 +685,11 @@ export const recrutementApi = {
     }>('/candidatures/noms/relire', { method: 'POST', body: portee }),
   verifier: (id: string, payload: Record<string, boolean>) =>
     request<Candidature>(`/candidatures/${id}/verifier`, { method: 'POST', body: payload }),
+  compterExperience: (id: string, experienceId: string, domaine: string, compte: boolean) =>
+    request<Candidature>(`/candidatures/${id}/experiences/${experienceId}/domaines`, {
+      method: 'POST',
+      body: { domaine, compte },
+    }),
   leverMotif: (id: string, motif: string, justification: string) =>
     request<unknown>(`/candidatures/${id}/eliminations/${motif}/lever`, {
       method: 'POST',

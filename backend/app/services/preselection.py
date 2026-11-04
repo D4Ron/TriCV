@@ -247,8 +247,11 @@ async def evaluer_candidature(
         else None
     )
     notation = noter(profil, exigences, bareme, appreciation_consistance=appreciation)
+    from app.services.indices import indices_des_motifs
 
-    await _remplacer_eliminations(db, candidature, motifs, provenances)
+    indices = indices_des_motifs(motifs, profil, exigences, candidature, poste.lexique)
+
+    await _remplacer_eliminations(db, candidature, motifs, provenances, indices)
     enregistrement = await _remplacer_notation(db, candidature, notation, bareme)
 
     # La note **retenue** — celle que la grille affiche et qui a servi à classer
@@ -276,14 +279,20 @@ async def _remplacer_eliminations(
     candidature: Candidature,
     motifs,
     provenances: dict[str, Provenance],
+    indices: dict | None = None,
 ) -> None:
     """Réécrit les motifs, en préservant ceux qu'un humain a levés.
+
+    Un motif que le dossier pourrait contredire attend qu'un humain ait relu :
+    une fois le dossier confirmé, l'indice reste affiché mais ne retient plus.
 
     Le flush est indispensable : SQLAlchemy émet les INSERT avant les DELETE
     d'un même flush, si bien que les nouveaux motifs entreraient en collision
     avec les anciens sur uq_elimination_motif.
     """
     levees = {e.motif: e for e in candidature.eliminations if e.leve_le is not None}
+    indices = indices or {}
+    relu = candidature.candidat.verifie_le is not None
 
     for existante in list(candidature.eliminations):
         await db.delete(existante)
@@ -299,7 +308,11 @@ async def _remplacer_eliminations(
                 attendu=motif.attendu,
                 constate=motif.constate,
                 justification_poste=motif.justification_poste or None,
-                sur_donnee_non_verifiee=not motif_opposable(motif.motif, provenances),
+                sur_donnee_non_verifiee=(
+                    not motif_opposable(motif.motif, provenances)
+                    or (motif.motif in indices and not relu)
+                ),
+                indice=indices.get(motif.motif),
                 leve_le=precedente.leve_le if precedente else None,
                 leve_par_id=precedente.leve_par_id if precedente else None,
                 leve_motif=precedente.leve_motif if precedente else None,

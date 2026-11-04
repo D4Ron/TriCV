@@ -491,6 +491,7 @@ class EliminationOut(BaseModel):
     constate: str | None = None
     justification_poste: str | None = None
     sur_donnee_non_verifiee: bool
+    indice: str | None = None
     leve_le: datetime | None = None
     leve_motif: str | None = None
 
@@ -538,6 +539,22 @@ class CandidatureListItem(BaseModel):
     doublons: int = 0
 
 
+class SyntheseOut(BaseModel):
+    """Qui est cette personne, ce qui se remarque, ce qu'il faut vérifier."""
+
+    profil: str = ""
+    notes: list[str] = Field(default_factory=list)
+    a_verifier: list[str] = Field(default_factory=list)
+    domaines_specifiques: list[str] = Field(default_factory=list)
+
+
+class ExperienceCompteeIn(BaseModel):
+    """Un recruteur dit qu'une expérience relève, ou non, d'un domaine attendu."""
+
+    domaine: str = Field(min_length=1, max_length=255)
+    compte: bool = True
+
+
 class CandidatureOut(BaseModel):
     model_config = Lecture
 
@@ -563,6 +580,7 @@ class CandidatureOut(BaseModel):
     eliminations: list[EliminationOut] = Field(default_factory=list)
     pieces: list[PieceOut] = Field(default_factory=list)
     doublons: list[DoublonOut] = Field(default_factory=list)
+    synthese: SyntheseOut | None = None
 
 
 class CandidaturesPage(BaseModel):

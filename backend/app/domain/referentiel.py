@@ -306,7 +306,13 @@ def domaine_correspond(declare: str, attendu: str) -> bool:
     rencontre pas « comptabilité », et « droit social » ne rencontre pas
     « droit des affaires ». Ce qu'elle absorbe, ce sont les variations
     d'écriture, pas les différences de métier.
+
+    Au-delà des mots, deux façons de nommer le même champ se valent :
+    « supply chain management » relève de la « logistique » (voir
+    `app.domain.familles`). Ce qui n'est que voisin ne passe pas ici.
     """
+    from app.domain import familles
+
     mots_attendus = _mots_signifiants(attendu)
     if not mots_attendus:
         return True
@@ -314,4 +320,4 @@ def domaine_correspond(declare: str, attendu: str) -> bool:
     return all(
         any(_meme_mot(attendu_mot, declare_mot) for declare_mot in mots_declares)
         for attendu_mot in mots_attendus
-    )
+    ) or familles.equivalents(declare, attendu)

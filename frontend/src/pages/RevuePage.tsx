@@ -8,6 +8,7 @@ import { RAISONS_DE_LEVEE, libellePiece } from '@/lib/pieces'
 import { formatDate, formatMois } from '@/lib/format'
 import { Callout, ErrorState, PageLoader, Spinner } from '@/components/ui'
 import CandidatureDrawer from '@/components/CandidatureDrawer'
+import SyntheseDossier from '@/components/SyntheseDossier'
 import type { Candidature, CandidatureListItem, Provenance } from '@/types'
 
 /**
@@ -203,6 +204,12 @@ function Verification({
     onSuccess: rafraichir,
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Levée impossible'),
   })
+  const compter = useMutation({
+    mutationFn: (p: { experience: string; domaine: string; compte: boolean }) =>
+      recrutementApi.compterExperience(c.id, p.experience, p.domaine, p.compte),
+    onSuccess: rafraichir,
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Modification impossible'),
+  })
   const apprecier = useMutation({
     mutationFn: () =>
       recrutementApi.apprecier(
@@ -269,6 +276,8 @@ function Verification({
           </details>
         )}
       </div>
+
+      <SyntheseDossier synthese={c.synthese} />
 
       {erreur && <Callout tone="danger">{erreur}</Callout>}
 
@@ -342,6 +351,36 @@ function Verification({
                 {duree(e.debut, e.fin)}
                 {e.pays ? ` · ${e.pays}` : ''}
               </span>
+              {(c.synthese?.domaines_specifiques.length ?? 0) > 0 && (
+                <span className="mt-0.5 flex flex-wrap gap-1">
+                  {c.synthese?.domaines_specifiques.map((domaine) => {
+                    const compte = (e.domaines ?? []).includes(domaine)
+                    return (
+                      <button
+                        key={domaine}
+                        type="button"
+                        aria-pressed={compte}
+                        disabled={compter.isPending}
+                        title={
+                          compte
+                            ? `Compté dans l'expérience en ${domaine}. Cliquer pour le retirer.`
+                            : `Compter cette expérience en ${domaine}.`
+                        }
+                        className={`rounded-full border px-2 py-0.5 text-xs ${
+                          compte
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                            : 'border-ink-200 text-ink-500 hover:border-ink-400'
+                        }`}
+                        onClick={() =>
+                          compter.mutate({ experience: e.id, domaine, compte: !compte })
+                        }
+                      >
+                        {compte ? '✓' : '+'} {domaine}
+                      </button>
+                    )
+                  })}
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -375,9 +414,14 @@ function Verification({
                 <p className="text-xs text-ink-600">
                   Attendu : {m.attendu ?? '—'} · Constaté : {m.constate ?? '—'}
                 </p>
+                {m.indice && (
+                  <p className="text-xs font-medium text-ink-800">À regarder : {m.indice}</p>
+                )}
                 {m.sur_donnee_non_verifiee && (
                   <p className="text-xs text-amber-800">
-                    Repose sur une donnée non confirmée : il n&apos;élimine pas encore.
+                    {m.indice
+                      ? 'Le dossier pourrait le contredire : il n\u2019élimine pas tant que personne n\u2019a relu.'
+                      : 'Repose sur une donnée non confirmée : il n\u2019élimine pas encore.'}
                   </p>
                 )}
                 {/* L'erreur vient souvent du système : un clic suffit. */}

@@ -552,8 +552,10 @@ async def depouiller(
         for exigence in poste.experiences_specifiques or ():
             vocabulaire.extend(exigence.get("domaines") or ())
 
+    lexique = (poste.lexique if poste is not None else None) or {}
+
     # 3. La lecture locale : toujours, elle ne coûte rien.
-    locale = lecture_locale.lire(texte_cv, vocabulaire)
+    locale = lecture_locale.lire(texte_cv, vocabulaire, lexique=lexique)
     for piece, texte_piece in parcours:
         if piece.type_piece == PieceDossier.COPIE_DIPLOMES.value:
             copie = lecture_locale.diplome_d_une_copie(texte_piece)
@@ -585,6 +587,33 @@ async def depouiller(
     dossier, notes = lecture_locale.fusionner(locale, dossier_ia)
     resultat.avertissements.extend(notes)
     resultat.lecture = "ia" if dossier_ia is not None else "locale"
+
+    # Le secteur se lit souvent à l'employeur seul, et l'IA ne connaît ni les
+    # familles ni le lexique du poste : on repasse sur ce qu'elle a rendu.
+    for experience in dossier.experiences:
+        experience.domaines = list(
+            dict.fromkeys(
+                [
+                    *experience.domaines,
+                    *lecture_locale.domaines_de(
+                        f"{experience.poste} {experience.employeur}", vocabulaire, lexique
+                    ),
+                ]
+            )
+        )
+    # Une attestation est la parole de l'employeur : elle confirme un emploi du
+    # CV et lui apporte ses domaines, ou ajoute celui que le CV ne dit pas.
+    for piece, texte_piece in parcours:
+        if piece.type_piece != PieceDossier.ATTESTATIONS_TRAVAIL.value:
+            continue
+        attestee = lecture_locale.experience_d_une_attestation(
+            texte_piece, vocabulaire, lexique=lexique
+        )
+        if attestee is not None and lecture_locale.verser_attestation(dossier.experiences, attestee):
+            resultat.avertissements.append(
+                f"« {attestee.poste} » vient de « {piece.nom_fichier or 'une attestation'} », "
+                "pas du CV : vérifiez ses dates."
+            )
 
     # La place ne se fait qu'une fois la lecture faite : effacer avant l'appel
     # viderait le dossier quand le fournisseur est injoignable.

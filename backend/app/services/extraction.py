@@ -75,6 +75,9 @@ class ExtractedDocument:
     # La ligne en plus gros caractères de la première page, si elle se
     # détache nettement du reste : presque toujours le nom.
     titre: str | None = None
+    # Largeur et hauteur de chaque page : un changement de format trahit un
+    # autre document dans un PDF fusionné.
+    formats: list[tuple[int, int]] = field(default_factory=list)
 
 
 def sniff_mime(data: bytes, filename: str = "") -> str | None:
@@ -219,7 +222,9 @@ def _extract_pdf(data: bytes) -> ExtractedDocument:
             raise UnreadableDocument("Le PDF est protégé par un mot de passe et ne peut pas être lu.")
         pages: list[str] = []
         pages_ocr: list[int] = []
+        formats: list[tuple[int, int]] = []
         for numero, page in enumerate(doc):
+            formats.append((round(page.rect.width), round(page.rect.height)))
             texte = page.get_text("text")
             if texte_douteux(texte) and len(pages_ocr) < settings.ocr_pages_max and ocr.disponible():
                 lu = ocr.lire_image(_rendre(page))
@@ -229,7 +234,13 @@ def _extract_pdf(data: bytes) -> ExtractedDocument:
             pages.append(normalise(texte))
         titre = _titre_de_page(doc[0]) if doc.page_count and 0 not in pages_ocr else None
         return ExtractedDocument(
-            normalise("\n\n".join(pages)), doc.page_count, PDF_MIME, pages, pages_ocr, titre
+            normalise("\n\n".join(pages)),
+            doc.page_count,
+            PDF_MIME,
+            pages,
+            pages_ocr,
+            titre,
+            formats=formats,
         )
     finally:
         doc.close()

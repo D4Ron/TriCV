@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, rapportsApi, recrutementApi } from '@/lib/api'
 import { LIBELLE_PIECE, RAISONS_DE_LEVEE, libellePiece } from '@/lib/pieces'
 import { Callout, ErrorState, Spinner } from '@/components/ui'
+import SyntheseDossier from '@/components/SyntheseDossier'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import RattacherPoste from '@/components/RattacherPoste'
 import { useAnnulable } from '@/lib/annulable'
@@ -69,9 +70,15 @@ function MotifCard({
         </p>
       )}
 
+      {motif.indice && !leve && (
+        <p className="mt-1.5 text-xs font-medium text-ink-800">À regarder : {motif.indice}</p>
+      )}
+
       {motif.sur_donnee_non_verifiee && !leve && (
         <p className="mt-1.5 text-xs font-medium text-amber-800">
-          Fondé sur une donnée non confirmée — n'élimine pas tant qu'elle n'est pas vérifiée.
+          {motif.indice
+            ? 'Le dossier pourrait le contredire — n\u2019élimine pas tant que personne n\u2019a relu.'
+            : 'Fondé sur une donnée non confirmée — n\u2019élimine pas tant qu\u2019elle n\u2019est pas vérifiée.'}
         </p>
       )}
 
@@ -935,6 +942,8 @@ export default function CandidatureDrawer({
                 </div>
               </Callout>
             )}
+
+            <SyntheseDossier synthese={c.synthese} />
 
             {c.notation && (
               <section>
