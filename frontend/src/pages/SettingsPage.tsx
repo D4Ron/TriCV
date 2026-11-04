@@ -355,6 +355,7 @@ export default function SettingsPage() {
   const [demographiques, setDemographiques] = useState(true)
   const [inscription, setInscription] = useState(false)
   const [spontanees, setSpontanees] = useState(true)
+  const [lectureAuto, setLectureAuto] = useState(true)
   const [classique, setClassique] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
@@ -412,6 +413,7 @@ export default function SettingsPage() {
     setDemographiques(reglages.data.redact_demographics)
     setInscription(reglages.data.allow_self_registration)
     setSpontanees(reglages.data.candidatures_spontanees)
+    setLectureAuto(reglages.data.lecture_ia_auto)
     setClassique(reglages.data.interface_classique)
     setCourriel(reglages.data.courriel_actif)
     setAdresse(reglages.data.adresse_boite)
@@ -439,6 +441,7 @@ export default function SettingsPage() {
         redact_demographics: demographiques,
         allow_self_registration: inscription,
         candidatures_spontanees: spontanees,
+        lecture_ia_auto: lectureAuto,
         interface_classique: classique,
         courriel_actif: courriel,
         adresse_boite: adresse.trim(),
@@ -634,6 +637,13 @@ export default function SettingsPage() {
             disabled={!estAdmin}
             label="Accueillir les candidatures spontanées"
             hint="Un dossier reçu hors de tout avis — par la boîte de candidatures ou par le formulaire du site — rejoint le vivier sans être noté. Décoché, ces messages restent simplement signalés « non rattachés »."
+          />
+          <Toggle
+            checked={lectureAuto}
+            onChange={setLectureAuto}
+            disabled={!estAdmin}
+            label="Lire automatiquement les dossiers par l'IA"
+            hint="Chaque dossier reçu est lu par l'IA dès que possible, sans noms ni coordonnées, et relu après une mise à jour qui lit mieux. Ce qui a été confirmé ou saisi ne change jamais : une relecture ne fait que des propositions. Désactivé, la lecture locale reste, et l'IA ne part que sur demande."
           />
 
           <Toggle

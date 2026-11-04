@@ -167,6 +167,13 @@ Règles :
 - Le texte porte des marqueurs entre crochets — [NOM], [ADRESSE] — à la place des données retirées. Un marqueur n'est jamais un employeur, un établissement ni un intitulé : ne le recopie dans aucun champ.
 - Si le texte est illisible ou ne contient pas de CV, renvoie des listes vides.
 
+Le dossier est découpé en pièces, chacune annoncée par une ligne « === PIÈCE : … === » :
+- Le CV est la source principale du parcours.
+- Une attestation de travail est la parole de l'employeur. Si elle porte sur un emploi du CV, c'est **le même emploi** : n'en fais pas une seconde expérience, et préfère ses dates quand elles sont plus précises. Si l'emploi manque au CV, ajoute-le.
+- Une copie de diplôme confirme un diplôme du CV : ne le compte pas deux fois, et préfère son intitulé exact. Un relevé de notes n'est pas un diplôme.
+- Une lettre de motivation ou de recommandation ne fonde ni diplôme ni expérience. Ce qu'un candidat souhaite faire, ou le poste qu'il vise, n'a pas eu lieu.
+- Un bloc « === LECTURE AUTOMATIQUE À VÉRIFIER === » est une première lecture par règles : elle peut être fausse ou incomplète. Vérifie chaque ligne contre les pièces, corrige-la, complète ce qui manque, et ne reprends rien qui n'y soit pas écrit.
+
 Réponds uniquement par un objet JSON, sans texte autour :
 {
   "diplomes": [{"intitule": "", "niveau": 5, "domaine": "", "domaine_dossier": "", "etablissement": "", "annee": 2010}],

@@ -705,6 +705,18 @@ export const recrutementApi = {
       method: 'POST',
       body: { motif: justification },
     }),
+  /** Accepte ou écarte ce qu'une relecture propose ; `ids` à null : tout. */
+  trancherPropositions: (id: string, ids: string[] | null, accepter: boolean) =>
+    request<Candidature>(`/candidatures/${id}/propositions`, {
+      method: 'POST',
+      body: { ids, accepter },
+    }),
+  /** Corrige une ligne de la note ; `points` à null la rend au calcul. */
+  ajusterLigne: (id: string, code: string, points: number | null, motif: string) =>
+    request<Candidature>(`/candidatures/${id}/lignes/${code}`, {
+      method: 'PATCH',
+      body: { points, motif },
+    }),
   noteManuelle: (id: string, note: number | null, motif: string) =>
     request<Candidature>(`/candidatures/${id}/note`, { method: 'PATCH', body: { note, motif } }),
   /** Part humaine de la consistance : motivation et expression écrite. */
@@ -1377,6 +1389,7 @@ export const settingsApi = {
     redact_demographics?: boolean
     allow_self_registration?: boolean
     candidatures_spontanees?: boolean
+    lecture_ia_auto?: boolean
     /** Revenir aux écrans d'avant la refonte de la revue et de la boîte. */
     interface_classique?: boolean
     courriel_actif?: boolean

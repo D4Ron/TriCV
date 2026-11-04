@@ -64,6 +64,10 @@ INSCRIPTION_LIBRE = "allow_self_registration"
 # accueillir en permanence — un profil rare vaut d'être connu avant qu'un mandat
 # ne le demande — ou fermer la porte pendant une campagne chargée.
 CANDIDATURES_SPONTANEES = "candidatures_spontanees"
+# Lire chaque dossier reçu par l'IA, sans attendre qu'on le demande.
+LECTURE_IA_AUTO = "lecture_ia_auto"
+# La version de lecture déjà passée sur les dossiers : voir `travaux`.
+VERSION_LECTURE = "version_lecture"
 
 # Revenir aux écrans d'avant la refonte de la revue des dossiers et de la
 # boîte — le temps de s'habituer, ou si la nouvelle façon gêne. Les deux
@@ -178,6 +182,7 @@ class Reglages:
     ollama_base_url: str = ""
     groq_api_key: str = ""
     groq_model: str = ""
+    lecture_ia_auto: bool = True
 
     @property
     def graph_utilisable(self) -> bool:
@@ -277,6 +282,8 @@ async def lire(db: AsyncSession) -> Reglages:
                 reglages.allow_self_registration = _en_bool(valeur)
             elif cle == CANDIDATURES_SPONTANEES:
                 reglages.candidatures_spontanees = _en_bool(valeur)
+            elif cle == LECTURE_IA_AUTO:
+                reglages.lecture_ia_auto = _en_bool(valeur)
             elif cle == INTERFACE_CLASSIQUE:
                 reglages.interface_classique = _en_bool(valeur)
             elif cle == COURRIEL_ACTIF:

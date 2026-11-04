@@ -127,6 +127,7 @@ async def deployment_settings(db: DbSession, _: CurrentUser) -> SettingsOut:
         spacy_models_loaded=loaded_ner_models(),
         allow_self_registration=reglages.allow_self_registration,
         candidatures_spontanees=reglages.candidatures_spontanees,
+        lecture_ia_auto=reglages.lecture_ia_auto,
         interface_classique=reglages.interface_classique,
         courriel_actif=reglages.courriel_actif,
         adresse_boite=reglages.adresse_boite,

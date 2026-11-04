@@ -433,10 +433,26 @@ class CandidatIn(BaseModel):
     experiences: list[ExperienceIn] = Field(default_factory=list)
 
 
+class PropositionOut(BaseModel):
+    id: str
+    famille: str
+    action: str
+    libelle: str
+    avant: str | None = None
+
+
+class PropositionsIn(BaseModel):
+    """Accepter ou écarter. Sans identifiants : toutes celles en attente."""
+
+    ids: list[str] | None = None
+    accepter: bool
+
+
 class CandidatOut(BaseModel):
     model_config = Lecture
 
     id: str
+    propositions: list[PropositionOut] = Field(default_factory=list)
     nom: str
     prenom: str
     email: str | None = None
@@ -471,6 +487,8 @@ class LigneNotationOut(BaseModel):
     points: float
     points_max: float
     detail: str | None = None
+    points_calcules: float | None = None
+    ajustement_motif: str | None = None
 
 
 class NotationOut(BaseModel):
@@ -544,6 +562,7 @@ class CandidatureListItem(BaseModel):
     motifs: list[MotifElimination] = Field(default_factory=list)
     a_verifier: bool = False
     doublons: int = 0
+    propositions: int = 0
 
 
 class SyntheseOut(BaseModel):
@@ -553,6 +572,21 @@ class SyntheseOut(BaseModel):
     notes: list[str] = Field(default_factory=list)
     a_verifier: list[str] = Field(default_factory=list)
     domaines_specifiques: list[str] = Field(default_factory=list)
+    # Pour chaque pièce, ce qui y a été retrouvé du parcours.
+    par_piece: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
+
+
+class LigneAjusteeIn(BaseModel):
+    """Une ligne de note corrigée. `points` à null rend la ligne au calcul."""
+
+    points: float | None = Field(default=None, ge=0, le=100)
+    motif: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def _motif_obligatoire(self) -> LigneAjusteeIn:
+        if self.points is not None and not self.motif.strip():
+            raise ValueError("Une note corrigée doit être motivée.")
+        return self
 
 
 class ExperienceCompteeIn(BaseModel):
@@ -819,6 +853,8 @@ class GrilleOut(BaseModel):
     # voit plutôt que sur un chiffre choisi d'avance.
     distribution: list[dict] = Field(default_factory=list)
     nombre_candidatures: int
+    # Dossiers où une relecture attend une décision.
+    nombre_propositions: int = 0
     nombre_proposes: int = 0
     nombre_entretiens: int = 0
     nombre_preselectionnes: int

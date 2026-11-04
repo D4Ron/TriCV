@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.domain.bareme import appliquer_ajustements
 from app.domain import (
     BAREME_PAR_DEFAUT,
     Bareme,
@@ -247,12 +248,16 @@ async def evaluer_candidature(
         else None
     )
     notation = noter(profil, exigences, bareme, appreciation_consistance=appreciation)
+    ajustements = candidature.ajustements_note or {}
+    notation = appliquer_ajustements(
+        notation, {code: a["points"] for code, a in ajustements.items()}
+    )
     from app.services.indices import indices_des_motifs
 
     indices = indices_des_motifs(motifs, profil, exigences, candidature, poste.lexique)
 
     await _remplacer_eliminations(db, candidature, motifs, provenances, indices)
-    enregistrement = await _remplacer_notation(db, candidature, notation, bareme)
+    enregistrement = await _remplacer_notation(db, candidature, notation, bareme, ajustements)
 
     # La note **retenue** — celle que la grille affiche et qui a servi à classer
     # — décide aussi du franchissement du seuil. Le calcul seul y suffisait, et
@@ -323,7 +328,11 @@ async def _remplacer_eliminations(
 
 
 async def _remplacer_notation(
-    db: AsyncSession, candidature: Candidature, notation: Notation, bareme: Bareme
+    db: AsyncSession,
+    candidature: Candidature,
+    notation: Notation,
+    bareme: Bareme,
+    ajustements: dict | None = None,
 ) -> NotationDb:
     ancienne = await db.execute(
         select(NotationDb).where(NotationDb.candidature_id == candidature.id)
@@ -356,6 +365,8 @@ async def _remplacer_notation(
             points=ligne.points,
             points_max=ligne.points_max,
             detail=ligne.detail,
+            points_calcules=ligne.points_calcules,
+            ajustement_motif=(ajustements or {}).get(ligne.code, {}).get("motif"),
         )
         for ligne in notation.lignes
     ]

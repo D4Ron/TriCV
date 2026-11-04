@@ -385,6 +385,8 @@ class LigneNote:
     points: float
     points_max: float
     detail: str
+    # Ce que le calcul avait donné, quand un humain a corrigé la ligne.
+    points_calcules: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -802,6 +804,29 @@ def noter(
         poids_note_finale=bareme.poids_note_finale,
         appreciation_portee=appreciation_consistance is not None,
     )
+
+
+def appliquer_ajustements(notation: Notation, ajustements: dict[str, float]) -> Notation:
+    """Remplace les lignes corrigées par les RH, et refait le total.
+
+    Le calcul reste une proposition : qui a lu le document a le dernier mot sur
+    chaque ligne. La valeur calculée est gardée à côté, pour qu'on voie ce qui a
+    été changé. Un ajustement reste borné par le maximum de sa ligne ; celui
+    d'une ligne disparue du barème est ignoré.
+    """
+    if not ajustements:
+        return notation
+    lignes = tuple(
+        replace(
+            ligne,
+            points=max(0.0, min(float(ajustements[ligne.code]), ligne.points_max)),
+            points_calcules=ligne.points,
+        )
+        if ligne.code in ajustements
+        else ligne
+        for ligne in notation.lignes
+    )
+    return replace(notation, lignes=lignes, total=_arrondir(sum(l.points for l in lignes)))
 
 
 # --- note finale sur 100 -----------------------------------------------------

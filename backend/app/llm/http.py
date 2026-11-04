@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 import httpx
 
 from app.config import settings
+from app.llm import quotas
 from app.llm.base import LLMError, LLMIndisponible, LLMQuotaError, LLMRequeteTropGrande
 
 logger = logging.getLogger(__name__)
@@ -64,9 +65,12 @@ async def post_json(
                 dernier_429 = False
                 logger.warning("[%s] transport error on attempt %d: %s", provider, attempt + 1, exc)
             else:
+                quotas.noter_entetes(provider, response.headers)
                 if response.status_code < 400:
                     try:
-                        return response.json()
+                        corps_recu = response.json()
+                        quotas.noter_usage(provider, corps_recu)
+                        return corps_recu
                     except ValueError as exc:
                         raise LLMError(
                             f"{provider} returned a non-JSON body: {response.text[:300]}"

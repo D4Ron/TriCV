@@ -479,11 +479,18 @@ class BaseLLMProvider(LLMProvider):
     async def extraire_dossier(
         self, texte: str, domaines: Sequence[str] = ()
     ) -> DossierExtrait:
-        raw = await self._guarded(
-            prompts.extraction_system_prompt(domaines),
-            prompts.extraction_user_prompt(texte),
-            None,
-        )
+        systeme = prompts.extraction_system_prompt(domaines)
+        demande = prompts.extraction_user_prompt(texte)
+        raw = await self._guarded(systeme, demande, None)
+        try:
+            return DossierExtrait.model_validate(parse_json_object(raw))
+        except (ValidationError, LLMError) as exc:
+            premiere_erreur = str(exc)
+            logger.warning("[%s] extraction illisible, réparation : %s", self.name, premiere_erreur)
+
+        # Un petit modèle rend parfois un JSON presque juste : une virgule, un
+        # texte autour. Un appel de plus coûte moins qu'un dossier à ressaisir.
+        raw = await self._guarded(systeme, prompts.repair_prompt(demande, raw, premiere_erreur), None)
         try:
             return DossierExtrait.model_validate(parse_json_object(raw))
         except (ValidationError, LLMError) as exc:

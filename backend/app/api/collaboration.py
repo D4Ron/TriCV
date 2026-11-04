@@ -637,6 +637,12 @@ async def ecrire_au_client(
     qui est le seul endroit où il est daté et attribué.
     """
     mandat = await get_mandat_or_404(db, mandat_id)
+    # Le fil d'un client ne parle que de ses postes : un autre mandat n'a rien à
+    # y faire, et un identifiant inconnu n'est pas une erreur du serveur.
+    if donnees.poste_id is not None:
+        poste = await db.get(Poste, donnees.poste_id)
+        if poste is None or poste.mandat_id != mandat_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Ce poste n'appartient pas au mandat.")
     echange = EchangeClient(
         mandat_id=mandat_id,
         poste_id=donnees.poste_id,

@@ -42,6 +42,8 @@ from app.models.boite import SUPPRIME as MessageTraite_SUPPRIME
 from app.models.boite import MessageTraite
 from app.schemas.recrutement import (
     ExperienceCompteeIn,
+    LigneAjusteeIn,
+    PropositionsIn,
     SyntheseOut,
     AppreciationIn,
     CandidatureCreate,
@@ -71,8 +73,10 @@ from app.services import (
     entretiens,
     graph_microsoft,
     parametres,
+    propositions,
     storage,
     synthese,
+    travaux,
     uploads,
 )
 from app.services.preselection import (
@@ -475,6 +479,10 @@ async def depot_multiple(
         # existant, et rien d'autre n'est créé. Après la lecture, qui a pu
         # trouver l'adresse ou la date de naissance qui le révèlent.
         absorbe = await doublons.absorber(db, chargee)
+        # La lecture par l'IA suit en file : le dépôt n'attend pas le modèle.
+        if not depouiller_aussitot:
+            lu = absorbe[0].id if absorbe is not None else candidature.id
+            await travaux.apres_arrivee(db, lu, poste_id)
         if absorbe is not None:
             gardee, doublon = absorbe
             resultats.append(
@@ -587,6 +595,7 @@ async def lister_candidatures(
                 total_max=float(notation.total_max) if notation else None,
                 atteint_le_seuil=notation.atteint_le_seuil if notation else None,
                 a_verifier=candidature.statut is StatutCandidature.A_VERIFIER,
+                propositions=len(candidat.propositions),
             )
         )
 
@@ -678,6 +687,36 @@ async def verifier_donnees(
     return _vers_sortie(await get_candidature_or_404(db, candidature_id))
 
 
+@router.post("/candidatures/{candidature_id}/propositions", response_model=CandidatureOut)
+async def trancher_propositions(
+    candidature_id: str, payload: PropositionsIn, db: DbSession, user: CurrentUser
+) -> CandidatureOut:
+    """Le recruteur décide de ce qu'une relecture a vu autrement.
+
+    Ce qui est accepté vaut confirmé. Ce qui est écarté ne revient pas.
+    """
+    candidature = await get_candidature_or_404(db, candidature_id)
+    nouvelles, traitees = propositions.trancher(
+        candidature.candidat, payload.ids, payload.accepter
+    )
+    if not traitees:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucune proposition à traiter.")
+    for ligne in nouvelles:
+        db.add(ligne)
+    await db.flush()
+    await evaluer_candidature(db, await charger_candidature(db, candidature.id))
+    await audit.record(
+        db,
+        action="candidature.propositions",
+        entity_type="candidature",
+        entity_id=candidature.id,
+        user_id=user.id,
+        details={"accepter": payload.accepter, "nombre": traitees},
+    )
+    await db.commit()
+    return _vers_sortie(await get_candidature_or_404(db, candidature_id))
+
+
 @router.post(
     "/candidatures/{candidature_id}/experiences/{experience_id}/domaines",
     response_model=CandidatureOut,
@@ -705,6 +744,8 @@ async def compter_experience(
     actuels = [d for d in (experience.domaines or []) if normaliser_domaine(d) != vise]
     # Une nouvelle liste : SQLAlchemy ne voit pas une liste JSON modifiée sur place.
     experience.domaines = [*actuels, payload.domaine] if payload.compte else actuels
+    # Une ligne décidée à la main : une relecture ne l'efface plus.
+    experience.provenance = Provenance.VERIFIE_RH
     await db.flush()
     await evaluer_candidature(db, await charger_candidature(db, candidature.id))
     await audit.record(
@@ -754,6 +795,57 @@ async def lever_elimination(
     sortie = EliminationOut.model_validate(levee)
     sortie.libelle = levee.motif.libelle
     return sortie
+
+
+@router.patch("/candidatures/{candidature_id}/lignes/{code}", response_model=CandidatureOut)
+async def ajuster_ligne(
+    candidature_id: str,
+    code: str,
+    payload: LigneAjusteeIn,
+    db: DbSession,
+    user: CurrentUser,
+) -> CandidatureOut:
+    """Corrige une ligne de la note, avec le document sous les yeux.
+
+    Le total, la catégorie et le seuil suivent. Le calcul reste visible à côté,
+    et `points` à null lui rend la main.
+    """
+    candidature = await get_candidature_or_404(db, candidature_id)
+    ligne = next(
+        (l for l in (candidature.notation.lignes if candidature.notation else []) if l.code == code),
+        None,
+    )
+    if ligne is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cette ligne n'existe pas dans la note.")
+    if payload.points is not None and payload.points > float(ligne.points_max):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Cette ligne se note sur {float(ligne.points_max):g}.",
+        )
+
+    ajustements = dict(candidature.ajustements_note or {})
+    avant = ajustements.pop(code, {}).get("points")
+    if payload.points is not None:
+        ajustements[code] = {"points": payload.points, "motif": payload.motif.strip()}
+    # Une nouvelle valeur : SQLAlchemy ne voit pas un JSON modifié sur place.
+    candidature.ajustements_note = ajustements or None
+    await db.flush()
+    await evaluer_candidature(db, await charger_candidature(db, candidature.id))
+    await audit.record(
+        db,
+        action="candidature.ligne_ajustee",
+        entity_type="candidature",
+        entity_id=candidature.id,
+        user_id=user.id,
+        details={
+            "ligne": code,
+            "avant": avant,
+            "points": payload.points,
+            "motif": payload.motif.strip() or None,
+        },
+    )
+    await db.commit()
+    return _vers_sortie(await get_candidature_or_404(db, candidature_id))
 
 
 @router.patch("/candidatures/{candidature_id}/note", response_model=CandidatureOut)
@@ -1224,6 +1316,7 @@ async def joindre_piece(
         user_id=user.id,
         details={"type": type_piece, "fichier": accepte.filename},
     )
+    await travaux.apres_arrivee(db, candidature.id, candidature.poste_id)
     await db.commit()
     return _vers_sortie(await get_candidature_or_404(db, candidature_id))
 
@@ -1316,6 +1409,7 @@ async def joindre_pieces(
         user_id=user.id,
         details={"fichiers": ajoutees},
     )
+    await travaux.apres_arrivee(db, candidature.id, candidature.poste_id)
     await db.commit()
     return _vers_sortie(await get_candidature_or_404(db, candidature_id))
 
@@ -1437,6 +1531,9 @@ async def decouper_piece(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Seul un PDF se découpe.")
 
     depot = storage.get_storage()
+    # Purgé après archivage, ou perdu : un 500 ne dirait rien à personne.
+    if not await depot.exists(piece.chemin_stockage):
+        raise HTTPException(status.HTTP_410_GONE, "Le fichier n'est plus disponible")
     donnees = await depot.read(piece.chemin_stockage)
     morceaux = await decoupage.preparer(piece.nom_fichier or "dossier.pdf", donnees, extraction.PDF_MIME)
     if len(morceaux) < 2:

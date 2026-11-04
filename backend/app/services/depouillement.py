@@ -44,7 +44,15 @@ from app.models import (
     PieceCandidature,
     Provenance,
 )
-from app.services import extraction, identite, lecture_locale, parametres, redaction, storage
+from app.services import (
+    extraction,
+    identite,
+    lecture_locale,
+    parametres,
+    propositions,
+    redaction,
+    storage,
+)
 from app.services.preselection import charger_candidature, evaluer_candidature
 
 logger = logging.getLogger(__name__)
@@ -73,6 +81,8 @@ class ResultatDepouillement:
     # Pourquoi l'IA n'a pas lu, quand on le lui demandait : la file en a besoin
     # pour attendre le quota au lieu de croire le travail fait.
     erreur_ia: Exception | None = None
+    # Ce qui attend une décision, faute de pouvoir toucher au travail d'un humain.
+    propositions: int = 0
 
     @property
     def a_produit_quelque_chose(self) -> bool:
@@ -118,6 +128,64 @@ _ETAT_CIVIL = frozenset(
 )
 # Une pièce plus courte que cela n'apporte rien (page blanche, photo).
 MIN_PAR_PIECE = 40
+
+
+# Ce que chaque sorte de pièce peut prendre dans l'envoi au modèle. Tout mettre
+# bout à bout coupait les attestations, rangées après un long CV, et gaspillait
+# le quota sur une lettre. Le total reste sous la fenêtre de `prompts`.
+_LIBELLES_POUR_IA = {
+    PieceDossier.CV.value: "CV",
+    PieceDossier.LETTRE_MOTIVATION.value: "Lettre de motivation",
+    PieceDossier.COPIE_DIPLOMES.value: "Copie de diplôme",
+    PieceDossier.ATTESTATIONS_TRAVAIL.value: "Attestation de travail",
+    PieceDossier.LETTRE_RECOMMANDATION.value: "Lettre de recommandation",
+}
+_BUDGETS_POUR_IA = {
+    PieceDossier.CV.value: 14_000,
+    PieceDossier.LETTRE_MOTIVATION.value: 1_200,
+    PieceDossier.COPIE_DIPLOMES.value: 1_200,
+    PieceDossier.ATTESTATIONS_TRAVAIL.value: 1_800,
+    PieceDossier.LETTRE_RECOMMANDATION.value: 800,
+}
+_BUDGET_AUTRE = 1_000
+_ENVOI_MAX = 22_000
+_BROUILLON_MAX = 1_800
+
+
+def brouillon_pour_ia(locale) -> str:
+    """Ce que la lecture locale a compris, à faire vérifier par le modèle."""
+    lignes: list[str] = []
+    for diplome in locale.diplomes:
+        lignes.append(f"Diplôme : {diplome.intitule} (BAC+{diplome.niveau}, {diplome.annee or '?'})")
+    for experience in locale.experiences:
+        lignes.append(
+            f"Expérience : {experience.debut} → {experience.fin or 'en cours'} : "
+            f"{experience.poste} — {experience.employeur}"
+        )
+    if not lignes:
+        return ""
+    return "=== LECTURE AUTOMATIQUE À VÉRIFIER ===\n" + "\n".join(lignes)[:_BROUILLON_MAX]
+
+
+def composer_pour_ia(pieces: list[tuple[str, str]], locale=None) -> str:
+    """Le dossier tel qu'il part au modèle : pièce par pièce, chacune annoncée.
+
+    `pieces` : (type de pièce, texte), dans l'ordre de lecture. Le modèle sait
+    alors qu'une attestation confirme un emploi du CV au lieu d'en être un autre.
+    """
+    blocs: list[str] = []
+    reste = _ENVOI_MAX
+    for type_piece, texte in pieces:
+        libelle = _LIBELLES_POUR_IA.get(type_piece, "Autre document")
+        extrait = texte[: min(_BUDGETS_POUR_IA.get(type_piece, _BUDGET_AUTRE), reste)]
+        if not extrait.strip():
+            continue
+        blocs.append(f"=== PIÈCE : {libelle} ===\n{extrait}")
+        reste -= len(extrait)
+    brouillon = brouillon_pour_ia(locale) if locale is not None else ""
+    if brouillon:
+        blocs.append(brouillon)
+    return "\n\n".join(blocs)
 
 
 async def textes_des_pieces(candidature: Candidature) -> tuple[list[tuple[PieceCandidature, str]], list[str]]:
@@ -338,44 +406,38 @@ def _niveau_du_diplome(diplome) -> NiveauDiplome | None:
     return NiveauDiplome.depuis_texte(f"{diplome.intitule} {diplome.domaine}")
 
 
-async def _faire_place(
-    db: AsyncSession, candidat: Candidat, resultat: ResultatDepouillement
-) -> bool:
+async def _faire_place(db: AsyncSession, candidat: Candidat, resultat: ResultatDepouillement) -> None:
     """Efface les propositions précédentes, et **seulement** celles-là.
 
     C'est la condition pour qu'un dépouillement soit relançable. Sans elle, un
-    dossier mal lu la première fois le restait : le second passage voyait des
-    lignes existantes et s'arrêtait là, quand bien même l'extraction aurait
-    été corrigée entre-temps.
+    dossier mal lu la première fois le restait.
 
     Ce qui est effaçable se lit à la provenance, et une seule valeur l'est :
-    `EXTRAIT_IA`, c'est-à-dire ce que le modèle avait proposé et que personne
-    n'a encore relu. Tout le reste est du travail humain — `DECLARE` est ce
-    que le candidat a lui-même écrit dans le formulaire, `SAISI_RH` et
-    `VERIFIE_RH` ce qu'un relecteur a porté ou confirmé — et aucun modèle n'a
-    qualité pour le remplacer.
+    `EXTRAIT_IA`, ce que le modèle avait proposé et que personne n'a relu. Le
+    reste est du travail humain, et un dossier figé garde tout (voir
+    `propositions`).
     """
-    lignes = [*candidat.diplomes, *candidat.experiences]
-    humaines = [x for x in lignes if x.provenance is not Provenance.EXTRAIT_IA]
-    if humaines:
-        # Ce cas est devenu courant depuis que le formulaire public fait
-        # déclarer son parcours au candidat : le dossier arrive déjà rempli, et
-        # le dépouillement n'a plus de place où écrire. Le message dit donc quoi
-        # faire, et non seulement ce qui n'a pas eu lieu — sans quoi il se lit
-        # comme une panne alors que c'est la protection qui joue.
-        declarees = sum(1 for x in humaines if x.provenance is Provenance.DECLARE)
-        origine = (
-            "déclarées par le candidat"
-            if declarees == len(humaines)
-            else "déclarées par le candidat ou saisies par un relecteur"
-        )
-        resultat.avertissements.append(
-            f"{len(humaines)} ligne(s) du parcours sont {origine} : le dépouillement "
-            "ne les remplace pas et n'a rien proposé. Comparez-les au CV joint, et "
-            "complétez à la main ce qu'il porterait en plus."
-        )
-        return False
-
+    if propositions.protege(candidat):
+        humaines = [
+            x for x in (*candidat.diplomes, *candidat.experiences)
+            if x.provenance is not Provenance.EXTRAIT_IA
+        ]
+        if humaines:
+            declarees = sum(1 for x in humaines if x.provenance is Provenance.DECLARE)
+            origine = (
+                "déclarées par le candidat"
+                if declarees == len(humaines)
+                else "déclarées par le candidat ou confirmées par un relecteur"
+            )
+            resultat.avertissements.append(
+                f"{len(humaines)} ligne(s) du parcours sont {origine} : la lecture ne les "
+                "change pas. Ce qu'elle voit autrement attend votre décision."
+            )
+        return
+    lignes = [
+        x for x in (*candidat.diplomes, *candidat.experiences)
+        if x.provenance is Provenance.EXTRAIT_IA
+    ]
     for ligne in lignes:
         await db.delete(ligne)
     await db.flush()
@@ -385,7 +447,6 @@ async def _faire_place(
         resultat.avertissements.append(
             f"{len(lignes)} proposition(s) du dépouillement précédent ont été remplacées."
         )
-    return True
 
 
 def _signaler_rapprochement(
@@ -467,7 +528,7 @@ def _appliquer_parcours(
                 employeur=experience.employeur.strip()[:512],
                 debut=debut,
                 fin=_mois_vers_date(experience.fin),
-                domaines=[normaliser_domaine(d) for d in experience.domaines] or None,
+                domaines=list(dict.fromkeys(normaliser_domaine(d) for d in experience.domaines)) or None,
                 pays=(experience.pays or None),
                 provenance=Provenance.EXTRAIT_IA,
             )
@@ -573,7 +634,14 @@ async def depouiller(
     dossier_ia: DossierExtrait | None = None
     if ia:
         try:
-            dossier_ia = await get_provider().extraire_dossier(expurge.text, vocabulaire)
+            # Le brouillon vient du texte brut : il passe par l'expurgation
+            # comme le reste, avant tout envoi.
+            envoi = await redaction.redact(
+                composer_pour_ia([(p.type_piece, t) for p, t in parcours], locale),
+                connus,
+                redact_demographics=reglages.redact_demographics,
+            )
+            dossier_ia = await get_provider().extraire_dossier(envoi.text, vocabulaire)
         except (LLMError, OSError) as exc:
             logger.warning("dépouillement par l'IA impossible pour %s : %s", candidature.id, exc)
             resultat.erreur_ia = exc
@@ -592,6 +660,8 @@ async def depouiller(
                 return resultat
     dossier, notes = lecture_locale.fusionner(locale, dossier_ia)
     resultat.avertissements.extend(notes)
+    if dossier_ia is not None:
+        resultat.avertissements.extend(lecture_locale.non_ancrees(dossier_ia, texte))
     resultat.lecture = "ia" if dossier_ia is not None else "locale"
 
     # Le secteur se lit souvent à l'employeur seul, et l'IA ne connaît ni les
@@ -623,21 +693,39 @@ async def depouiller(
 
     # La place ne se fait qu'une fois la lecture faite : effacer avant l'appel
     # viderait le dossier quand le fournisseur est injoignable.
-    if await _faire_place(db, candidat, resultat):
-        for objet in _appliquer_parcours(candidat, dossier, resultat):
-            db.add(objet)
+    # Ce qu'un humain a posé reste, et un dossier figé n'accueille plus rien : ce
+    # que la lecture y voit autrement attend une décision. Le tri se fait avant
+    # d'effacer, tant que les lignes sont là pour comparer.
+    fige = propositions.protege(candidat)
+    a_enregistrer, a_proposer = propositions.comparer(
+        candidat, _appliquer_parcours(candidat, dossier, resultat)
+    )
+    resultat.diplomes = sum(isinstance(o, DiplomeCandidat) for o in a_enregistrer)
+    resultat.experiences = sum(isinstance(o, ExperienceCandidat) for o in a_enregistrer)
+    await _faire_place(db, candidat, resultat)
+    for objet in a_enregistrer:
+        db.add(objet)
 
     # Langues et certifications ne portent pas de provenance ligne par ligne :
     # c'est celle du candidat qui tranche. Sur un dossier issu de l'extraction,
     # un nouveau passage les remplace comme il remplace le reste ; sur un
     # dossier déclaré ou relu, il ne remplit que ce qui est encore vide.
     remplacable = candidat.provenance is Provenance.EXTRAIT_IA
-    if dossier.langues and (remplacable or not candidat.langues):
+    # Sur un dossier figé, même une liste vide attend un accord : une langue
+    # ajoutée peut changer la note d'un dossier que quelqu'un a validé.
+    if not fige and dossier.langues and (remplacable or not candidat.langues):
         candidat.langues = [x.strip() for x in dossier.langues if x.strip()]
         resultat.langues = len(candidat.langues)
-    if dossier.certifications and (remplacable or not candidat.certifications):
+    if not fige and dossier.certifications and (remplacable or not candidat.certifications):
         candidat.certifications = [x.strip() for x in dossier.certifications if x.strip()]
         resultat.certifications = len(candidat.certifications)
+
+    # Seule une lecture par l'IA propose : la lecture locale, moins sûre, ne
+    # ferait que déranger un dossier déjà relu.
+    if dossier_ia is not None:
+        if fige:
+            a_proposer += propositions.proposer_listes(candidat, dossier.langues, dossier.certifications)
+        resultat.propositions = propositions.enregistrer(candidat, a_proposer)
 
     await db.flush()
 

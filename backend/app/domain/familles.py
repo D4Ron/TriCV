@@ -398,6 +398,12 @@ def apparente(declare: str, attendu: str) -> bool:
     return any(f.cle in famille.proches for f in familles_de(declare))
 
 
+def cite(texte: str, expression: str) -> bool:
+    """L'expression se retrouve-t-elle telle quelle dans le texte ?"""
+    cherche = mots(expression)
+    return bool(cherche) and _position(cherche, mots(texte)) is not None
+
+
 def terme_present(texte: str, attendu: str, lexique: tuple[str, ...] | list[str] = ()) -> str | None:
     """Le terme qui rattache ce texte au domaine attendu, ou None.
 

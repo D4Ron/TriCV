@@ -474,3 +474,28 @@ async def test_le_lexique_relit_les_dossiers_et_se_propose(client, auth, modele)
     # Rien du candidat ne part : seulement le poste.
     assert "DOSSOU" not in stub.envois[0]
     assert "Directeur logistique" in stub.envois[0]
+
+
+async def test_un_fichier_disparu_ne_fait_pas_tomber_le_decoupage(client, auth):
+    async with SessionLocal() as db:
+        poste, ids = await monter(db)
+        db.add(
+            PieceCandidature(
+                candidature_id=ids[0],
+                type_piece=P.CV.value,
+                nom_fichier="dossier.pdf",
+                chemin_stockage="tests/disparu.pdf",
+                type_mime="application/pdf",
+            )
+        )
+        await db.commit()
+        c = await charger_candidature(db, ids[0])
+        piece = c.pieces[0].id
+        await travaux.ajouter(db, [(ids[0], poste)], DECOUPAGE)
+        await db.commit()
+
+    reponse = await client.post(f"{API}/candidatures/{ids[0]}/pieces/{piece}/decouper", headers=auth)
+    assert reponse.status_code == 410
+
+    await travaux.traiter_un()
+    assert (await lignes())[0].etat == FAIT

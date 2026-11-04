@@ -14,7 +14,7 @@ import {
   delaiListe,
 } from '@/components/ui'
 import CandidatureDrawer from '@/components/CandidatureDrawer'
-import SuiviDesLectures from '@/components/SuiviDesLectures'
+import SuiviDesLectures, { dureeEnLettres } from '@/components/SuiviDesLectures'
 import DepotEnLot from '@/components/DepotEnLot'
 import { LIBELLE_PIECE } from '@/lib/pieces'
 import { formatDate } from '@/lib/format'
@@ -1313,6 +1313,8 @@ export default function PosteDetailPage() {
   // le premier candidat.
   const [vueChoisie, setVue] = useState<'candidats' | 'preparer' | null>(null)
   const [selection, setSelection] = useState<string | null>(null)
+  // Arrivé depuis « À faire » : le dossier s'ouvre sur ce qu'il y a à y faire.
+  const [section, setSection] = useState<'entretien' | undefined>(undefined)
   const [seuilOuvert, setSeuilOuvert] = useState(false)
   const [grilleOuverte, setGrilleOuverte] = useState(false)
   const [baremeOuvert, setBaremeOuvert] = useState(false)
@@ -1435,9 +1437,11 @@ export default function PosteDetailPage() {
   const montrerPreparation = classique || vue === 'preparer'
   const montrerCandidats = classique || vue === 'candidats'
   const aApprecier = g.preselectionnes.filter((l) => l.appreciation_attendue && !l.elimine).length
-  const entretiensASaisir = g.preselectionnes.filter(
+  const dossiersEntretien = g.preselectionnes.filter(
     (l) => l.propose && l.note_finale_sur_cent === null,
-  ).length
+  )
+  const entretiensASaisir = dossiersEntretien.length
+  const aTrancher = g.nombre_propositions ?? 0
 
   const onglets: Array<[Onglet, string, number]> = [
     ['preselection', 'Préqualifiés', g.nombre_preselectionnes],
@@ -1624,11 +1628,17 @@ export default function PosteDetailPage() {
                     ],
                     [
                       'Faire lire par l’IA',
-                      () => {
+                      async () => {
+                        const e = await recrutementApi.suivreLectures(posteId).catch(() => null)
+                        const annonce = e
+                          ? `${e.dossiers_a_lire} dossier(s) à lire, ${dureeEnLettres(
+                              e.dossiers_a_lire * e.secondes_par_dossier_ia,
+                            )}. `
+                          : ''
                         if (
                           window.confirm(
-                            'Le texte des dossiers non confirmés part au fournisseur d’IA, ' +
-                              'sans noms ni coordonnées, un dossier à la fois. ' +
+                            `${annonce}Le texte des dossiers non confirmés part au fournisseur ` +
+                              'd’IA, sans noms ni coordonnées, un dossier à la fois. ' +
                               'Les pièces d’identité ne partent pas. Continuer ?',
                           )
                         ) {
@@ -1797,13 +1807,12 @@ export default function PosteDetailPage() {
             )}
             {aApprecier > 0 && (
               <li>
-                <button
-                  type="button"
+                <Link
+                  to={`/postes/${posteId}/revue?tache=appreciation`}
                   className="inline-flex items-center gap-2 rounded-md bg-sky-50 px-3 py-1.5 font-medium text-sky-900 hover:bg-sky-100"
-                  onClick={() => setOnglet('preselection')}
                 >
                   {aApprecier} lettre(s) de motivation à apprécier →
-                </button>
+                </Link>
               </li>
             )}
             {entretiensASaisir > 0 && (
@@ -1811,13 +1820,27 @@ export default function PosteDetailPage() {
                 <button
                   type="button"
                   className="inline-flex items-center gap-2 rounded-md bg-ink-50 px-3 py-1.5 font-medium text-ink-800 hover:bg-ink-100"
-                  onClick={() => setOnglet('preselection')}
+                  onClick={() => {
+                    setOnglet('preselection')
+                    setSection('entretien')
+                    setSelection(dossiersEntretien[0].candidature_id)
+                  }}
                 >
                   {entretiensASaisir} entretien(s) à saisir →
                 </button>
               </li>
             )}
-            {g.nombre_a_verifier === 0 && aApprecier === 0 && entretiensASaisir === 0 && (
+            {aTrancher > 0 && (
+              <li>
+                <Link
+                  to={`/postes/${posteId}/revue?tache=propositions`}
+                  className="inline-flex items-center gap-2 rounded-md bg-violet-50 px-3 py-1.5 font-medium text-violet-900 hover:bg-violet-100"
+                >
+                  {aTrancher} dossier(s) : nouvelle lecture à examiner →
+                </Link>
+              </li>
+            )}
+            {g.nombre_a_verifier === 0 && aApprecier === 0 && entretiensASaisir === 0 && aTrancher === 0 && (
               <li className="text-ink-600">Rien en attente : tous les dossiers sont relus.</li>
             )}
           </ul>
@@ -2001,7 +2024,11 @@ export default function PosteDetailPage() {
         <CandidatureDrawer
           candidatureId={selection}
           posteId={posteId}
-          onClose={() => setSelection(null)}
+          section={section}
+          onClose={() => {
+            setSelection(null)
+            setSection(undefined)
+          }}
           // Le tiroir s'est fermé sur un dossier qui n'existe plus : sans ce
           // rappel, la grille se recompte toute seule et rien ne dit ce qui
           // est parti.

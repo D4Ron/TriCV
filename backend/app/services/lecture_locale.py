@@ -849,10 +849,11 @@ def experience_d_une_attestation(
 
 
 def _mois(valeur: str | None, defaut: int) -> int:
-    if not valeur:
+    # Ce que rend le modèle n'est pas toujours une date.
+    trouvee = re.fullmatch(r"(\d{4})(?:-(\d{1,2}))?", (valeur or "").strip())
+    if not trouvee:
         return defaut
-    annee, _, mois = valeur.partition("-")
-    return int(annee) * 12 + int(mois or 1)
+    return int(trouvee.group(1)) * 12 + int(trouvee.group(2) or 1)
 
 
 def _recouvrement(une: ExperienceExtraite, autre: ExperienceExtraite, maintenant: int) -> float:
@@ -909,8 +910,22 @@ _FAMILLES = {
 }
 
 
-def fusionner(locale: DossierExtrait, ia: DossierExtrait | None) -> tuple[DossierExtrait, list[str]]:
-    """Le modèle prime famille par famille ; la lecture locale comble ses vides.
+def _complete(experience: ExperienceExtraite) -> bool:
+    return (
+        bool(experience.debut)
+        and "non précisé" not in experience.poste
+        and "non précisé" not in experience.employeur
+    )
+
+
+def fusionner(
+    locale: DossierExtrait, ia: DossierExtrait | None, aujourd_hui: date | None = None
+) -> tuple[DossierExtrait, list[str]]:
+    """Le modèle prime ; la lecture locale ajoute ce qu'il a laissé de côté.
+
+    Un petit modèle oublie : un emploi sur quatre dans un CV dense, parfois. Là
+    où il a lu la même chose, sa version l'emporte ; ce que seule la lecture
+    locale a vu, et qu'elle a lu entièrement, s'y ajoute et le relecteur le sait.
 
     Rend aussi, pour le relecteur, ce qui vient de la lecture locale.
     """
@@ -926,4 +941,58 @@ def fusionner(locale: DossierExtrait, ia: DossierExtrait | None) -> tuple[Dossie
             setattr(resultat, famille, getattr(locale, famille))
             if getattr(locale, famille):
                 notes.append(f"{libelle} : lus par la lecture locale, l'IA n'en a pas trouvé.")
+
+    jour = aujourd_hui or date.today()
+    maintenant = jour.year * 12 + jour.month
+    if ia.experiences:
+        for lue in locale.experiences:
+            deja = any(
+                e.debut and _recouvrement(e, lue, maintenant) >= 0.6 for e in resultat.experiences
+            )
+            if _complete(lue) and not deja:
+                resultat.experiences.append(lue)
+                notes.append(f"« {lue.poste} » : vu par la lecture locale, oublié par l'IA.")
+    if ia.diplomes:
+        for lu in locale.diplomes:
+            deja = any(
+                d.niveau == lu.niveau and (not lu.annee or not d.annee or d.annee == lu.annee)
+                for d in resultat.diplomes
+            )
+            if lu.niveau is not None and not deja:
+                resultat.diplomes.append(lu)
+                notes.append(f"« {lu.intitule} » : vu par la lecture locale, oublié par l'IA.")
+    for famille in ("langues", "certifications"):
+        vues = {x.casefold() for x in getattr(resultat, famille)}
+        for valeur in getattr(locale, famille):
+            if valeur.casefold() not in vues:
+                getattr(resultat, famille).append(valeur)
+                vues.add(valeur.casefold())
     return resultat, notes
+
+
+def non_ancrees(dossier: DossierExtrait, texte: str) -> list[str]:
+    """Ce que le modèle rend et que le dossier ne semble pas dire.
+
+    Une ligne absente du texte est peut-être un mot mal lu par l'OCR, et
+    peut-être une invention : elle n'est pas retirée, elle est signalée.
+    """
+    notes: list[str] = []
+    for experience in dossier.experiences:
+        trouve = any(
+            familles.cite(texte, v)
+            for v in (experience.employeur, experience.poste)
+            if v and "non précisé" not in v
+        )
+        if not trouve:
+            notes.append(
+                f"« {experience.poste} — {experience.employeur} » : mots introuvables dans les "
+                "pièces, à vérifier."
+            )
+    for diplome in dossier.diplomes:
+        if diplome.intitule and not familles.cite(texte, diplome.intitule):
+            mots_du_diplome = familles.mots(diplome.intitule)
+            lus = familles.mots(texte)
+            communs = sum(1 for m in mots_du_diplome if m in lus)
+            if communs * 2 < len(mots_du_diplome):
+                notes.append(f"« {diplome.intitule} » : mots introuvables dans les pièces, à vérifier.")
+    return notes

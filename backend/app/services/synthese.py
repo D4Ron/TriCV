@@ -53,6 +53,8 @@ class Synthese:
     a_verifier: list[str] = field(default_factory=list)
     # Les domaines qu'une expérience peut compter, pour le bouton du recruteur.
     domaines_specifiques: list[str] = field(default_factory=list)
+    # Pour chaque pièce, les diplômes et expériences qu'on y retrouve.
+    par_piece: dict[str, dict[str, list[str]]] = field(default_factory=dict)
 
 
 def duree_en_lettres(mois: int) -> str:
@@ -191,6 +193,11 @@ def _a_verifier(profil: ProfilCandidat, candidature: Candidature, reference: dat
         if motif.actif and motif.indice:
             points.append(f"{motif.motif.libelle} : {motif.indice}")
 
+    if candidature.candidat.propositions:
+        points.append(
+            f"{len(candidature.candidat.propositions)} proposition(s) de la nouvelle lecture à examiner"
+        )
+
     types = Counter(p.type_piece for p in candidature.pieces)
     if profil.experiences and not types[P.ATTESTATIONS_TRAVAIL.value]:
         points.append("Aucune attestation de travail au dossier pour confirmer le parcours")
@@ -215,6 +222,30 @@ def _a_verifier(profil: ProfilCandidat, candidature: Candidature, reference: dat
     return list(dict.fromkeys(points))[:_MAX_VERIFICATIONS]
 
 
+def _par_piece(candidature: Candidature) -> dict[str, dict[str, list[str]]]:
+    """Ce que chaque pièce confirme du parcours, pour la relire pièce par pièce.
+
+    Une proposition, comme le reste : on cherche les mots du parcours dans le
+    texte de la pièce. Un scan mal lu peut ne rien y faire apparaître.
+    """
+    candidat = candidature.candidat
+    rendu: dict[str, dict[str, list[str]]] = {}
+    for piece in candidature.pieces:
+        texte = piece.texte_extrait or ""
+        if not texte:
+            continue
+        diplomes = [d.id for d in candidat.diplomes if familles.cite(texte, d.intitule)]
+        experiences = [
+            e.id
+            for e in candidat.experiences
+            if (_lisible(e.employeur) and familles.cite(texte, e.employeur))
+            or (_lisible(e.poste) and familles.cite(texte, e.poste))
+        ]
+        if diplomes or experiences:
+            rendu[piece.id] = {"diplomes": diplomes, "experiences": experiences}
+    return rendu
+
+
 def rediger(candidature: Candidature, reference: date | None = None) -> Synthese:
     """La synthèse d'une candidature chargée. Ne touche pas à la base."""
     reference = reference or date.today()
@@ -236,4 +267,5 @@ def rediger(candidature: Candidature, reference: date | None = None) -> Synthese
         notes=_notes(profil, candidature),
         a_verifier=_a_verifier(profil, candidature, reference),
         domaines_specifiques=domaines,
+        par_piece=_par_piece(candidature),
     )

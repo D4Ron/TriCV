@@ -1,5 +1,6 @@
 import { ADMIN_PATH } from '@/lib/config'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import ErreurDePage from '@/components/ErreurDePage'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/auth'
 import { initials } from '@/lib/format'
@@ -16,6 +17,7 @@ export function Logo() {
 
 export default function Layout() {
   const { t } = useTranslation()
+  const { pathname } = useLocation()
   const navigate = useNavigate()
   const user = useAuthStore((state) => state.user)
   const logout = useAuthStore((state) => state.logout)
@@ -102,7 +104,10 @@ export default function Layout() {
       </header>
 
       <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6">
-        <Outlet />
+        {/* Une page en erreur laisse le menu ; changer de page repart de zéro. */}
+        <ErreurDePage key={pathname}>
+          <Outlet />
+        </ErreurDePage>
       </main>
 
       <footer className="mx-auto max-w-[1400px] px-4 pb-10 sm:px-6">

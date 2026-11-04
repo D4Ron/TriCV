@@ -195,6 +195,58 @@ mentions age, sex or nationality, and never advises on the person.
 Measured on one real batch of 16 dossiers, local reading only: experiences counted for the required
 sector went from 8 to 22, and dossiers with at least one from 6 to 10.
 
+### Reviewing document by document
+
+The review screen goes through a dossier one document at a time (← → on the keyboard). The panel on
+the right follows the document: what was found in it, and the score lines it can verify — diplomas
+for Formation, attestations for the experience lines, the letter for Consistance. A document's type
+can be corrected on the spot.
+
+**Every score line can be corrected** by whoever has the document in front of them, here or in the
+full dossier. A correction needs a reason (one click for the usual ones), keeps the calculated value
+visible beside it, survives every recalculation, and goes back to the calculation in one click. The
+total, the category and the threshold follow. Corrections live on the candidature
+(`ajustements_note`), because the notation is rebuilt at each recalculation. A total set by hand
+still takes priority over the lines, and says so.
+
+### How the AI reads a dossier
+
+The model used to receive every piece glued together. It now receives each piece announced by type,
+each with its own budget, so a long CV can no longer push an attestation past the cut-off; the local
+reading goes along as a draft to verify; and the prompt says what each kind of piece can prove: an
+attestation is the same job as the CV's, not a second one, and a job wished for in a letter was
+never held.
+
+What the model leaves out and the local reading read in full is added back, and the reviewer is
+told. A line the model returns that cannot be found in the pieces is flagged, never removed: it may
+be an OCR slip. An unreadable JSON answer gets one repair attempt.
+
+`python -m tools.evaluer_dossiers` measures this on whole fictional dossiers (four calls); the old
+assembly scored 2/4 and the new one 4/4 on `ministral-14b-latest`, a small set aimed at known
+failures. `tools.evaluer_extraction` stays at 14/14 and 18/18 on single clean CVs.
+
+### Automatic reading, and what it never touches
+
+Every dossier that arrives is read locally at once, then by the AI through the queue, by mail, bulk
+upload, public form or an added piece. **Paramètres › Général › Lire automatiquement les dossiers par
+l'IA** turns that off; it is on by default, and without a usable provider nothing is queued.
+
+When a version reads better, raise `VERSION_DE_LECTURE` in `app/services/travaux.py`: at the next
+start every dossier of a non-archived mandate is re-read once. Not at every release: a screen fix is
+no reason to spend the quota on the whole pool. With the setting off, only unconfirmed dossiers are
+re-read, locally.
+
+Re-reading is safe because of `app/services/propositions.py`:
+
+- A line a human confirmed, typed or counted by hand stays, and so does what a candidate declared.
+- A confirmed dossier is frozen: nothing enters it, not even in an empty list, since an added
+  language can change a score someone validated.
+- Whatever the AI sees differently becomes a **proposal**, shown at the top of the dossier and in
+  « À faire ». Accepted, it counts as confirmed; dismissed, it never comes back. Until then it has no
+  effect on any score.
+- Score corrections, the appreciation, a total set by hand, a lifted motif and a piece retyped by a
+  human are never touched by a reading.
+
 ### Provenance is the safety property
 
 Every piece of candidate data carries where it came from:
@@ -838,6 +890,14 @@ dossier at a time, a pause between AI calls, local work first. When the provider
 the whole queue waits 15 minutes and resumes by itself; it also resumes after a restart. A file
 deposited through the public form goes through the same queue, which splits merged PDFs and reads
 them after the candidate has had their answer.
+
+The poste page shows a progress bar and the time left. That time comes from the measured duration
+of the last readings and from the limits a provider really announces, whichever is slower. **No free
+tier publishes a remaining balance**: in November 2026 Mistral sends per-minute limits with each
+answer, Groq per-minute and per-day ones, and Gemini only the tokens used. Google's own guidance for
+its free tier (about 10 requests a minute and 250 a day on Flash, 15 and 1,000 on Flash-Lite, varying
+by project) is shown as an order of magnitude and used for pacing. A quota running out on the way
+lengthens the time: the queue then waits and resumes by itself.
 
 An AI reading also shows the model the pieces the rules could not name, in one call per dossier:
 the first 700 characters, redacted, no file name. Anything resembling civil status never leaves,

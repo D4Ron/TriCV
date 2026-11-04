@@ -40,3 +40,9 @@ class Travail(Base, TimestampMixin):
     # Quota épuisé : on ne repasse pas avant cette heure.
     pas_avant: Mapped[datetime | None] = mapped_column(sa.DateTime)
     erreur: Mapped[str | None] = mapped_column(sa.Text)
+    # Ce qu'a coûté la lecture : d'où se tire le temps restant.
+    secondes: Mapped[float | None] = mapped_column(sa.Float)
+    jetons: Mapped[int | None] = mapped_column(sa.Integer)
+    fournisseur: Mapped[str | None] = mapped_column(sa.String(64))
+    # Un lot terminé sort du suivi ; il reste pour mesurer et compter la journée.
+    clos: Mapped[bool] = mapped_column(sa.Boolean, default=False, nullable=False)

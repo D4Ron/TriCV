@@ -25,6 +25,7 @@ from app.api.mandats import get_mandat_or_404
 from app.deps import CurrentUser, DbSession
 from app.models import (
     Candidature,
+    Client,
     Mandat,
     ModeleDocument,
     Poste,
@@ -724,6 +725,10 @@ async def deposer_modele(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Un modèle se rattache à un client ou à un mandat.",
         )
+    if client_id and await db.get(Client, client_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Client introuvable.")
+    if mandat_id and await db.get(Mandat, mandat_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Mandat introuvable.")
     try:
         accepte = await uploads.validate(fichier, uploads.PLAFOND_ABSOLU_MO)
     except uploads.RejectedUpload as exc:

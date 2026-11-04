@@ -4,27 +4,29 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { recrutementApi } from '@/lib/api'
 import { useAnnulable } from '@/lib/annulable'
 import { LIBELLE_SOURCE } from '@/lib/interface'
-import { RAISONS_DE_LEVEE, libellePiece } from '@/lib/pieces'
+import { LIBELLE_PIECE, RAISONS_DE_LEVEE, libellePiece } from '@/lib/pieces'
 import { formatDate, formatMois } from '@/lib/format'
 import { Callout, ErrorState, PageLoader, Spinner } from '@/components/ui'
 import CandidatureDrawer from '@/components/CandidatureDrawer'
 import SyntheseDossier from '@/components/SyntheseDossier'
-import type { Candidature, CandidatureListItem, Provenance } from '@/types'
+import PropositionsDeLecture from '@/components/PropositionsDeLecture'
+import LignesDeNote, { NoteGlobale } from '@/components/LignesDeNote'
+import type { Candidature, CandidatureListItem, Piece, Provenance } from '@/types'
 
 /**
  * La revue des dossiers d'un poste, l'un après l'autre.
  *
- * Le geste réel : lire le CV, vérifier que ce que l'application en a tiré est
- * juste, confirmer, passer au suivant. Le panneau latéral obligeait à le faire
- * de mémoire — le CV s'ouvrait dans un autre onglet, et le parcours extrait se
- * trouvait tout en bas, sous cinq blocs d'explications. Ici le document est à
- * gauche, ce qu'il faut vérifier à droite, et une seule action principale.
+ * Le geste réel : lire chaque document, vérifier ce que l'application en a tiré,
+ * corriger la note qu'il touche, passer au suivant, confirmer. Le document est à
+ * gauche ; à droite, ce qu'on y a retrouvé et les lignes de note qu'il concerne
+ * — elles changent avec lui, pour corriger sans chercher.
  *
  * Rien n'est retiré : le dossier complet — pièces, entretien, courriel,
  * changement de poste, suppression — s'ouvre d'un clic (touche E).
  */
 
-const TOUCHES = 'J / K : suivant / précédent · C : confirmer · E : dossier complet'
+const TOUCHES =
+  '← → : document · J / K : dossier suivant / précédent · C : confirmer · E : dossier complet'
 
 /** Les domaines lus sont rangés sans accents ni majuscules, ceux du poste non. */
 function memeDomaine(un: string, autre: string): boolean {
@@ -69,25 +71,53 @@ const ORDRE_DES_PIECES: Record<string, number> = {
   LETTRE_MOTIVATION: 3,
 }
 
-/** Le document du candidat, affiché dans la page plutôt que dans un autre onglet. */
-function Document({ candidature }: { candidature: Candidature }) {
-  const pieces = candidature.pieces
+function piecesDansLOrdre(candidature: Candidature): Piece[] {
+  return candidature.pieces
     .filter((p) => p.nom_fichier)
     .sort((a, b) => (ORDRE_DES_PIECES[a.type_piece] ?? 9) - (ORDRE_DES_PIECES[b.type_piece] ?? 9))
-  const [actif, setActif] = useState(pieces[0]?.id ?? null)
+}
+
+/** Les lignes de note qu'un document permet de vérifier. */
+function ligneConcernee(typePiece: string, code: string): boolean {
+  const formation = code === 'FORMATION'
+  const experience = code.startsWith('EXPERIENCE')
+  if (typePiece === 'CV') return formation || experience
+  if (typePiece === 'COPIE_DIPLOMES') return formation
+  if (typePiece === 'ATTESTATIONS_TRAVAIL') return experience
+  if (typePiece === 'LETTRE_MOTIVATION' || typePiece === 'LETTRE_RECOMMANDATION') {
+    return code === 'CONSISTANCE'
+  }
+  return code === 'CONSISTANCE' || code === 'AJOUTS'
+}
+
+/** Le document du candidat, affiché dans la page, un à la fois. */
+function Document({
+  candidature,
+  actif,
+  vus,
+  onChoisir,
+  onRetype,
+}: {
+  candidature: Candidature
+  actif: string | null
+  vus: ReadonlySet<string>
+  onChoisir: (id: string) => void
+  onRetype: () => void
+}) {
+  const pieces = piecesDansLOrdre(candidature)
   const [url, setUrl] = useState<string | null>(null)
   const [erreur, setErreur] = useState<string | null>(null)
   const piece = pieces.find((p) => p.id === actif) ?? null
+  const rang = pieces.findIndex((p) => p.id === actif)
+  const retyper = useMutation({
+    mutationFn: (type: string) => recrutementApi.retyperPiece(candidature.id, actif!, type),
+    onSuccess: onRetype,
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Type refusé'),
+  })
   const nomFichier = (piece?.nom_fichier ?? '').toLowerCase()
   const estPdf = nomFichier.endsWith('.pdf')
   // Les photos de diplômes ou de pièces d'identité, prises au téléphone.
   const estImage = /\.(jpe?g|png|webp)$/.test(nomFichier)
-
-  useEffect(() => {
-    setActif(pieces[0]?.id ?? null)
-    // Un autre dossier : on repart de sa première pièce.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidature.id])
 
   useEffect(() => {
     let annule = false
@@ -118,12 +148,50 @@ function Document({ candidature }: { candidature: Candidature }) {
 
   return (
     <div className="flex h-full flex-col">
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-200 px-3 py-2">
+        <button
+          type="button"
+          className="btn-ghost px-2 py-1 text-xs"
+          disabled={rang <= 0}
+          onClick={() => onChoisir(pieces[rang - 1].id)}
+        >
+          ← Document précédent
+        </button>
+        <span className="text-xs tabular-nums text-ink-700">
+          Document {rang + 1} sur {pieces.length} · {vus.size} lu{vus.size > 1 ? 's' : ''}
+        </span>
+        <button
+          type="button"
+          className="btn-ghost px-2 py-1 text-xs"
+          disabled={rang < 0 || rang >= pieces.length - 1}
+          onClick={() => onChoisir(pieces[rang + 1].id)}
+        >
+          Document suivant →
+        </button>
+        {piece && (
+          <label className="ml-auto flex items-center gap-1.5 text-xs text-ink-600">
+            Type
+            <select
+              className="input w-auto py-1 text-xs"
+              value={piece.type_piece}
+              disabled={retyper.isPending}
+              onChange={(e) => retyper.mutate(e.target.value)}
+            >
+              {Object.entries(LIBELLE_PIECE).map(([code, libelle]) => (
+                <option key={code} value={code}>
+                  {libelle}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
       <div className="flex gap-1 overflow-x-auto border-b border-ink-200 px-2 pt-2">
         {pieces.map((p) => (
           <button
             key={p.id}
             type="button"
-            onClick={() => setActif(p.id)}
+            onClick={() => onChoisir(p.id)}
             className={`-mb-px shrink-0 rounded-t-md border px-3 py-1.5 text-xs ${
               p.id === actif
                 ? 'border-ink-200 border-b-white bg-white font-medium text-ink-900'
@@ -135,6 +203,7 @@ function Document({ candidature }: { candidature: Candidature }) {
                 : (p.nom_fichier ?? undefined)
             }
           >
+            {vus.has(p.id) ? '✓ ' : ''}
             {libellePiece(p.type_piece, p.intitule_libre)}
             {p.type_source === 'ia' ? ' · IA' : ''}
           </button>
@@ -171,11 +240,18 @@ function Document({ candidature }: { candidature: Candidature }) {
 /** Ce qu'il faut vérifier contre le document, et les décisions. */
 function Verification({
   candidature,
+  piece,
+  allerAAppreciation,
+  onApprecie,
   onConfirme,
   onDossierComplet,
   onSale,
 }: {
   candidature: Candidature
+  piece: Piece | null
+  /** Arrivé depuis « À faire » pour apprécier la lettre. */
+  allerAAppreciation: boolean
+  onApprecie?: () => void
   onConfirme: () => void
   onDossierComplet: () => void
   onSale: (sale: boolean) => void
@@ -235,9 +311,18 @@ function Verification({
         appreciation.trim() === '' ? null : Number(appreciation.replace(',', '.')),
         appreciationMotif.trim(),
       ),
-    onSuccess: rafraichir,
+    onSuccess: () => {
+      rafraichir()
+      onApprecie?.()
+    },
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Appréciation refusée'),
   })
+  const zoneAppreciation = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (!allerAAppreciation) return
+    zoneAppreciation.current?.scrollIntoView({ block: 'center' })
+    zoneAppreciation.current?.querySelector('input')?.focus({ preventScroll: true })
+  }, [allerAAppreciation])
 
   const aConfirmer =
     (a.provenance === 'EXTRAIT_IA' ? 1 : 0) +
@@ -245,6 +330,13 @@ function Verification({
     a.experiences.filter((e) => e.provenance === 'EXTRAIT_IA').length
   const rienDeLu = a.diplomes.length === 0 && a.experiences.length === 0
   const motifs = c.eliminations.filter((e) => !e.leve_le)
+  const trouve = piece ? c.synthese?.par_piece[piece.id] : undefined
+  const dansCeDocument = [
+    ...a.diplomes.filter((d) => trouve?.diplomes.includes(d.id)).map((d) => d.intitule),
+    ...a.experiences
+      .filter((e) => trouve?.experiences.includes(e.id))
+      .map((e) => `${e.poste} — ${e.employeur}`),
+  ]
   const n = c.notation
 
   const confirmerAvecGarde = () => {
@@ -267,7 +359,7 @@ function Verification({
       <div className="rounded-lg border border-ink-200 bg-white p-3">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span className="text-lg font-semibold tabular-nums text-ink-900">
-            {n ? `${n.total}/${n.total_max}` : '—'}
+            {n ? `${n.note_manuelle ?? n.total}/${n.total_max}` : '—'}
           </span>
           <span className="text-sm text-ink-700">
             {aConfirmer > 0
@@ -280,22 +372,43 @@ function Verification({
         </div>
         {n && (
           <details className="mt-1 text-xs text-ink-600">
-            <summary className="cursor-pointer text-ink-500">Pourquoi {n.total} ?</summary>
-            <ul className="mt-1.5 space-y-1">
-              {n.lignes.map((l) => (
-                <li key={l.code}>
-                  <span className="font-medium text-ink-800">
-                    {l.libelle} {l.points}/{l.points_max}
-                  </span>
-                  {l.detail ? ` — ${l.detail}` : ''}
-                </li>
-              ))}
-            </ul>
+            <summary className="cursor-pointer text-ink-500">Toute la note</summary>
+            <div className="mt-1.5">
+              <LignesDeNote candidature={c} onFait={rafraichir} />
+              <NoteGlobale key={n.note_manuelle ?? 'calcul'} candidature={c} onFait={rafraichir} />
+            </div>
           </details>
         )}
       </div>
 
       <SyntheseDossier synthese={c.synthese} />
+      <PropositionsDeLecture candidature={c} onFait={rafraichir} />
+
+      {piece && (
+        <section className="rounded-lg border border-ink-300 bg-white p-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+            Ce document : {libellePiece(piece.type_piece, piece.intitule_libre)}
+          </h3>
+          {dansCeDocument.length > 0 ? (
+            <ul className="mt-1.5 space-y-0.5 text-sm text-ink-800">
+              {dansCeDocument.map((ligne) => (
+                <li key={ligne}>{ligne}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1.5 text-xs text-ink-500">
+              Rien du parcours n&apos;y a été retrouvé automatiquement.
+            </p>
+          )}
+          <div className="mt-2">
+            <LignesDeNote
+              candidature={c}
+              garder={(code) => ligneConcernee(piece.type_piece, code)}
+              onFait={rafraichir}
+            />
+          </div>
+        </section>
+      )}
 
       {erreur && <Callout tone="danger">{erreur}</Callout>}
 
@@ -485,7 +598,7 @@ function Verification({
         </section>
       )}
 
-      <section>
+      <section ref={zoneAppreciation}>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-500">
           Appréciation (motivation, expression écrite)
         </h3>
@@ -529,6 +642,10 @@ export default function RevuePage() {
   const navigate = useNavigate()
   const [seulementARelire, setSeulementARelire] = useState(params.get('tous') !== '1')
   const [complet, setComplet] = useState(false)
+  const [pieceActive, setPieceActive] = useState<string | null>(null)
+  const [vus, setVus] = useState<ReadonlySet<string>>(new Set())
+  // Venu depuis « À faire » : la liste se réduit aux dossiers concernés.
+  const tache = params.get('tache')
   const sale = useRef(false)
   const surSale = useCallback((v: boolean) => {
     sale.current = v
@@ -540,24 +657,87 @@ export default function RevuePage() {
     queryFn: () => recrutementApi.candidatures(posteId, { page_size: 200 }),
   })
 
-  // Les dossiers à relire d'abord, puis les autres par note.
+  const grille = useQuery({
+    queryKey: ['grille', posteId],
+    queryFn: () => recrutementApi.grille(posteId),
+    enabled: tache === 'appreciation',
+  })
+  // Fixée à l'arrivée : un dossier traité reste dans la liste de la session.
+  const dossiersDeLaTache = useRef<Set<string> | null>(null)
+  if (dossiersDeLaTache.current === null) {
+    if (tache === 'appreciation' && grille.data) {
+      dossiersDeLaTache.current = new Set(
+        grille.data.preselectionnes
+          .filter((l) => l.appreciation_attendue && !l.elimine)
+          .map((l) => l.candidature_id),
+      )
+    } else if (tache === 'propositions' && liste.data) {
+      dossiersDeLaTache.current = new Set(
+        liste.data.items.filter((i) => (i.propositions ?? 0) > 0).map((i) => i.id),
+      )
+    }
+  }
+  const pretePourTache = !tache || dossiersDeLaTache.current !== null
+
+  // Les dossiers à relire d'abord, puis les autres par note. L'ordre se fige à
+  // l'ouverture : corriger une note ne doit pas déplacer les dossiers sous les
+  // yeux du relecteur, ni changer celui qui vient après.
+  const ordre = useRef<Map<string, number>>(new Map())
   const file = useMemo(() => {
     const items = [...(liste.data?.items ?? [])]
     items.sort(
       (x, y) =>
         Number(y.a_verifier) - Number(x.a_verifier) || (y.note ?? -1) - (x.note ?? -1),
     )
+    for (const item of items) {
+      if (!ordre.current.has(item.id)) ordre.current.set(item.id, ordre.current.size)
+    }
+    items.sort((x, y) => (ordre.current.get(x.id) ?? 0) - (ordre.current.get(y.id) ?? 0))
+    if (tache) return items.filter((i) => dossiersDeLaTache.current?.has(i.id))
     return seulementARelire ? items.filter((i) => i.a_verifier) : items
-  }, [liste.data, seulementARelire])
+  }, [liste.data, seulementARelire, tache, pretePourTache])
   const aRelire = (liste.data?.items ?? []).filter((i) => i.a_verifier).length
 
   const courantId = params.get('c') ?? file[0]?.id ?? null
   const index = file.findIndex((i) => i.id === courantId)
+  // Le dossier ouvert s'inscrit dans l'adresse : sans cela, il dépendrait de la
+  // première place de la liste, et une correction ouvrirait quelqu'un d'autre.
+  useEffect(() => {
+    if (!params.get('c') && courantId) {
+      const p = new URLSearchParams(params)
+      p.set('c', courantId)
+      setParams(p, { replace: true })
+    }
+  }, [courantId, params, setParams])
   const candidature = useQuery({
     queryKey: ['candidature', courantId],
     queryFn: () => recrutementApi.candidature(courantId!),
     enabled: Boolean(courantId),
   })
+
+  // Chaque dossier repart de sa première pièce ; une pièce affichée compte pour lue.
+  const dossier = candidature.data
+  const pieces = useMemo(() => (dossier ? piecesDansLOrdre(dossier) : []), [dossier])
+  const dossierId = dossier?.id
+  useEffect(() => {
+    setVus(new Set())
+    // Pour apprécier, c'est la lettre qu'il faut avoir sous les yeux.
+    const lettre = tache === 'appreciation' ? pieces.find((p) => p.type_piece === 'LETTRE_MOTIVATION') : null
+    setPieceActive(lettre?.id ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dossierId])
+  const actif = pieces.find((p) => p.id === pieceActive) ? pieceActive : (pieces[0]?.id ?? null)
+  useEffect(() => {
+    if (actif) setVus((v) => (v.has(actif) ? v : new Set(v).add(actif)))
+  }, [actif])
+  const changerDeDocument = useCallback(
+    (pas: number) => {
+      const rang = pieces.findIndex((p) => p.id === actif)
+      const voisin = pieces[rang + pas]
+      if (voisin) setPieceActive(voisin.id)
+    },
+    [actif, pieces],
+  )
 
   const aller = useCallback(
     (item: CandidatureListItem | undefined) => {
@@ -582,6 +762,8 @@ export default function RevuePage() {
         return
       if (e.key === 'j' || e.key === 'ArrowDown') suivant()
       else if (e.key === 'k' || e.key === 'ArrowUp') precedent()
+      else if (e.key === 'ArrowRight') changerDeDocument(1)
+      else if (e.key === 'ArrowLeft') changerDeDocument(-1)
       else if (e.key === 'e') setComplet(true)
       else if (e.key === 'c') window.dispatchEvent(new Event('revue:confirmer'))
       else if (e.key === 'Escape') navigate(`/postes/${posteId}`)
@@ -590,7 +772,7 @@ export default function RevuePage() {
     }
     window.addEventListener('keydown', touche)
     return () => window.removeEventListener('keydown', touche)
-  }, [complet, navigate, posteId, precedent, suivant])
+  }, [changerDeDocument, complet, navigate, posteId, precedent, suivant])
 
   useEffect(() => {
     const avant = (e: BeforeUnloadEvent) => {
@@ -600,7 +782,7 @@ export default function RevuePage() {
     return () => window.removeEventListener('beforeunload', avant)
   }, [])
 
-  if (liste.isLoading || poste.isLoading) return <PageLoader />
+  if (liste.isLoading || poste.isLoading || !pretePourTache) return <PageLoader />
   if (liste.isError) return <ErrorState error={liste.error} onRetry={() => liste.refetch()} />
 
   const c = candidature.data
@@ -631,14 +813,21 @@ export default function RevuePage() {
         <span className="text-xs tabular-nums text-ink-600">
           {index >= 0 ? `${index + 1} / ${file.length}` : `${file.length}`} · {aRelire} à relire
         </span>
-        <label className="flex items-center gap-1.5 text-xs text-ink-600">
-          <input
-            type="checkbox"
-            checked={seulementARelire}
-            onChange={(e) => setSeulementARelire(e.target.checked)}
-          />
-          Seulement à relire
-        </label>
+        {tache ? (
+          <Link to={`/postes/${posteId}/revue`} className="text-xs font-medium text-ink-700 underline">
+            {tache === 'appreciation' ? 'Lettres à apprécier' : 'Nouvelle lecture à examiner'} ·
+            revenir à tous les dossiers
+          </Link>
+        ) : (
+          <label className="flex items-center gap-1.5 text-xs text-ink-600">
+            <input
+              type="checkbox"
+              checked={seulementARelire}
+              onChange={(e) => setSeulementARelire(e.target.checked)}
+            />
+            Seulement à relire
+          </label>
+        )}
         <button type="button" className="btn-ghost px-2 py-1 text-xs" disabled={index <= 0} onClick={precedent}>
           ← Précédent
         </button>
@@ -669,7 +858,20 @@ export default function RevuePage() {
       ) : (
         <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           <section className="card min-h-[24rem] overflow-hidden lg:min-h-0">
-            {c ? <Document candidature={c} /> : <PageLoader />}
+            {c ? (
+              <Document
+                candidature={c}
+                actif={actif}
+                vus={vus}
+                onChoisir={setPieceActive}
+                onRetype={() => {
+                  void candidature.refetch()
+                  void liste.refetch()
+                }}
+              />
+            ) : (
+              <PageLoader />
+            )}
           </section>
           <section className="card min-h-0 overflow-y-auto p-4">
             {candidature.isError && (
@@ -679,6 +881,16 @@ export default function RevuePage() {
               <Verification
                 key={c.id}
                 candidature={c}
+                piece={pieces.find((p) => p.id === actif) ?? null}
+                allerAAppreciation={tache === 'appreciation'}
+                onApprecie={
+                  tache === 'appreciation'
+                    ? () => {
+                        sale.current = false
+                        suivant()
+                      }
+                    : undefined
+                }
                 onConfirme={apresConfirmation}
                 onDossierComplet={() => setComplet(true)}
                 onSale={surSale}

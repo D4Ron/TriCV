@@ -414,16 +414,17 @@ async def lire_sans_ia(db: AsyncSession, candidature: Candidature) -> None:
     """La lecture locale du dossier, aussitôt reçu : rien ne part au modèle.
 
     Le dossier n'arrive plus vide dans la grille : diplômes, expériences et
-    langues lus par règles, à confirmer. La lecture par l'IA reste à la
-    demande. Une erreur ici ne doit jamais coûter l'import.
+    langues lus par règles, à confirmer. La lecture par l'IA suit en file, sans
+    faire attendre le relevé. Une erreur ici ne doit jamais coûter l'import.
     """
-    from app.services import depouillement
+    from app.services import depouillement, travaux
 
     try:
         await depouillement.depouiller(db, candidature, ia=False)
     except Exception as exc:  # noqa: BLE001 — le dossier est acquis, la lecture est un plus
         logger.warning("lecture locale impossible pour %s : %s", candidature.id, exc)
         await evaluer_candidature(db, candidature)
+    await travaux.apres_arrivee(db, candidature.id, candidature.poste_id)
 
 
 async def enregistrer_pieces(

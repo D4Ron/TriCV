@@ -157,7 +157,9 @@ async def create_session(
         entity_type="recruitment_session",
         entity_id=session.id,
         user_id=user.id,
-        details={"title": session.title, "criteria": len(session.criteria)},
+        # La charge utile, pas la relation : sans critère elle n'est jamais
+        # chargée, et la lire ici tombait hors du contexte asynchrone.
+        details={"title": session.title, "criteria": len(payload.criteria)},
     )
     await db.commit()
     await db.refresh(session)

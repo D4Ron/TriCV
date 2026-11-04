@@ -292,6 +292,9 @@ class Candidat(Base, TimestampMixin):
         sa.Enum(Provenance, name="provenance"), default=Provenance.DECLARE, nullable=False
     )
     verifie_le: Mapped[datetime | None] = mapped_column(sa.DateTime)
+    # Ce qu'une relecture voit autrement que ce qu'un humain a posé :
+    # {"attente": […], "ecartees": [identifiants]}. Sans effet avant d'être accepté.
+    propositions_lecture: Mapped[dict | None] = mapped_column(JsonB)
     verifie_par_id: Mapped[str | None] = mapped_column(
         sa.String(36), sa.ForeignKey("user.id", ondelete="SET NULL")
     )
@@ -305,6 +308,10 @@ class Candidat(Base, TimestampMixin):
     candidatures: Mapped[list["Candidature"]] = relationship(
         back_populates="candidat", cascade="all, delete-orphan"
     )
+
+    @property
+    def propositions(self) -> list[dict]:
+        return (self.propositions_lecture or {}).get("attente", [])
 
 
 class DiplomeCandidat(Base, TimestampMixin):
@@ -392,6 +399,10 @@ class Candidature(Base, TimestampMixin):
     # tandis qu'une lecture faite une fois n'a pas à être refaite.
     appreciation_consistance: Mapped[float | None] = mapped_column(sa.Numeric(4, 2))
     appreciation_motif: Mapped[str | None] = mapped_column(sa.Text)
+    # Les lignes de note corrigées : {"FORMATION": {"points": 7, "motif": "…"}}.
+    # Ici et non sur la notation, pour la même raison : un recalcul ne défait
+    # pas ce qu'un humain a décidé en lisant le document.
+    ajustements_note: Mapped[dict | None] = mapped_column(JsonB)
 
     # Catégorie remise au client — fortement / partiellement / non qualifié.
     # Calculée à l'évaluation, mais réinscriptible : c'est un avis, et le
@@ -503,6 +514,9 @@ class LigneNotation(Base):
     libelle: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     points: Mapped[float] = mapped_column(sa.Numeric(5, 2), nullable=False)
     points_max: Mapped[float] = mapped_column(sa.Numeric(5, 2), nullable=False)
+    # Renseignés quand les RH ont corrigé la ligne.
+    points_calcules: Mapped[float | None] = mapped_column(sa.Numeric(5, 2))
+    ajustement_motif: Mapped[str | None] = mapped_column(sa.Text)
     detail: Mapped[str | None] = mapped_column(sa.Text)
 
     notation: Mapped[Notation] = relationship(back_populates="lignes")

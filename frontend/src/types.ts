@@ -181,6 +181,7 @@ export interface DeploymentSettings {
   allow_self_registration: boolean
   /** Les dossiers reçus hors de tout avis rejoignent-ils le vivier ? */
   candidatures_spontanees: boolean
+  lecture_ia_auto: boolean
   /** Les écrans d'avant la refonte de la revue et de la boîte. */
   interface_classique: boolean
   /** Boîte de candidatures Microsoft 365, relevée par Graph. */
@@ -322,6 +323,35 @@ export interface EtatLectures {
   reprise_le: string | null
   derniere_erreur: string | null
   ajoutes?: number
+  total: number
+  pourcentage: number
+  secondes_restantes: number
+  /** Ce qui fixe le temps restant. */
+  cause: 'lecture' | 'quota' | 'attente'
+  /** 0 : rien de mesuré encore, ce n'est qu'un ordre de grandeur. */
+  mesures: number
+  fournisseurs: FournisseurIaEtat[]
+  dossiers_a_lire: number
+  secondes_par_dossier_ia: number
+}
+
+/** Ce qu'un fournisseur dit vraiment de son quota : null = il ne le dit pas. */
+export interface FournisseurIaEtat {
+  nom: string
+  disponible: boolean
+  repos_secondes: number
+  /** Faux tant qu'aucun appel n'a été fait depuis le démarrage. */
+  quota_lu: boolean
+  requetes_limite: number | null
+  requetes_restantes: number | null
+  periode_requetes: string | null
+  jetons_limite: number | null
+  jetons_restants: number | null
+  periode_jetons: string | null
+  /** Quand le fournisseur n'annonce rien : ses ordres de grandeur publics. */
+  indicatif?: { par_minute: number; par_jour: number } | null
+  lectures_du_jour: number
+  jetons_du_jour: number
 }
 
 export interface Poste {
@@ -426,6 +456,9 @@ export interface LigneNotation {
   points: number
   points_max: number
   detail: string | null
+  /** Ce que le calcul donnait, quand les RH ont corrigé la ligne. */
+  points_calcules?: number | null
+  ajustement_motif?: string | null
 }
 
 export interface Notation {
@@ -458,6 +491,8 @@ export interface SyntheseDossier {
   notes: string[]
   a_verifier: string[]
   domaines_specifiques: string[]
+  /** Pour chaque pièce, ce qu'on y retrouve du parcours. */
+  par_piece: Record<string, { diplomes: string[]; experiences: string[] }>
 }
 
 export interface GroupePieces {
@@ -499,8 +534,18 @@ export interface ExperienceCandidat {
   provenance: Provenance
 }
 
+/** Ce qu'une relecture voit autrement que ce qu'un humain a posé. */
+export interface PropositionLecture {
+  id: string
+  famille: string
+  action: string
+  libelle: string
+  avant: string | null
+}
+
 export interface Candidat {
   id: string
+  propositions?: PropositionLecture[]
   nom: string
   prenom: string
   email: string | null
@@ -555,6 +600,7 @@ export interface CandidatureListItem {
   motifs: string[]
   a_verifier: boolean
   doublons: number
+  propositions?: number
 }
 
 export interface CandidaturesPage {
@@ -689,6 +735,7 @@ export interface Grille {
   nombre_preselectionnes: number
   nombre_elimines: number
   nombre_a_verifier: number
+  nombre_propositions?: number
   preselectionnes: LigneGrille[]
   non_retenus: LigneGrille[]
   elimines: GroupeElimination[]

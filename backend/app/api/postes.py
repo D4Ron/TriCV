@@ -859,6 +859,7 @@ async def construire_grille(db: AsyncSession, poste: Poste) -> GrilleOut:
         nombre_preselectionnes=len(preselectionnes),
         nombre_elimines=sum(1 for c in candidatures if _motifs_opposables(c)),
         nombre_a_verifier=a_verifier,
+        nombre_propositions=sum(1 for c in candidatures if c.candidat.propositions),
         preselectionnes=preselectionnes,
         non_retenus=non_retenus,
         elimines=sorted(groupes.values(), key=lambda g: g.motif.value),

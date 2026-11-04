@@ -4,6 +4,8 @@ import { ApiError, rapportsApi, recrutementApi } from '@/lib/api'
 import { LIBELLE_PIECE, RAISONS_DE_LEVEE, libellePiece } from '@/lib/pieces'
 import { Callout, ErrorState, Spinner } from '@/components/ui'
 import SyntheseDossier from '@/components/SyntheseDossier'
+import PropositionsDeLecture from '@/components/PropositionsDeLecture'
+import LignesDeNote, { NoteGlobale } from '@/components/LignesDeNote'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import RattacherPoste from '@/components/RattacherPoste'
 import { useAnnulable } from '@/lib/annulable'
@@ -221,9 +223,12 @@ function Appreciation({
 function PanneauEntretien({
   candidatureId,
   onFait,
+  ouvrir = false,
 }: {
   candidatureId: string
   onFait: () => void
+  /** Arrivé ici pour saisir l'entretien : il s'ouvre et vient à l'écran. */
+  ouvrir?: boolean
 }) {
   const fiche = useQuery({
     queryKey: ['entretien', candidatureId],
@@ -237,7 +242,12 @@ function PanneauEntretien({
   const [jury, setJury] = useState('')
   const [observations, setObservations] = useState('')
   const [erreur, setErreur] = useState<string | null>(null)
-  const [ouvert, setOuvert] = useState(false)
+  const [ouvert, setOuvert] = useState(ouvrir)
+  const panneau = useRef<HTMLDivElement | null>(null)
+  const pret = Boolean(fiche.data)
+  useEffect(() => {
+    if (ouvrir && pret) panneau.current?.scrollIntoView({ block: 'center' })
+  }, [ouvrir, pret])
 
   const f = fiche.data
   const enCours = f?.fiches.find((x) => x.jure === jure)
@@ -325,7 +335,7 @@ function PanneauEntretien({
   }
 
   return (
-    <div className="rounded-lg border border-ink-200 p-3">
+    <div ref={panneau} className="rounded-lg border border-ink-200 p-3">
       <div className="flex flex-wrap items-baseline gap-2">
         <p className="text-sm font-medium text-ink-800">
           Entretien
@@ -679,10 +689,13 @@ export default function CandidatureDrawer({
   onClose,
   onSupprime,
   onDeplace,
+  section,
 }: {
   candidatureId: string
   posteId: string
   onClose: () => void
+  /** Ouvre directement l'entretien. */
+  section?: 'entretien'
   onSupprime?: (compteRendu: string) => void
   /** Le dossier a quitté ce poste pour un autre : la fenêtre se referme. */
   onDeplace?: (compteRendu: string) => void
@@ -944,6 +957,7 @@ export default function CandidatureDrawer({
             )}
 
             <SyntheseDossier synthese={c.synthese} />
+            <PropositionsDeLecture candidature={c} onFait={rafraichir} />
 
             {c.notation && (
               <section>
@@ -973,25 +987,15 @@ export default function CandidatureDrawer({
                     onFait={rafraichir}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  {c.notation.lignes.map((ligne) => (
-                    <div key={ligne.code} className="rounded-lg bg-ink-50 px-3 py-2">
-                      <div className="flex items-baseline gap-2">
-                        <p className="flex-1 text-sm font-medium text-ink-800">{ligne.libelle}</p>
-                        <span className="text-sm font-semibold tabular-nums text-ink-900">
-                          {ligne.points}
-                          <span className="text-ink-400">/{ligne.points_max}</span>
-                        </span>
-                      </div>
-                      {ligne.detail && (
-                        <p className="mt-0.5 text-xs text-ink-500">{ligne.detail}</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                <LignesDeNote candidature={c} onFait={rafraichir} />
+                <NoteGlobale key={c.notation.note_manuelle ?? 'calcul'} candidature={c} onFait={rafraichir} />
 
                 <div className="mt-3">
-                  <PanneauEntretien candidatureId={candidatureId} onFait={rafraichir} />
+                  <PanneauEntretien
+                    candidatureId={candidatureId}
+                    onFait={rafraichir}
+                    ouvrir={section === 'entretien'}
+                  />
                 </div>
               </section>
             )}

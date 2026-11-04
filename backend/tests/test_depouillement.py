@@ -361,9 +361,11 @@ async def test_un_diplome_sans_niveau_est_ignore_plutot_que_devine(monkeypatch, 
         resultat = await depouillement.depouiller(db, candidature)
         await db.commit()
 
-        assert resultat.diplomes == 0
         assert any("niveau indéterminable" in a for a in resultat.avertissements)
-        assert (await db.execute(select(DiplomeCandidat))).scalars().all() == []
+        # Rien n'est deviné pour ce diplôme ; le Master du CV, lui, est bien lu.
+        lus = (await db.execute(select(DiplomeCandidat))).scalars().all()
+        assert [d.intitule for d in lus if "interne" in d.intitule] == []
+        assert any("oublié par l'IA" in a for a in resultat.avertissements)
 
 
 async def test_une_experience_sans_date_de_debut_est_ignoree(monkeypatch, texte_pdf):
@@ -379,8 +381,9 @@ async def test_une_experience_sans_date_de_debut_est_ignoree(monkeypatch, texte_
         resultat = await depouillement.depouiller(db, candidature)
         await db.commit()
 
-        assert resultat.experiences == 0
-        assert (await db.execute(select(ExperienceCandidat))).scalars().all() == []
+        # Sans date, rien n'est compté ; ce que le CV dit, lui, est bien lu.
+        lues = (await db.execute(select(ExperienceCandidat))).scalars().all()
+        assert [e.poste for e in lues if e.poste == "Stagiaire"] == []
 
 
 async def test_un_dossier_sans_piece_lisible_ne_plante_pas(fournisseur):
