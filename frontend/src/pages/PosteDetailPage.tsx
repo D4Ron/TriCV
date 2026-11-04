@@ -14,6 +14,7 @@ import {
   delaiListe,
 } from '@/components/ui'
 import CandidatureDrawer from '@/components/CandidatureDrawer'
+import SuiviDesLectures from '@/components/SuiviDesLectures'
 import DepotEnLot from '@/components/DepotEnLot'
 import { LIBELLE_PIECE } from '@/lib/pieces'
 import { formatDate } from '@/lib/format'
@@ -1360,6 +1361,19 @@ export default function PosteDetailPage() {
     },
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Fusion impossible'),
   })
+  // Toute la file d'un coup : la lecture se fait en arrière-plan.
+  const lancerLectures = useMutation({
+    mutationFn: (ia: boolean) => recrutementApi.lancerLectures(posteId, ia),
+    onSuccess: (r) => {
+      setCompteRendu(
+        r.ajoutes
+          ? `${r.ajoutes} dossier(s) mis en lecture.`
+          : 'Aucun dossier à lire : ils sont déjà confirmés ou en cours.',
+      )
+      void queryClient.invalidateQueries({ queryKey: ['lectures', posteId] })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Lecture impossible'),
+  })
   // Les dossiers arrivés avant que le nom ne soit lu dans le CV.
   const relireNoms = useMutation({
     mutationFn: () => recrutementApi.relireNoms({ poste_id: posteId }),
@@ -1603,6 +1617,26 @@ export default function PosteDetailPage() {
                       () => relireNoms.mutate(),
                       relireNoms.isPending || g.nombre_candidatures === 0,
                     ],
+                    [
+                      'Relire tous les dossiers',
+                      () => lancerLectures.mutate(false),
+                      lancerLectures.isPending || g.nombre_candidatures === 0,
+                    ],
+                    [
+                      'Faire lire par l’IA',
+                      () => {
+                        if (
+                          window.confirm(
+                            'Le texte des dossiers non confirmés part au fournisseur d’IA, ' +
+                              'sans noms ni coordonnées, un dossier à la fois. ' +
+                              'Les pièces d’identité ne partent pas. Continuer ?',
+                          )
+                        ) {
+                          lancerLectures.mutate(true)
+                        }
+                      },
+                      lancerLectures.isPending || g.nombre_candidatures === 0,
+                    ],
                   ] as Array<[string, () => void, boolean]>
                 ).map(([libelle, action, inactif]) => (
                   <button
@@ -1661,6 +1695,8 @@ export default function PosteDetailPage() {
           </Callout>
         </div>
       )}
+
+      <SuiviDesLectures posteId={posteId} />
 
       {compteRendu && (
         <div className="mb-5">

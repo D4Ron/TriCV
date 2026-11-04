@@ -26,6 +26,19 @@ import type { Candidature, CandidatureListItem, Provenance } from '@/types'
 
 const TOUCHES = 'J / K : suivant / précédent · C : confirmer · E : dossier complet'
 
+/** Les domaines lus sont rangés sans accents ni majuscules, ceux du poste non. */
+function memeDomaine(un: string, autre: string): boolean {
+  const plat = (s: string) =>
+    s
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+      .replace(/[-',]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  return plat(un) === plat(autre)
+}
+
 function duree(debut: string, fin: string | null): string {
   const d = new Date(debut)
   const f = fin ? new Date(fin) : new Date()
@@ -116,9 +129,14 @@ function Document({ candidature }: { candidature: Candidature }) {
                 ? 'border-ink-200 border-b-white bg-white font-medium text-ink-900'
                 : 'border-transparent text-ink-500 hover:text-ink-800'
             }`}
-            title={p.nom_fichier ?? undefined}
+            title={
+              p.type_source === 'ia'
+                ? `${p.nom_fichier ?? ''} — rangée par l’IA, à vérifier`
+                : (p.nom_fichier ?? undefined)
+            }
           >
             {libellePiece(p.type_piece, p.intitule_libre)}
+            {p.type_source === 'ia' ? ' · IA' : ''}
           </button>
         ))}
       </div>
@@ -354,7 +372,7 @@ function Verification({
               {(c.synthese?.domaines_specifiques.length ?? 0) > 0 && (
                 <span className="mt-0.5 flex flex-wrap gap-1">
                   {c.synthese?.domaines_specifiques.map((domaine) => {
-                    const compte = (e.domaines ?? []).includes(domaine)
+                    const compte = (e.domaines ?? []).some((d) => memeDomaine(d, domaine))
                     return (
                       <button
                         key={domaine}

@@ -312,9 +312,25 @@ export interface ExperienceSpecifique {
   poids: number
 }
 
+/** Où en est la lecture des dossiers d'un poste. */
+export interface EtatLectures {
+  en_attente: number
+  en_cours: number
+  faits: number
+  echecs: number
+  /** Quota épuisé : l'heure (UTC) à laquelle la file reprendra. */
+  reprise_le: string | null
+  derniere_erreur: string | null
+  ajoutes?: number
+}
+
 export interface Poste {
   id: string
   mandat_id: string
+  /** Les mots propres au poste, par domaine, validés par les RH. */
+  lexique?: Record<string, string[]> | null
+  /** Ce que l'application reconnaît déjà pour chaque domaine. */
+  lexique_connu?: Record<string, string[]>
   /** Ce que le rangement des pièces a corrigé à l'enregistrement (doublons, groupes). */
   remarques_pieces?: string[]
   intitule: string
@@ -458,6 +474,8 @@ export interface Piece {
   intitule_libre: string | null
   nom_fichier: string | null
   taille_octets: number | null
+  /** « ia » quand le modèle a rangé la pièce, « humain » quand quelqu'un l'a corrigée. */
+  type_source?: string | null
 }
 
 export interface Diplome {

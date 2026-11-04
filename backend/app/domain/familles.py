@@ -120,9 +120,10 @@ FAMILLES: tuple[Famille, ...] = (
     ),
     Famille(
         "comptabilite", "comptabilité",
-        ("comptabilite", "comptable", "sciences comptables"),
+        ("comptabilite", "comptable"),
         (
-            "comptabilite", "comptable", "comptables", "accounting", "cca", "dcg", "dscg",
+            "comptabilite", "comptable", "comptables", "sciences comptables", "accounting", "cca",
+            "dcg", "dscg",
             "expertise comptable",
         ),
         ("finance", "audit", "banque"),

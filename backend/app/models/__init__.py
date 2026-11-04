@@ -32,6 +32,7 @@ from app.models.enums import (
     UserRole,
 )
 from app.models.recruitment_session import RecruitmentSession, new_public_key
+from app.models.travail import Travail
 from app.models.recrutement import (
     Avis,
     Candidat,

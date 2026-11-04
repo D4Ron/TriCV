@@ -36,7 +36,8 @@ from app.models import (
     StatutAvis,
 )
 from app.models.base import utcnow
-from app.services import declaration, doublons, parametres, uploads
+from app.models.travail import DECOUPAGE
+from app.services import declaration, doublons, parametres, travaux, uploads
 from app.services.preselection import charger_candidature, evaluer_candidature
 from app.services.ratelimit import public_limiter
 
@@ -445,6 +446,7 @@ async def deposer_spontanee(
     await db.flush()
 
     await _enregistrer_pieces(db, candidature.id, acceptes, types, intitules)
+    await travaux.ajouter(db, [(candidature.id, None)], DECOUPAGE)
     await db.commit()
 
     return DepotResponse(
@@ -652,6 +654,9 @@ async def deposer(
     await _enregistrer_pieces(db, candidature.id, acceptes, types_pieces, intitules)
 
     await evaluer_candidature(db, await charger_candidature(db, candidature.id))
+    # La lecture et le découpage des pièces se font après la réponse : un scan
+    # de douze pages ne doit pas faire attendre le candidat.
+    await travaux.ajouter(db, [(candidature.id, poste.id)], DECOUPAGE)
     await db.commit()
 
     return DepotResponse(

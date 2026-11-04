@@ -31,7 +31,7 @@ from app.domain.referentiel import (
     NiveauDiplome,
     PieceDossier,
     Sexe,
-    domaine_correspond,
+    memes_mots,
     normaliser_domaine,
 )
 from app.llm.base import DossierExtrait, LLMError
@@ -70,6 +70,9 @@ class ResultatDepouillement:
     # « ia » quand le modèle a répondu, « locale » sinon.
     lecture: str = "locale"
     avertissements: list[str] = field(default_factory=list)
+    # Pourquoi l'IA n'a pas lu, quand on le lui demandait : la file en a besoin
+    # pour attendre le quota au lieu de croire le travail fait.
+    erreur_ia: Exception | None = None
 
     @property
     def a_produit_quelque_chose(self) -> bool:
@@ -408,7 +411,9 @@ def _signaler_rapprochement(
     # rapprochement : c'est le même domaine, dit plus court. Le signaler noierait
     # les vrais écarts — « data science » compté en « informatique » — sous des
     # avertissements que personne ne lirait plus.
-    if domaine_correspond(dit, retenu):
+    # Les mots seuls, pas les familles : un renommage reste à montrer, même
+    # quand il semble légitime.
+    if memes_mots(dit, retenu):
         return
     resultat.avertissements.append(
         f"« {diplome.intitule or 'diplôme sans intitulé'} » : domaine du dossier "
@@ -571,6 +576,7 @@ async def depouiller(
             dossier_ia = await get_provider().extraire_dossier(expurge.text, vocabulaire)
         except (LLMError, OSError) as exc:
             logger.warning("dépouillement par l'IA impossible pour %s : %s", candidature.id, exc)
+            resultat.erreur_ia = exc
             resultat.avertissements.append(
                 f"IA indisponible ({exc}) : seule la lecture locale a été faite."
             )

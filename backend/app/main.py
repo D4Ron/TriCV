@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import secrets
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Response, status
@@ -27,6 +28,7 @@ from app.api import (
     sante,
     sessions,
     stats,
+    travaux,
     vivier,
 )
 from app.config import settings
@@ -108,7 +110,14 @@ async def lifespan(app: FastAPI):
             parametres.appliquer_ia(await parametres.lire(db))
     except Exception:
         logger.exception("modèle d'IA réglé à l'écran non chargé au démarrage")
+    # La file des lectures : elle reprend ce qu'un arrêt a interrompu.
+    from app.services import travaux as file_des_travaux
+
+    ouvrier = asyncio.create_task(file_des_travaux.boucle())
     yield
+    ouvrier.cancel()
+    with suppress(asyncio.CancelledError):
+        await ouvrier
 
 
 app = FastAPI(
@@ -212,6 +221,7 @@ for router in (
     postes.router,
     fiches.router,
     candidatures.router,
+    travaux.router,
     collaboration.router,
     dossiers.router,
     boite.router,

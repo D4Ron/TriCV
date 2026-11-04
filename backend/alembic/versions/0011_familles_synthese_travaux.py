@@ -18,12 +18,15 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 from sqlalchemy import inspect
 
 revision: str = "0011"
 down_revision: str | None = "0010"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+JSON_B = sa.JSON().with_variant(postgresql.JSONB(astext_type=sa.Text()), "postgresql")
 
 
 def _colonnes(table: str) -> set[str]:
@@ -34,7 +37,7 @@ def upgrade() -> None:
     if "indice" not in _colonnes("elimination"):
         op.add_column("elimination", sa.Column("indice", sa.Text(), nullable=True))
     if "lexique" not in _colonnes("poste"):
-        op.add_column("poste", sa.Column("lexique", sa.JSON(), nullable=True))
+        op.add_column("poste", sa.Column("lexique", JSON_B, nullable=True))
     if "type_source" not in _colonnes("piece_candidature"):
         op.add_column("piece_candidature", sa.Column("type_source", sa.String(16), nullable=True))
     if "travail" not in inspect(op.get_bind()).get_table_names():
@@ -54,7 +57,6 @@ def upgrade() -> None:
             sa.Column("pas_avant", sa.DateTime(), nullable=True),
             sa.Column("erreur", sa.Text(), nullable=True),
             sa.Column("created_at", sa.DateTime(), nullable=False),
-            sa.Column("updated_at", sa.DateTime(), nullable=False),
         )
         op.create_index("ix_travail_etat", "travail", ["etat"])
         op.create_index("ix_travail_candidature", "travail", ["candidature_id"])

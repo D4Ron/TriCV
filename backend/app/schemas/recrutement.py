@@ -203,6 +203,8 @@ class PosteBase(BaseModel):
     annees_experience_min: int = Field(default=0, ge=0, le=60)
     annees_experience_specifique_min: int = Field(default=0, ge=0, le=60)
     domaines_experience: ListeTexte = Field(default_factory=list)
+    # Les mots propres au poste, par domaine.
+    lexique: dict[str, list[str]] | None = None
     experiences_specifiques: Annotated[
         list[ExperienceSpecifiqueIn], BeforeValidator(lambda v: v or [])
     ] = Field(default_factory=list)
@@ -278,6 +280,7 @@ class PosteUpdate(BaseModel):
     annees_experience_min: int | None = Field(default=None, ge=0, le=60)
     annees_experience_specifique_min: int | None = Field(default=None, ge=0, le=60)
     domaines_experience: list[str] | None = None
+    lexique: dict[str, list[str]] | None = None
     experiences_specifiques: list[ExperienceSpecifiqueIn] | None = None
     pieces_requises: list[str] | None = None
     pieces_facultatives: list[str] | None = None
@@ -295,6 +298,8 @@ class PosteOut(PosteBase):
 
     id: str
     mandat_id: str
+    # Ce que l'application reconnaît déjà pour chaque domaine du poste.
+    lexique_connu: dict[str, list[str]] = Field(default_factory=dict)
     created_at: datetime
     restriction: RestrictionIn = Field(default_factory=RestrictionIn)
     seuil_preselection: float
@@ -520,6 +525,8 @@ class PieceOut(BaseModel):
     # Absent tant que la pièce est constatée reçue sans être encore classée.
     nom_fichier: str | None = None
     taille_octets: int | None = None
+    # « ia » quand le modèle l'a rangée, pour que le recruteur le sache.
+    type_source: str | None = None
 
 
 class CandidatureListItem(BaseModel):

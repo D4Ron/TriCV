@@ -17,6 +17,7 @@ import type {
   CandidateDetail,
   CriterionDraft,
   DeploymentSettings,
+  EtatLectures,
   HrStatus,
   Language,
   PaginatedCandidates,
@@ -685,6 +686,15 @@ export const recrutementApi = {
     }>('/candidatures/noms/relire', { method: 'POST', body: portee }),
   verifier: (id: string, payload: Record<string, boolean>) =>
     request<Candidature>(`/candidatures/${id}/verifier`, { method: 'POST', body: payload }),
+  lancerLectures: (posteId: string, ia: boolean) =>
+    request<EtatLectures>(`/postes/${posteId}/lectures`, { method: 'POST', body: { ia } }),
+  suivreLectures: (posteId: string) => request<EtatLectures>(`/postes/${posteId}/lectures`),
+  annulerLectures: (posteId: string) =>
+    request<EtatLectures>(`/postes/${posteId}/lectures`, { method: 'DELETE' }),
+  proposerLexique: (posteId: string) =>
+    request<{ lexique: Record<string, string[]> }>(`/postes/${posteId}/lexique/proposer`, {
+      method: 'POST',
+    }),
   compterExperience: (id: string, experienceId: string, domaine: string, compte: boolean) =>
     request<Candidature>(`/candidatures/${id}/experiences/${experienceId}/domaines`, {
       method: 'POST',

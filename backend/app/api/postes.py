@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.mandats import get_mandat_or_404
 from app.deps import CurrentUser, DbSession
-from app.domain import Qualification, sections_entretien
+from app.domain import Qualification, familles, sections_entretien
 from app.domain.bareme import BAREME_PAR_DEFAUT
 from app.domain.serialisation import bareme_depuis_dict, bareme_vers_dict
 from app.models import (
@@ -38,6 +38,7 @@ from app.models import (
 )
 from app.services.exports.grille import TypeGrille, construire_classeur
 from app.models.base import utcnow
+from app.models.travail import LECTURE_LOCALE
 from app.schemas.recrutement import (
     AvisCreate,
     AvisOut,
@@ -55,6 +56,7 @@ from app.schemas.recrutement import (
 )
 from app.services import (
     audit,
+    travaux,
     doublons,
     entretiens,
     grille_selection,
@@ -87,7 +89,23 @@ async def _vers_sortie(db: AsyncSession, poste: Poste) -> PosteOut:
     )
     sortie.nombre_candidatures = nombre.scalar_one()
     sortie.fiche_a_texte = bool((poste.fiche_texte or "").strip())
+    sortie.lexique_connu = _lexique_connu(poste)
     return sortie
+
+
+def _lexique_connu(poste: Poste) -> dict[str, list[str]]:
+    """Quelques mots que le référentiel rattache déjà à chaque domaine."""
+    domaines = [
+        *(poste.domaines_acceptes or ()),
+        *(poste.domaines_experience or ()),
+        *(d for e in poste.experiences_specifiques or () for d in e.get("domaines") or ()),
+    ]
+    connu: dict[str, list[str]] = {}
+    for domaine in dict.fromkeys(domaines):
+        famille = familles.famille_nommee(domaine)
+        if famille is not None:
+            connu[domaine] = list(dict.fromkeys((*famille.termes, *famille.employeurs)))[:10]
+    return connu
 
 
 def _appliquer_restriction(poste: Poste, restriction: RestrictionIn) -> None:
@@ -232,6 +250,19 @@ async def modifier_poste(
     # Laisser la grille en l'état jusqu'à ce que quelqu'un pense à cliquer
     # « Recalculer » afficherait des motifs qui ne correspondent plus à la
     # fiche — et c'est la grille, pas la fiche, que le client relit.
+    # De nouveaux mots changent ce qui se lit dans les dossiers : ils sont
+    # relus, en file, sans faire attendre l'enregistrement.
+    if "lexique" in modifications:
+        identifiants = await db.execute(
+            select(Candidature.id)
+            .join(Candidat, Candidat.id == Candidature.candidat_id)
+            .where(Candidature.poste_id == poste.id, Candidat.verifie_le.is_(None))
+        )
+        await travaux.oublier_le_termine(db, poste.id)
+        details["dossiers_a_relire"] = await travaux.ajouter(
+            db, [(c, poste.id) for c in identifiants.scalars()], LECTURE_LOCALE
+        )
+
     touche_la_notation = bool(_CHAMPS_NOTATION & set(modifications)) or (
         payload.restriction is not None
     )

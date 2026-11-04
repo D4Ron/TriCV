@@ -215,6 +215,29 @@ export default function FichePosteEditeur({
 
   const [erreur, setErreur] = useState<string | null>(null)
 
+  // Les mots propres au poste, un champ par domaine.
+  const [lexique, setLexique] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      Object.entries(enregistre.lexique ?? {}).map(([d, mots]) => [d, mots.join(', ')]),
+    ),
+  )
+  const domainesDuPoste = [
+    ...new Set([...enListe(domainesAcceptes), ...specifiques.flatMap((e) => e.domaines)]),
+  ]
+  const proposerLexique = useMutation({
+    mutationFn: () => recrutementApi.proposerLexique(poste.id),
+    onSuccess: (r) =>
+      setLexique((actuel) => {
+        const suite = { ...actuel }
+        for (const [domaine, mots] of Object.entries(r.lexique)) {
+          const deja = enListe(suite[domaine] ?? '')
+          suite[domaine] = [...new Set([...deja, ...mots])].join(', ')
+        }
+        return suite
+      }),
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Proposition impossible'),
+  })
+
   const extrasChanges =
     pointsCertification !== (extras.points_par_certification ?? 0) ||
     certificationsMax !== (extras.certifications_max ?? 3) ||
@@ -228,8 +251,17 @@ export default function FichePosteEditeur({
     const utiles = specifiques.filter((e) => e.libelle.trim() || e.domaines.length > 0)
     const simple = utiles.length <= 1
     const seule = utiles[0]
+    const lexiqueSaisi = Object.fromEntries(
+      domainesDuPoste
+        .map((d) => [d, enListe(lexique[d] ?? '')] as const)
+        .filter(([, mots]) => mots.length > 0),
+    )
+    const lexiqueChange =
+      JSON.stringify(lexiqueSaisi) !== JSON.stringify(enregistre.lexique ?? {})
 
     return recrutementApi.modifierPoste(poste.id, {
+      // Seulement s'il change : il relance la lecture des dossiers du poste.
+      ...(lexiqueChange ? { lexique: lexiqueSaisi } : {}),
       // Passer par cet ecran, c'est poser les exigences. Le poste cesse donc
       // d'etre « a completer » : la marque ne dit pas que la fiche est
       // parfaite, elle dit que personne ne l'a encore regardee.
@@ -428,6 +460,49 @@ export default function FichePosteEditeur({
             </div>
           )}
         </div>
+
+        {domainesDuPoste.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-ink-200 p-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm font-medium text-ink-800">Mots qui comptent pour ce poste</p>
+              <button
+                type="button"
+                className="btn-ghost px-2 py-1 text-xs"
+                disabled={proposerLexique.isPending}
+                onClick={() => proposerLexique.mutate()}
+              >
+                {proposerLexique.isPending && <Spinner />}
+                Proposer avec l&apos;IA
+              </button>
+            </div>
+            <p className="text-xs text-ink-500">
+              Ce qu&apos;un CV peut écrire sans nommer le domaine : un métier, un synonyme, un
+              employeur. Séparés par des virgules. La proposition n&apos;envoie que le poste,
+              aucun dossier, et rien n&apos;est gardé sans « Enregistrer ». Enregistrer relit les
+              dossiers non confirmés.
+            </p>
+            {domainesDuPoste.map((domaine) => {
+              const connus = enregistre.lexique_connu?.[domaine] ?? []
+              return (
+                <Field
+                  key={domaine}
+                  label={domaine}
+                  htmlFor={`lexique-${domaine}`}
+                  hint={connus.length > 0 ? `Déjà reconnus : ${connus.join(', ')}…` : undefined}
+                >
+                  <input
+                    id={`lexique-${domaine}`}
+                    className="input"
+                    value={lexique[domaine] ?? ''}
+                    onChange={(e) =>
+                      setLexique((actuel) => ({ ...actuel, [domaine]: e.target.value }))
+                    }
+                  />
+                </Field>
+              )
+            })}
+          </div>
+        )}
 
         <Field
           label="Formation complémentaire souhaitée"

@@ -23,7 +23,7 @@ from sqlalchemy.orm import selectinload
 from app.api.postes import get_poste_or_404
 from app.domain import Qualification, sections_entretien
 from app.deps import CurrentUser, DbSession
-from app.domain.referentiel import PieceDossier
+from app.domain.referentiel import PieceDossier, normaliser_domaine
 from app.models import (
     Candidat,
     Candidature,
@@ -700,7 +700,9 @@ async def compter_experience(
     )
     if experience is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Expérience introuvable.")
-    actuels = [d for d in (experience.domaines or []) if d != payload.domaine]
+    # Les domaines lus sont rangés sans accents ni majuscules.
+    vise = normaliser_domaine(payload.domaine)
+    actuels = [d for d in (experience.domaines or []) if normaliser_domaine(d) != vise]
     # Une nouvelle liste : SQLAlchemy ne voit pas une liste JSON modifiée sur place.
     experience.domaines = [*actuels, payload.domaine] if payload.compte else actuels
     await db.flush()
@@ -1365,6 +1367,8 @@ async def retyper_piece(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pièce introuvable")
     avant = piece.type_piece
     piece.type_piece = payload.type_piece
+    # Plus rien ne la reclassera : ni la file, ni le modèle.
+    piece.type_source = "humain"
     piece.intitule_libre = (
         (payload.intitule_libre or "").strip() or None
         if payload.type_piece == PieceDossier.AUTRE.value

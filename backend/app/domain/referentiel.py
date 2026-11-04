@@ -313,6 +313,14 @@ def domaine_correspond(declare: str, attendu: str) -> bool:
     """
     from app.domain import familles
 
+    return memes_mots(declare, attendu) or familles.equivalents(declare, attendu)
+
+
+def memes_mots(declare: str, attendu: str) -> bool:
+    """Le domaine attendu se retrouve-t-il en entier, mot à mot, dans le déclaré ?
+
+    Le rapprochement sans les familles : ce qui ne diffère que par l'écriture.
+    """
     mots_attendus = _mots_signifiants(attendu)
     if not mots_attendus:
         return True
@@ -320,4 +328,4 @@ def domaine_correspond(declare: str, attendu: str) -> bool:
     return all(
         any(_meme_mot(attendu_mot, declare_mot) for declare_mot in mots_declares)
         for attendu_mot in mots_attendus
-    ) or familles.equivalents(declare, attendu)
+    )

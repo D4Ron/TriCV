@@ -162,6 +162,39 @@ deliberately awkward dossiers — merged PDFs with rotated scans, phone photos, 
 « CV.pdf », a password-protected PDF, a « Yahoo! » sender — is generated and checked by
 `python -m tools.jeu_d_essai` (12/12; `--garder` keeps the files for a manual upload).
 
+### Job families, evidence and the summary
+
+A word match cannot know that « supply chain management » is logistics, or that a post at a refinery
+belongs to the « Pétrole & Gaz » sector. `app/domain/familles.py` is a short, hand-written table that
+separates two links, because they do not carry the same weight:
+
+- **Same family:** the same thing said differently. It counts automatically: « ressources humaines »
+  satisfies « gestion des ressources humaines », and a sector is read from its synonyms and known
+  employers. A poste that asks for something narrower, like « finance d'entreprise », stays literal.
+- **Close family:** next door, not identical (audit next to accounting). It never counts by itself,
+  but it never eliminates unseen either: it becomes evidence for a human.
+
+What the table lacks for one poste goes in that poste's own vocabulary (**Mots qui comptent pour ce
+poste** in the fiche). **Proposer avec l'IA** suggests words from the poste alone, no dossier leaves.
+Saving re-reads the unconfirmed dossiers.
+
+Work certificates are read too: one confirms a CV job and adds its domains, or adds the job the CV
+left out.
+
+**Evidence before "absent".** A motif is computed on what was extracted, and what was not extracted
+is not necessarily missing. `app/services/indices.py` searches the whole dossier for what could
+contradict each motif: a sector word in an attestation, a close degree, a piece filed under the
+wrong type. Such a motif says where to look and does not eliminate until someone has reviewed the
+dossier. It changes no score: a recruiter counts an experience in one click (the chips under each
+experience in the review screen), and the score and motifs follow.
+
+**En bref**, at the top of a dossier, is built from what was read, with no model call: a two-sentence
+profile, what stands out, and what to check. It states facts and says where to look. It never
+mentions age, sex or nationality, and never advises on the person.
+
+Measured on one real batch of 16 dossiers, local reading only: experiences counted for the required
+sector went from 8 to 22, and dossiers with at least one from 6 to 10.
+
 ### Provenance is the safety property
 
 Every piece of candidate data carries where it came from:
@@ -796,6 +829,19 @@ provider: the next, shorter dossier still goes through. By default Groq keeps no
 though it may log for up to 30 days to investigate errors or abuse; Data Controls in its console
 refuses that too. The limits above come from Groq's documentation in November 2026: the console's
 limits page shows the ones that apply to your account.
+
+#### Reading a whole poste: the queue
+
+**Plus › Relire tous les dossiers** and **Plus › Faire lire par l'IA** put the poste's unconfirmed
+dossiers in a queue saved in the database (`travail`). One worker runs in the API process: one
+dossier at a time, a pause between AI calls, local work first. When the providers are exhausted,
+the whole queue waits 15 minutes and resumes by itself; it also resumes after a restart. A file
+deposited through the public form goes through the same queue, which splits merged PDFs and reads
+them after the candidate has had their answer.
+
+An AI reading also shows the model the pieces the rules could not name, in one call per dossier:
+the first 700 characters, redacted, no file name. Anything resembling civil status never leaves,
+and a piece an HR person retyped is never touched again.
 
 #### Splitting the two jobs
 
