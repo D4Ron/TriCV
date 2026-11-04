@@ -1064,6 +1064,12 @@ export const santeApi = {
       method: 'POST',
     }),
 
+  /** La clé du dernier secours, essayée seule : dans la chaîne, il répond en dernier. */
+  testerGroq: () =>
+    request<{ ok: boolean; detail: string; secondes: number }>('/sante/ia/groq/tester', {
+      method: 'POST',
+    }),
+
   /**
    * Envoie `octets` à une sonde qui les jette, et dit si le serveur frontal les
    * a laissés passer.
@@ -1377,10 +1383,14 @@ export const settingsApi = {
     llm_api_key?: string
     llm_base_url?: string
     ollama_base_url?: string
+    groq_api_key?: string
+    groq_model?: string
     contact_candidats?: string
   }) => request<DeploymentSettings>('/settings', { method: 'PATCH', body: payload }),
   /** Oublie le modèle d'IA réglé à l'écran : le fichier du serveur reprend la main. */
   revenirIaServeur: () => request<DeploymentSettings>('/settings/ia', { method: 'DELETE' }),
+  /** Retire la clé du dernier secours. */
+  retirerGroq: () => request<DeploymentSettings>('/settings/ia/groq', { method: 'DELETE' }),
   /** Vérifie l'accès à la boîte d'envoi sans rien envoyer. */
   testerEnvoi: () => request<{ ok: boolean; expediteur: string }>('/messagerie/test', { method: 'POST' }),
 }

@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 import httpx
 
 from app.config import settings
-from app.llm.base import LLMError, LLMIndisponible, LLMQuotaError
+from app.llm.base import LLMError, LLMIndisponible, LLMQuotaError, LLMRequeteTropGrande
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,9 @@ async def post_json(
                 if response.status_code == 429:
                     dernier_429 = True
                 elif response.status_code not in RETRY_STATUS:
+                    # Réessayer le même envoi rendrait le même refus.
+                    if response.status_code == 413:
+                        raise LLMRequeteTropGrande(f"{provider} returned HTTP 413: {body}")
                     # 402 et 403 disent parfois « plus de crédit » plutôt que
                     # « accès refusé ». Les traiter en quota laisse la chaîne
                     # essayer le suivant ; une clé vraiment invalide échouera

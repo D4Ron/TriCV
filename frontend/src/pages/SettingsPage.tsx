@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { recrutementApi, settingsApi } from '@/lib/api'
+import { recrutementApi, santeApi, settingsApi } from '@/lib/api'
 import type { DeploymentSettings, FournisseurIa } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { Callout, ErrorState, Field, PageLoader, Spinner, Toggle } from '@/components/ui'
@@ -43,6 +43,124 @@ const FOURNISSEURS: Array<{ cle: FournisseurIa; libelle: string; aide: string }>
 const LIBELLE_FOURNISSEUR: Record<string, string> = Object.fromEntries(
   FOURNISSEURS.map((f) => [f.cle, f.libelle]),
 )
+
+/**
+ * Le dernier secours : il s'ajoute à la file sans remplacer le fournisseur
+ * choisi plus haut. Il répond en dernier, d'où son propre bouton d'essai : une
+ * clé mal recopiée ne se verrait sinon que le jour où il en faudrait une.
+ */
+function SecoursGroq({
+  s,
+  estAdmin,
+  cle,
+  onCle,
+  modele,
+  onModele,
+}: {
+  s: DeploymentSettings
+  estAdmin: boolean
+  cle: string
+  onCle: (v: string) => void
+  modele: string
+  onModele: (v: string) => void
+}) {
+  const queryClient = useQueryClient()
+  const source = s.ia_cles.groq ?? ''
+  const essai = useMutation({ mutationFn: santeApi.testerGroq })
+  const retrait = useMutation({
+    mutationFn: settingsApi.retirerGroq,
+    onSuccess: () => {
+      essai.reset()
+      void queryClient.invalidateQueries({ queryKey: ['settings'] })
+      void queryClient.invalidateQueries({ queryKey: ['sante'] })
+    },
+  })
+
+  return (
+    <div className="mt-6 border-t border-ink-100 pt-5">
+      <h2 className="text-sm font-semibold text-ink-900">Dernier secours : Groq</h2>
+      <p className="mt-1 text-xs text-ink-500">
+        Prend le relais quand les autres fournisseurs n&apos;ont plus de quota. Il ne remplace pas
+        le fournisseur choisi plus haut. Il refuse les dossiers très longs : ceux-là attendent
+        qu&apos;un autre fournisseur soit de nouveau disponible.
+      </p>
+
+      <div className="mt-4 space-y-3">
+        <Field
+          label="Clé de l’API Groq"
+          htmlFor="cle-groq"
+          hint={
+            source === 'ecran'
+              ? 'Une clé est enregistrée ici. Laissez vide pour la conserver ; collez-en une autre pour la remplacer.'
+              : source === 'serveur'
+                ? 'La clé du serveur est en service. En coller une ici la remplace.'
+                : 'Aucune clé. À créer sur console.groq.com › API Keys.'
+          }
+        >
+          <input
+            id="cle-groq"
+            type="password"
+            className="input"
+            value={cle}
+            disabled={!estAdmin}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={source ? '•••••••• (inchangée)' : ''}
+            onChange={(e) => onCle(e.target.value)}
+          />
+        </Field>
+
+        <Field
+          label="Modèle (facultatif)"
+          htmlFor="modele-groq"
+          hint="Vide : openai/gpt-oss-120b. À changer si Groq retire ce modèle."
+        >
+          <input
+            id="modele-groq"
+            className="input"
+            value={modele}
+            disabled={!estAdmin}
+            spellCheck={false}
+            onChange={(e) => onModele(e.target.value)}
+          />
+        </Field>
+
+        {estAdmin && source && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn-ghost px-3 py-1.5 text-xs"
+              disabled={essai.isPending}
+              onClick={() => essai.mutate()}
+            >
+              {essai.isPending && <Spinner />}
+              Essayer la clé
+            </button>
+            {source === 'ecran' && (
+              <button
+                type="button"
+                className="btn-ghost px-3 py-1.5 text-xs"
+                disabled={retrait.isPending}
+                onClick={() => retrait.mutate()}
+              >
+                {retrait.isPending && <Spinner />}
+                Retirer la clé
+              </button>
+            )}
+          </div>
+        )}
+        {essai.data && (
+          <Callout tone={essai.data.ok ? 'success' : 'danger'}>{essai.data.detail}</Callout>
+        )}
+        {(essai.error || retrait.error) && (
+          <Callout tone="danger">
+            {((essai.error || retrait.error) as Error).message}
+          </Callout>
+        )}
+      </div>
+    </div>
+  )
+}
 
 /**
  * Le modèle d'IA : le fournisseur et ses clés, réglés sans toucher au serveur.
@@ -267,6 +385,8 @@ export default function SettingsPage() {
   const [adresseOpenai, setAdresseOpenai] = useState('')
   const [adresseOllama, setAdresseOllama] = useState('')
   const [cles, setCles] = useState({ gemini: '', anthropic: '', openai: '' })
+  const [cleGroq, setCleGroq] = useState('')
+  const [modeleGroq, setModeleGroq] = useState('')
 
   const [contactCandidats, setContactCandidats] = useState('')
 
@@ -309,6 +429,8 @@ export default function SettingsPage() {
     setAdresseOpenai(reglages.data.ia_adresse_openai)
     setAdresseOllama(reglages.data.ia_adresse_ollama)
     setCles({ gemini: '', anthropic: '', openai: '' })
+    setCleGroq('')
+    setModeleGroq(reglages.data.ia_modele_groq)
   }, [reglages.data])
 
   const enregistrer = useMutation({
@@ -335,6 +457,8 @@ export default function SettingsPage() {
         llm_api_key: cles.openai.trim(),
         llm_base_url: adresseOpenai.trim(),
         ollama_base_url: adresseOllama.trim(),
+        groq_api_key: cleGroq.trim(),
+        groq_model: modeleGroq.trim(),
         contact_candidats: contactCandidats.trim(),
       }),
     onSuccess: () => {
@@ -342,6 +466,7 @@ export default function SettingsPage() {
       setMessage('Réglages enregistrés.')
       setClientSecret('')
       setCles({ gemini: '', anthropic: '', openai: '' })
+      setCleGroq('')
       void queryClient.invalidateQueries({ queryKey: ['settings'] })
       void queryClient.invalidateQueries({ queryKey: ['aide-publique'] })
       void queryClient.invalidateQueries({ queryKey: ['courriel', 'etat'] })
@@ -534,6 +659,15 @@ export default function SettingsPage() {
           cles={cles}
           onCle={(nom, valeur) => setCles((c) => ({ ...c, [nom]: valeur }))}
           revenirServeur={revenirServeur}
+        />
+
+        <SecoursGroq
+          s={s}
+          estAdmin={estAdmin}
+          cle={cleGroq}
+          onCle={setCleGroq}
+          modele={modeleGroq}
+          onModele={setModeleGroq}
         />
 
         </div>

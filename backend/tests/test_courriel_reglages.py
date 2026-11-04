@@ -233,6 +233,8 @@ def serveur_ia(monkeypatch):
         "anthropic_model": "",
         "openai_model": "",
         "ollama_model": "",
+        "groq_api_key": "",
+        "groq_model": "",
     }
     for cle, valeur in du_fichier.items():
         monkeypatch.setattr(settings, cle, valeur)

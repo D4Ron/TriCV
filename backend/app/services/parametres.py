@@ -115,6 +115,11 @@ CLES_IA = (
     IA_FOURNISSEUR, IA_MODELE, CLE_GEMINI, CLE_ANTHROPIC, CLE_OPENAI,
     ADRESSE_OPENAI, ADRESSE_OLLAMA,
 )
+# Le dernier secours. À part des CLES_IA : sa clé ne désigne pas le fournisseur
+# en service, et revenir au réglage du serveur ne doit pas l'effacer.
+CLE_GROQ = "groq_api_key"
+MODELE_GROQ = "groq_model"
+CLES_SECOURS = (CLE_GROQ, MODELE_GROQ)
 # La clé que chaque fournisseur lit, pour déduire le fournisseur d'une clé
 # collée seule — Gemini d'abord, c'est celui du cabinet.
 CLE_DU_FOURNISSEUR = {"gemini": CLE_GEMINI, "anthropic": CLE_ANTHROPIC, "openai": CLE_OPENAI}
@@ -122,7 +127,7 @@ CLE_DU_FOURNISSEUR = {"gemini": CLE_GEMINI, "anthropic": CLE_ANTHROPIC, "openai"
 # Ce que l'API ne renvoie jamais en clair. Jamais réaffichés au formulaire,
 # donc « vide » y veut dire « inchangé » : sans cela, ouvrir puis enregistrer
 # l'écran des paramètres déconnecterait la boîte ou effacerait une clé.
-SECRETS = frozenset({OAUTH_CLIENT_SECRET, CLE_GEMINI, CLE_ANTHROPIC, CLE_OPENAI})
+SECRETS = frozenset({OAUTH_CLIENT_SECRET, CLE_GEMINI, CLE_ANTHROPIC, CLE_OPENAI, CLE_GROQ})
 
 # Les noms de l'époque IMAP/SMTP, sous lesquels une base non migrée garde
 # encore l'adresse de la boîte et le réglage d'envoi. Lus à défaut du nouveau
@@ -143,7 +148,7 @@ ANCIENNES_CLES = {
 MODELES_PAR_FOURNISSEUR = tuple(f"{nom}_model" for nom in FOURNISSEURS_IA)
 _IA_DU_FICHIER = {
     cle: getattr(settings, cle)
-    for cle in (*CLES_IA, "llm_prose_provider", *MODELES_PAR_FOURNISSEUR)
+    for cle in (*CLES_IA, *CLES_SECOURS, "llm_prose_provider", *MODELES_PAR_FOURNISSEUR)
 }
 
 
@@ -171,6 +176,8 @@ class Reglages:
     llm_api_key: str = ""
     llm_base_url: str = ""
     ollama_base_url: str = ""
+    groq_api_key: str = ""
+    groq_model: str = ""
 
     @property
     def graph_utilisable(self) -> bool:
@@ -297,7 +304,7 @@ async def lire(db: AsyncSession) -> Reglages:
             elif cle == IA_FOURNISSEUR:
                 if valeur.strip() in FOURNISSEURS_IA:
                     reglages.llm_provider = valeur.strip()
-            elif cle in (IA_MODELE, CLE_GEMINI, CLE_ANTHROPIC, CLE_OPENAI):
+            elif cle in (IA_MODELE, CLE_GEMINI, CLE_ANTHROPIC, CLE_OPENAI, *CLES_SECOURS):
                 # Même remarque : une clé recopiée emporte volontiers un espace.
                 setattr(reglages, cle, valeur.strip())
             elif cle in (ADRESSE_OPENAI, ADRESSE_OLLAMA):
@@ -380,7 +387,9 @@ def appliquer_ia(reglages: Reglages) -> None:
     impose = fournisseur_ecran(reglages)
     voulu = {
         cle: getattr(reglages, cle).strip() or _IA_DU_FICHIER[cle]
-        for cle in (CLE_GEMINI, CLE_ANTHROPIC, CLE_OPENAI, ADRESSE_OPENAI, ADRESSE_OLLAMA)
+        for cle in (
+            CLE_GEMINI, CLE_ANTHROPIC, CLE_OPENAI, ADRESSE_OPENAI, ADRESSE_OLLAMA, *CLES_SECOURS,
+        )
     }
     if impose:
         voulu[IA_FOURNISSEUR] = impose

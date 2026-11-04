@@ -720,11 +720,12 @@ opposite: a few hundred tokens each, six to ten per report.
 | **Mistral** (`openai`) | 1 req/s, 500K tokens/min, ~1B tokens/month | Thousands | A French model house — the best French of the free options. Needs phone verification |
 | Gemini 2.5 Flash-Lite | 15 RPM, 1,000 RPD | ~1,000 | No daily token ceiling. Weakest of the three at reasoning |
 | Gemini 2.5 Flash *(current)* | 10 RPM, 250 RPD | ~250 | No daily token ceiling |
-| Groq `llama-3.3-70b` | 30 RPM, 1,000 RPD, **100K tokens/day** | **~13** | Fastest by far, and useless here: 14 CVs exhausts the day |
+| Groq `gpt-oss-120b` | 30 RPM, 1,000 RPD, **8K tokens/min, 200K tokens/day** | **~25** | Fastest by far, and a last resort only: a long dossier is refused outright, and 25 exhausts the day |
 | Ollama, local | none | Unlimited | Nothing leaves the building — and ~52 s per dossier with `qwen3:8b` fully on GPU, so over two hours for 150. A fallback, not a daily driver |
 
-Groq tops every "best free LLM API" list and is the worst fit for this application, for that one
-reason. It is a fine choice for the *report* half of the work, which is token-light.
+Groq tops every "best free LLM API" list and is a poor primary here, for that one reason. It is a
+fine choice for the *report* half of the work, which is token-light, so it has its own slot at the
+very end of the chain: see [Groq, the last resort](#groq-the-last-resort).
 
 **Every free tier trains on what you send, unless you stop it.** Google's does and cannot be
 turned off — only a paid key stops it. Mistral's free *Experiment* plan does too **by default**,
@@ -781,6 +782,20 @@ material.
 
 The same three variables point at Groq, OpenRouter, Together, or a vLLM server on the firm's own
 machine; only `LLM_BASE_URL` and `LLM_MODEL` change. See [`.env.example`](.env.example).
+
+#### Groq, the last resort
+
+Paste a key in **Paramètres › Général › Dernier secours : Groq**, or set `GROQ_API_KEY`. That alone
+adds Groq at the end of the chain, without changing the provider in service; `LLM_FALLBACK` places
+it elsewhere for anyone who wants it earlier. **Essayer la clé** makes one real call, since a bad
+key would otherwise only show on the day the others run out.
+
+Its per-minute token limit refuses anything above roughly 5,000 tokens of input with HTTP 413, so a
+long dossier is not read by Groq. The chain treats that as "not this one" and does not rest the
+provider: the next, shorter dossier still goes through. By default Groq keeps no inference data,
+though it may log for up to 30 days to investigate errors or abuse; Data Controls in its console
+refuses that too. The limits above come from Groq's documentation in November 2026: the console's
+limits page shows the ones that apply to your account.
 
 #### Splitting the two jobs
 

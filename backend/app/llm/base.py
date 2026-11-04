@@ -75,6 +75,15 @@ class LLMQuotaError(LLMIndisponible):
     """
 
 
+class LLMRequeteTropGrande(LLMIndisponible):
+    """Cet envoi-ci dépasse ce que le fournisseur accepte en une fois (HTTP 413).
+
+    Le suivant peut le prendre, mais rien n'est épuisé : le dossier d'après,
+    plus court, passera. La chaîne bascule donc sans mettre le fournisseur au
+    repos — un dossier long n'a pas à le priver des quinze minutes qui suivent.
+    """
+
+
 # --- payloads ---------------------------------------------------------------
 
 

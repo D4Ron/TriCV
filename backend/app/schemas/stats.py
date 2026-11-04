@@ -91,6 +91,7 @@ class SettingsOut(BaseModel):
     ia_modele_ecran: str = ""
     ia_adresse_openai: str = ""
     ia_adresse_ollama: str = ""
+    ia_modele_groq: str = ""
     # Les clés ne sortent jamais. Pour chacune, d'où vient celle qui sert :
     # « ecran » (collée dans Paramètres), « serveur » (le .env), ou vide.
     ia_cles: dict[str, str] = Field(default_factory=dict)
@@ -136,6 +137,8 @@ class ReglagesIn(BaseModel):
     llm_api_key: str | None = Field(default=None, max_length=255)
     llm_base_url: str | None = Field(default=None, max_length=255)
     ollama_base_url: str | None = Field(default=None, max_length=255)
+    groq_api_key: str | None = Field(default=None, max_length=255)
+    groq_model: str | None = Field(default=None, max_length=128)
 
     contact_candidats: str | None = Field(default=None, max_length=255)
 

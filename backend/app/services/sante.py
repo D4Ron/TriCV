@@ -157,7 +157,8 @@ def _verifier_ia(reglages: parametres.Reglages) -> Verification:
         "Modèle d'IA",
         OK,
         f"Fournisseur « {nom} » configuré{f' ({source})' if source else ''}. Seul un "
-        "essai réel dit si la clé est acceptée — bouton « Essayer ».",
+        "essai réel dit si la clé est acceptée — bouton « Essayer »."
+        + (" Groq prend le relais en dernier secours." if settings.groq_api_key.strip() else ""),
         "general",
     )
 

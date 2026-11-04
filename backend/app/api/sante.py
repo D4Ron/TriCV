@@ -99,6 +99,39 @@ async def tester_ia(_: AdminUser) -> dict:
     }
 
 
+@router.post("/sante/ia/groq/tester")
+async def tester_groq(_: AdminUser) -> dict:
+    """La clé du dernier secours, essayée seule.
+
+    Dans la chaîne, Groq ne répond qu'une fois les autres épuisés : une clé mal
+    recopiée ne se verrait que ce jour-là, au pire moment.
+    """
+    from app.llm.factory import build_provider
+
+    debut = time.monotonic()
+    try:
+        reponse = await asyncio.wait_for(
+            build_provider("groq").rediger(
+                "Répondez par le seul mot : OK.", "Essai de connexion.", titre="essai"
+            ),
+            timeout=60,
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "detail": "Pas de réponse en 60 secondes.", "secondes": 60}
+    except Exception as exc:
+        return {
+            "ok": False,
+            "detail": sante._masquer(f"{type(exc).__name__} : {exc}"),
+            "secondes": round(time.monotonic() - debut, 1),
+        }
+    ok = bool((reponse or "").strip())
+    return {
+        "ok": ok,
+        "detail": "Groq a répondu." if ok else "Groq a répondu vide.",
+        "secondes": round(time.monotonic() - debut, 1),
+    }
+
+
 @router.post("/sante/sonde-depot")
 async def sonde_depot(request: Request, _: AdminUser) -> dict:
     """Reçoit un envoi de test et le jette, sans rien enregistrer.

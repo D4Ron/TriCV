@@ -144,9 +144,10 @@ async def deployment_settings(db: DbSession, _: CurrentUser) -> SettingsOut:
         ia_modele_ecran=reglages.llm_model,
         ia_adresse_openai=reglages.llm_base_url,
         ia_adresse_ollama=reglages.ollama_base_url,
+        ia_modele_groq=reglages.groq_model,
         ia_cles={
             nom: parametres.source_cle(reglages, cle)
-            for nom, cle in parametres.CLE_DU_FOURNISSEUR.items()
+            for nom, cle in {**parametres.CLE_DU_FOURNISSEUR, "groq": parametres.CLE_GROQ}.items()
         },
         ia_regle_ecran=any(
             getattr(reglages, cle) for cle in parametres.CLES_IA
@@ -184,7 +185,26 @@ async def modifier_reglages(
     await db.commit()
     # Après l'enregistrement, pas avant : une clé mise en service puis
     # perdue par un enregistrement qui échoue servirait sans être réglée.
-    if set(changees) & set(parametres.CLES_IA):
+    if set(changees) & {*parametres.CLES_IA, *parametres.CLES_SECOURS}:
+        parametres.appliquer_ia(await parametres.lire(db))
+    return await deployment_settings(db, user)
+
+
+@router.delete("/settings/ia/groq", response_model=SettingsOut)
+async def retirer_groq(db: DbSession, user: AdminUser) -> SettingsOut:
+    """Retire le dernier secours : une clé vide vaut « inchangée » au formulaire."""
+    retirees = await parametres.effacer(db, parametres.CLES_SECOURS)
+    if retirees:
+        await audit.record(
+            db,
+            action="parametres.update",
+            entity_type="parametres",
+            entity_id=None,
+            user_id=user.id,
+            details={"reglages": sorted(retirees), "retire": True},
+        )
+    await db.commit()
+    if retirees:
         parametres.appliquer_ia(await parametres.lire(db))
     return await deployment_settings(db, user)
 

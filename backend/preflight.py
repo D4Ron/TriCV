@@ -214,7 +214,7 @@ def controler_modele(rapport: Rapport) -> None:
 
 def _controler_chaine(rapport: Rapport) -> None:
     """La chaîne de secours : ce qu'elle est, et ce qu'une bascule changerait."""
-    if not settings.llm_fallback.strip():
+    if not settings.llm_fallback.strip() and not settings.groq_api_key.strip():
         return
 
     from app.llm.factory import build_chain
@@ -250,6 +250,15 @@ def _controler_chaine(rapport: Rapport) -> None:
             "réglage pour le refuser. Une bascule y enverra donc des parcours\n"
             "réels — expurgés de toute identité, mais réels. À décider une fois :\n"
             "clé payante, ou LLM_FALLBACK vide et un quota épuisé qui s'assume.",
+        )
+
+    if "groq" in noms:
+        rapport.ajouter(
+            A_VOIR,
+            "Groq ne prendra pas les longs dossiers.",
+            "Sa limite par minute refuse un envoi d'environ 5 000 jetons et plus :\n"
+            "un dossier long reste alors à lire plus tard. Dans la console Groq,\n"
+            "Data Controls refuse aussi la conservation de 30 jours en cas d'erreur.",
         )
 
 

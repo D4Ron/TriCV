@@ -58,6 +58,7 @@ from app.llm.base import (
     LLMIndisponible,
     LLMProvider,
     LLMQuotaError,
+    LLMRequeteTropGrande,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,8 +132,11 @@ class ChaineFournisseurs(LLMProvider):
                 resultat = await appel(fournisseur)
             except LLMIndisponible as exc:
                 epuises.append(fournisseur.name)
+                trop_grande = isinstance(exc, LLMRequeteTropGrande)
                 # Inutile de redécouvrir son indisponibilité au dossier suivant.
-                self._mettre_au_repos(fournisseur)
+                # Un envoi trop long, lui, ne dit rien du dossier d'après.
+                if not trop_grande:
+                    self._mettre_au_repos(fournisseur)
                 reste = candidats[rang + 1 :]
                 if not reste:
                     raise LLMIndisponible(
@@ -140,6 +144,15 @@ class ChaineFournisseurs(LLMProvider):
                         f"{' ni '.join(epuises)}. Quota épuisé ou service en panne — "
                         f"réessayez plus tard, ou saisissez à la main."
                     ) from exc
+                if trop_grande:
+                    logger.warning(
+                        "[chaîne] %s refuse « %s » : envoi trop long pour lui ; "
+                        "bascule sur %s.",
+                        fournisseur.name,
+                        operation,
+                        reste[0].name,
+                    )
+                    continue
                 logger.warning(
                     "[chaîne] %s indisponible pour « %s » (%s) ; bascule sur %s, et "
                     "mise au repos %d min. Les dossiers de ce mandat ne sont donc "

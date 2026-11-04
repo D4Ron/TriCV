@@ -210,7 +210,8 @@ export interface DeploymentSettings {
    * (`ecran`), le fichier du serveur (`serveur`), ou aucune (`''`). Les clés
    * elles-mêmes ne sortent jamais du serveur.
    */
-  ia_cles: Partial<Record<'gemini' | 'anthropic' | 'openai', '' | 'ecran' | 'serveur'>>
+  ia_modele_groq: string
+  ia_cles: Partial<Record<'gemini' | 'anthropic' | 'openai' | 'groq', '' | 'ecran' | 'serveur'>>
   ia_regle_ecran: boolean
 
   /** L'adresse que les candidats écrivent en cas de difficulté. */

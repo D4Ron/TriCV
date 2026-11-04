@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     # défaut.
     llm_base_url: str = ""
     llm_api_key: str = ""
+    # Le dernier secours : sa clé suffit à l'ajouter en fin de chaîne.
+    groq_api_key: str = ""
+    groq_model: str = ""
 
     # Les fournisseurs de secours, séparés par des virgules, essayés dans
     # l'ordre quand le principal n'a plus d'allocation — et seulement dans ce

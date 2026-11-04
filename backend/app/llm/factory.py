@@ -34,20 +34,30 @@ def build_provider(name: str | None = None) -> LLMProvider:
         from app.llm.openai_compatible import OpenAICompatibleProvider
 
         return OpenAICompatibleProvider()
+    if name == "groq":
+        from app.llm.groq import GroqProvider
+
+        return GroqProvider()
 
     raise LLMConfigError(
         f"Unknown LLM_PROVIDER {name!r}. Supported values: gemini, anthropic, "
-        f"ollama, openai."
+        f"ollama, openai, groq."
     )
 
 
 def _noms_de_la_chaine() -> list[str]:
-    """Le principal, puis les secours déclarés, sans doublon et dans l'ordre."""
+    """Le principal, puis les secours déclarés, sans doublon et dans l'ordre.
+
+    Groq rejoint la file dès que sa clé existe, à la fin si `LLM_FALLBACK` ne
+    le place pas ailleurs : coller la clé dans Paramètres doit suffire.
+    """
     noms = [settings.llm_provider]
     for nom in settings.llm_fallback.split(","):
         nom = nom.strip().lower()
         if nom and nom not in noms:
             noms.append(nom)
+    if settings.groq_api_key.strip() and "groq" not in noms:
+        noms.append("groq")
     return noms
 
 
@@ -114,7 +124,7 @@ def get_provider() -> LLMProvider:
 
     key = (
         f"{settings.llm_provider}:{settings.llm_model}:{settings.llm_fallback}"
-        f":{settings.llm_prose_provider}"
+        f":{settings.llm_prose_provider}:{settings.groq_api_key}:{settings.groq_model}"
     )
     if _instance is None or _instance_key != key:
         _instance = build_chain()

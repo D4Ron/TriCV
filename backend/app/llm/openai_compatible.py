@@ -55,6 +55,9 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     # d'équivalent ici. Le CV part en texte expurgé, ce qui est de toute façon
     # le chemin recommandé.
     supports_documents = False
+    # Ce qu'une réponse peut coûter. Certains fournisseurs comptent ce plafond
+    # dans leur limite par minute : ils le baissent.
+    max_tokens = MAX_TOKENS
 
     def __init__(self) -> None:
         base = (settings.llm_base_url or "").strip().rstrip("/")
@@ -78,6 +81,10 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self.api_key = settings.llm_api_key
         self.model = modele
 
+    def _options(self) -> dict:
+        """Ce que le fournisseur ajoute à la requête, pour un modèle donné."""
+        return {}
+
     async def complete(
         self,
         system: str,
@@ -95,11 +102,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         corps: dict = {
             "model": self.model,
             "temperature": 0.2,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": self.max_tokens,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
+            **self._options(),
         }
         if json_mode:
             corps["response_format"] = {"type": "json_object"}
@@ -131,7 +139,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
         if premier.get("finish_reason") == "length":
             raise LLMError(
-                f"{self.model} hit its {MAX_TOKENS}-token output limit and the response "
+                f"{self.model} hit its {self.max_tokens}-token output limit and the response "
                 "was cut short. Use a model with a larger output budget."
             )
         if not texte:
