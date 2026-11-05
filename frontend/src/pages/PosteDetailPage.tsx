@@ -501,6 +501,21 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
       setErreur(e instanceof Error ? e.message : "Le document n'a pas pu être lu"),
   })
   const [erreurRedaction, setErreurRedaction] = useState<string | null>(null)
+  // La rédaction faite ailleurs : seule la prose revient, le reste est écrit ici.
+  const champRedactionAvis = useRef<HTMLInputElement>(null)
+  const importerRedactionAvis = useMutation({
+    mutationFn: (p: { avisId: string; fichier: File }) =>
+      recrutementApi.importerRedactionAvis(posteId, p.avisId, modeleId || null, p.fichier),
+    onSuccess: (r) => {
+      setErreurRedaction(null)
+      setRedaction((etat) =>
+        etat
+          ? { ...etat, texte: r.texte, propose: true, avertissement: r.avertissement }
+          : etat,
+      )
+    },
+    onError: (e) => setErreurRedaction(e instanceof Error ? e.message : 'Import impossible'),
+  })
 
   const avis = useQuery({ queryKey: ['avis', posteId], queryFn: () => recrutementApi.avis(posteId) })
   const modeles = useQuery({
@@ -873,6 +888,50 @@ function PanneauAvis({ posteId, poste }: { posteId: string; poste: Poste }) {
               >
                 {importerTexte.isPending && <Spinner />}
                 Importer un fichier
+              </button>
+              <input
+                ref={champRedactionAvis}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                aria-label="Importer une rédaction externe"
+                onChange={(e) => {
+                  const fichier = e.target.files?.[0]
+                  e.target.value = ''
+                  if (fichier) {
+                    importerRedactionAvis.mutate({ avisId: redaction.avisId, fichier })
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                onClick={() =>
+                  void recrutementApi
+                    .exporterRedactionAvis(posteId, redaction.avisId, modeleId || null)
+                    .catch((e) =>
+                      setErreurRedaction(e instanceof Error ? e.message : 'Export impossible'),
+                    )
+                }
+              >
+                Exporter pour rédaction externe
+              </button>
+              <button
+                type="button"
+                className="btn-ghost text-xs"
+                disabled={importerRedactionAvis.isPending}
+                onClick={() => {
+                  if (
+                    redaction.texte.trim() &&
+                    !window.confirm('Le texte actuel sera remplacé. Continuer ?')
+                  ) {
+                    return
+                  }
+                  champRedactionAvis.current?.click()
+                }}
+              >
+                {importerRedactionAvis.isPending && <Spinner />}
+                Importer la rédaction
               </button>
               <button
                 type="button"

@@ -706,6 +706,23 @@ export const recrutementApi = {
       method: 'POST',
       body: { motif: justification },
     }),
+  /** Les sections d'un avis à faire écrire ailleurs. */
+  exporterRedactionAvis: async (posteId: string, avisId: string, modeleId: string | null) => {
+    const q = new URLSearchParams({ avis_id: avisId })
+    if (modeleId) q.set('modele_id', modeleId)
+    await enregistrerLot(`/postes/${posteId}/avis/redaction-externe?${q}`, 'redaction-avis.json')
+  },
+  /** Assemble l'avis avec la prose reçue. Rien n'est enregistré sans relecture. */
+  importerRedactionAvis: (posteId: string, avisId: string, modeleId: string | null, fichier: File) => {
+    const formData = new FormData()
+    formData.append('fichier', fichier)
+    formData.append('avis_id', avisId)
+    if (modeleId) formData.append('modele_id', modeleId)
+    return request<{ texte: string; propose: boolean; avertissement: string | null }>(
+      `/postes/${posteId}/avis/redaction-externe`,
+      { method: 'POST', formData },
+    )
+  },
   /** Verse un `result.json`. */
   importerLecture: (posteId: string, fichier: File) => {
     const formData = new FormData()
@@ -1980,7 +1997,35 @@ export interface ModeleDocument {
   created_at: string | null
 }
 
+/** Télécharge un lot à traiter ailleurs. */
+async function enregistrerLot(chemin: string, nom: string): Promise<void> {
+  const response = await fetch(`${BASE}${chemin}`, {
+    headers: { Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}` },
+  })
+  if (!response.ok) throw new ApiError(response.status, "L'export a échoué")
+  const url = URL.createObjectURL(await response.blob())
+  const lien = document.createElement('a')
+  lien.href = url
+  lien.download = nom
+  document.body.appendChild(lien)
+  lien.click()
+  lien.remove()
+  URL.revokeObjectURL(url)
+}
+
 export const rapportsApi = {
+  /** Ce qu'il reste à rédiger, à faire écrire ailleurs. */
+  exporterRedaction: (id: string) =>
+    enregistrerLot(`/rapports/${id}/redaction-externe`, 'redaction-rapport.json'),
+  /** Reprend la prose. Une section écrite par quelqu'un n'est jamais remplacée. */
+  importerRedaction: (id: string, fichier: File) => {
+    const formData = new FormData()
+    formData.append('fichier', fichier)
+    return request<{ lecteur: string; versees: number; gardees: number; vides: number }>(
+      `/rapports/${id}/redaction-externe`,
+      { method: 'POST', formData },
+    )
+  },
   lister: (mandatId: string) => request<RapportItem[]>(`/mandats/${mandatId}/rapports`),
   /** Jette un brouillon. Un rapport validé est refusé : il se retire du partage. */
   supprimer: (rapportId: string) =>

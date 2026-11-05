@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   TYPES_RAPPORT,
@@ -82,6 +82,33 @@ function Editeur({ rapportId, onFerme }: { rapportId: string; onFerme: () => voi
       void queryClient.invalidateQueries({ queryKey: ['rapports'] })
     },
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Enregistrement impossible'),
+  })
+
+  // La rédaction faite ailleurs : Ollama, ou Claude Code.
+  const champRedaction = useRef<HTMLInputElement | null>(null)
+  const exporterRedaction = useMutation({
+    mutationFn: () => rapportsApi.exporterRedaction(rapportId),
+    onSuccess: () => {
+      setErreur(null)
+      setMessage(
+        'Fichier enregistré : il ne porte aucun nom de candidat, mais il reste confidentiel.',
+      )
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Export impossible'),
+  })
+  const importerRedaction = useMutation({
+    mutationFn: (fichier: File) => rapportsApi.importerRedaction(rapportId, fichier),
+    onSuccess: (c) => {
+      setErreur(null)
+      setMessage(
+        `${c.versees} section(s) reprise(s), rédigées par ${c.lecteur}, à relire` +
+          (c.gardees ? ` · ${c.gardees} gardée(s) : écrites à la main` : '') +
+          (c.vides ? ` · ${c.vides} vide(s)` : ''),
+      )
+      void rapport.refetch()
+      void queryClient.invalidateQueries({ queryKey: ['rapports'] })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Import impossible'),
   })
 
   const valider = useMutation({
@@ -287,6 +314,53 @@ function Editeur({ rapportId, onFerme }: { rapportId: string; onFerme: () => voi
             label="Remis au client"
             hint="Le rapport apparaît alors dans l'espace de suivi du promoteur."
           />
+        )}
+
+        {!verrouille && (
+          <span className="flex flex-wrap items-center gap-1 text-xs text-ink-500">
+            Rédaction externe :
+            <button
+              type="button"
+              className="btn-ghost px-2 py-1 text-xs"
+              disabled={exporterRedaction.isPending}
+              onClick={() => exporterRedaction.mutate()}
+            >
+              Exporter
+            </button>
+            <button
+              type="button"
+              className="btn-ghost px-2 py-1 text-xs"
+              disabled={importerRedaction.isPending}
+              onClick={() => {
+                // Le rechargement remplacerait ce qui n'est pas enregistré.
+                const sale = JSON.stringify(sections) !== JSON.stringify(r.sections)
+                if (
+                  sale &&
+                  !window.confirm(
+                    'Des corrections ne sont pas enregistrées : elles seront perdues. Continuer ?',
+                  )
+                ) {
+                  return
+                }
+                champRedaction.current?.click()
+              }}
+            >
+              {importerRedaction.isPending && <Spinner />}
+              Importer
+            </button>
+            <input
+              ref={champRedaction}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              aria-label="Importer la rédaction"
+              onChange={(e) => {
+                const fichier = e.target.files?.[0]
+                e.target.value = ''
+                if (fichier) importerRedaction.mutate(fichier)
+              }}
+            />
+          </span>
         )}
 
         <span className="ml-auto flex flex-wrap items-center gap-1 text-xs text-ink-500">

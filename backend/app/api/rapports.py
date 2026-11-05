@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import zipfile
 from datetime import datetime
 
@@ -35,11 +36,13 @@ from app.models import (
     UsageModele,
 )
 from app.models.base import utcnow
-from app.services import audit, modeles, rapports, uploads
+from app.services import audit, modeles, rapports, redaction_externe, uploads
 from app.services.exports import cv as export_cv
 from app.services.exports import frontispice
 from app.services.exports import rapport as export_rapport
 from app.services.preselection import charger_candidature
+
+FICHIER_REDACTION_MAX = 5 * 1024 * 1024
 
 router = APIRouter(tags=["rapports"])
 
@@ -351,6 +354,72 @@ async def modifier(
     rapport.statut = StatutRapport.EN_RELECTURE
     await db.commit()
     return _vers_sortie(rapport)
+
+
+async def _trame_du_rapport(db, rapport: Rapport) -> tuple:
+    """La trame dont le rapport vient : celle du client, ou celle de son type."""
+    if rapport.modele_id:
+        modele = await db.get(ModeleDocument, rapport.modele_id)
+        if modele is not None:
+            return rapports.trame_depuis_modele(modele.structure)
+    try:
+        return rapports.trame_pour(rapports.TypeRapport(rapport.type_rapport))
+    except ValueError:
+        return rapports.TRAME
+
+
+@router.get("/rapports/{rapport_id}/redaction-externe")
+async def exporter_redaction(rapport_id: str, db: DbSession, user: CurrentUser) -> Response:
+    """Ce qu'il reste à rédiger, à faire écrire ailleurs. Aucun nom de candidat n'y figure."""
+    rapport = await _get_rapport(db, rapport_id)
+    lot = redaction_externe.exporter_rapport(rapport, await _trame_du_rapport(db, rapport))
+    await audit.record(
+        db,
+        action="rapport.redaction_exportee",
+        entity_type="mandat",
+        entity_id=rapport.mandat_id,
+        user_id=user.id,
+        details={"rapport_id": rapport.id, "sections": len(lot["taches"])},
+    )
+    await db.commit()
+    return Response(
+        json.dumps(lot, ensure_ascii=False, indent=1),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="redaction-rapport.json"'},
+    )
+
+
+@router.post("/rapports/{rapport_id}/redaction-externe")
+async def importer_redaction(
+    rapport_id: str, db: DbSession, user: CurrentUser, fichier: UploadFile = File(...)
+) -> dict:
+    """Reprend la prose. Une section écrite par quelqu'un n'est jamais remplacée."""
+    rapport = await _get_rapport(db, rapport_id)
+    if rapport.statut is StatutRapport.VALIDE:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Ce rapport est validé : il ne peut plus être modifié."
+        )
+    contenu = await fichier.read(FICHIER_REDACTION_MAX + 1)
+    if len(contenu) > FICHIER_REDACTION_MAX:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Fichier trop volumineux.")
+    try:
+        compte = redaction_externe.verser_rapport(
+            rapport, await _trame_du_rapport(db, rapport), contenu
+        )
+    except redaction_externe.ResultatInvalide as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    if compte["versees"]:
+        rapport.statut = StatutRapport.EN_RELECTURE
+    await audit.record(
+        db,
+        action="rapport.redaction_importee",
+        entity_type="mandat",
+        entity_id=rapport.mandat_id,
+        user_id=user.id,
+        details={"rapport_id": rapport.id, **compte},
+    )
+    await db.commit()
+    return compte
 
 
 @router.post("/rapports/{rapport_id}/valider", response_model=RapportOut)

@@ -510,6 +510,75 @@ def _consigne(
     return consigne
 
 
+def _contexte(
+    poste: Poste, avis: Avis | None, mandat: Mandat | None, reglages: Reglages | None
+) -> str:
+    fiche = (poste.fiche_texte or "").strip()
+    contexte = "ÉLÉMENTS OPPOSABLES :\n---\n" + faits(poste, avis, mandat, reglages) + "\n---"
+    if fiche:
+        contexte += "\n\nFICHE DE POSTE FOURNIE :\n---\n" + fiche[:LONGUEUR_FICHE_MAX] + "\n---"
+    return contexte
+
+
+def taches(
+    poste: Poste,
+    avis: Avis | None,
+    mandat: Mandat | None,
+    gabarit: str,
+    reglages: Reglages | None,
+) -> list[dict]:
+    """Ce qu'il y a à rédiger, pour qui le fera ailleurs : mêmes consignes qu'ici."""
+    contexte = _contexte(poste, avis, mandat, reglages)
+    systeme = prompts.avis_system_prompt()
+    fiche = bool((poste.fiche_texte or "").strip())
+    if gabarit.strip():
+        contexte += "\n\nMODÈLE IMPOSÉ :\n---\n" + gabarit.strip()[:8000] + "\n---"
+        consigne = _consigne(fiche, True, bool(aide(reglages)), _denombrer(poste))
+        return [
+            {
+                "code": "avis",
+                "titre": "l'avis de recrutement",
+                "systeme": systeme,
+                "demande": prompts.redaction_user_prompt(consigne, contexte, prompts.CLOTURE_AVIS),
+            }
+        ]
+    return [
+        {
+            "code": f"section_{rang}",
+            "titre": section.titre,
+            "systeme": systeme,
+            "demande": prompts.redaction_user_prompt(
+                section.consigne, contexte, prompts.CLOTURE_AVIS_SECTION
+            ),
+        }
+        for rang, section in enumerate(_sections_redigees(_denombrer(poste), fiche), start=1)
+    ]
+
+
+def assembler(
+    poste: Poste,
+    avis: Avis | None,
+    mandat: Mandat | None,
+    gabarit: str,
+    reglages: Reglages | None,
+    textes: dict[str, str],
+) -> str:
+    """L'avis complet à partir d'une prose écrite ailleurs.
+
+    Le texte qui entre ne porte que la prose : les rubriques opposables sont
+    écrites ici, comme pour un avis rédigé sur le serveur.
+    """
+    if gabarit.strip():
+        return completer_aide(textes["avis"], reglages)
+    morceaux = [_entete(poste, avis, mandat)]
+    for tache in taches(poste, avis, mandat, gabarit, reglages):
+        contenu = _borner(textes[tache["code"]], tache["titre"])
+        if contenu:
+            morceaux.append(f"{tache['titre']}\n{contenu}")
+    morceaux += _sections_factuelles(poste, avis, reglages)
+    return "\n\n".join(m for m in morceaux if m.strip())
+
+
 async def rediger(
     poste: Poste,
     avis: Avis | None,
@@ -533,9 +602,7 @@ async def rediger(
     appel — découper contre une trame imposée reviendrait à la défaire.
     """
     fiche = (poste.fiche_texte or "").strip()
-    contexte = "ÉLÉMENTS OPPOSABLES :\n---\n" + faits(poste, avis, mandat, reglages) + "\n---"
-    if fiche:
-        contexte += "\n\nFICHE DE POSTE FOURNIE :\n---\n" + fiche[:LONGUEUR_FICHE_MAX] + "\n---"
+    contexte = _contexte(poste, avis, mandat, reglages)
 
     if gabarit.strip():
         return await _rediger_sur_gabarit(poste, contexte, gabarit, reglages)

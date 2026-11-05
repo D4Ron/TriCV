@@ -1,6 +1,6 @@
 ---
 name: lire-dossiers
-description: Read a TriCV lecture.json batch here in Claude Code and write the result.json to import. Use when the user asks to read exported dossiers, process lecture.json, or produce a result.json.
+description: Read a TriCV lecture.json batch, or write a redaction-rapport.json / redaction-avis.json, here in Claude Code and produce the result file to import. Use when the user asks to read exported dossiers, write an exported report or avis, or produce a result.json.
 ---
 
 # Lire un lot de dossiers
@@ -44,3 +44,23 @@ batch is fictional. Never copy dossier text into code, tests, commits or chat.
    piece that seems unrelated. Never an opinion on the person. **No scores**: the platform computes
    them, and ignores any it finds.
 5. Tell the user how many dossiers you read and where the file is. Report only counts.
+
+## Writing a report or an avis
+
+A file with `format` `tricv-redaction/1` is writing, not reading. For each entry of `taches`, follow
+its `systeme` and `demande`, and write only what they ask, using only the data they give. Invent
+nothing: a report is signed by the firm, and a published avis binds it. Write plain prose, no title,
+no table, no candidate name, no recommendation on a person. Then write this, copying `document`
+exactly:
+
+```json
+{
+  "format": "tricv-redaction/1",
+  "lecteur": "claude-code",
+  "document": {"type": "", "id": "", "empreinte": ""},
+  "sections": [{"code": "", "texte": ""}]
+}
+```
+
+The user imports it from the report or the avis. Tables, deadlines, documents and links are added by
+the platform.

@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 
 FORMAT = "tricv-lecture/1"
+FORMAT_REDACTION = "tricv-redaction/1"
 PAUSE_AU_REPOS = 20
 PAUSE_APRES_ERREUR = 60
 DELAI_OLLAMA = 600
@@ -130,9 +131,57 @@ def boucle(url: str, cle: str, ollama: str, modele: str) -> None:
                 print(f"Résultat non rendu ({exc}).")
 
 
+def rediger_une_section(systeme: str, demande: str, ollama: str, modele: str) -> str:
+    reponse = appeler(
+        f"{ollama}/api/chat",
+        corps={
+            "model": modele,
+            "stream": False,
+            "options": {"temperature": 0.3, "num_ctx": CONTEXTE},
+            "messages": [
+                {"role": "system", "content": systeme},
+                {"role": "user", "content": demande},
+            ],
+        },
+        delai=DELAI_OLLAMA,
+    )
+    contenu = (reponse.get("message") or {}).get("content", "")
+    return re.sub(r"<think>.*?</think>", "", contenu, flags=re.S).strip()
+
+
+def traiter_redaction(lot: dict, sortie: str, ollama: str, modele: str) -> None:
+    """Un rapport ou un avis : de la prose, section par section."""
+    sections = []
+    taches = lot.get("taches", [])
+    for rang, tache in enumerate(taches, start=1):
+        debut = time.monotonic()
+        try:
+            texte = rediger_une_section(tache["systeme"], tache["demande"], ollama, modele)
+            sections.append({"code": tache["code"], "texte": texte})
+            print(f"{rang}/{len(taches)}  {tache.get('titre', '')}  {round(time.monotonic() - debut, 1)} s")
+        except (KeyError, OSError, urllib.error.URLError) as exc:
+            print(f"{rang}/{len(taches)}  échec : {exc}")
+    with open(sortie, "w", encoding="utf-8") as fichier:
+        json.dump(
+            {
+                "format": FORMAT_REDACTION,
+                "lecteur": f"ollama:{modele}",
+                "document": lot.get("document", {}),
+                "sections": sections,
+            },
+            fichier,
+            ensure_ascii=False,
+            indent=1,
+        )
+    print(f"{len(sections)} section(s) dans {sortie}. Importez-le depuis le rapport ou l'avis.")
+
+
 def traiter_fichier(chemin: str, sortie: str, ollama: str, modele: str) -> None:
     with open(chemin, encoding="utf-8") as fichier:
         lot = json.load(fichier)
+    if lot.get("format") == FORMAT_REDACTION:
+        traiter_redaction(lot, sortie, ollama, modele)
+        return
     if lot.get("format") != FORMAT:
         sys.exit(f"{chemin} n'est pas un lot de lecture ({FORMAT}).")
     rendus = []

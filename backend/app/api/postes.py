@@ -7,11 +7,13 @@ diverger entre deux fichiers produits à quelques minutes d'écart.
 
 from __future__ import annotations
 
+import json
+
 import re
 from dataclasses import replace
 from datetime import date
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +64,7 @@ from app.services import (
     grille_selection,
     parametres,
     redaction_avis,
+    redaction_externe,
 )
 from app.services.preselection import construire_bareme, definir_seuil, evaluer_poste
 
@@ -1100,6 +1103,77 @@ async def rediger_avis(
         texte=redaction_avis.brouillon_manuel(poste, avis, mandat, reglages),
         propose=False,
         avertissement=_avertissement_redaction(poste, reglages),
+    )
+
+
+async def _sources_de_l_avis(db, poste: Poste, avis_id: str | None, modele_id: str | None):
+    """Le mandat, l'avis, le gabarit et les réglages dont l'avis se rédige."""
+    mandat = (
+        await db.execute(
+            select(Mandat).where(Mandat.id == poste.mandat_id).options(selectinload(Mandat.client))
+        )
+    ).scalar_one_or_none()
+    avis = await _get_avis_or_404(db, avis_id) if avis_id else None
+    gabarit = ""
+    if modele_id:
+        modele = await db.get(ModeleDocument, modele_id)
+        if modele is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Modèle introuvable")
+        gabarit = modele.texte_source or ""
+    return mandat, avis, gabarit, await parametres.lire(db)
+
+
+@router.get("/postes/{poste_id}/avis/redaction-externe")
+async def exporter_redaction_avis(
+    poste_id: str,
+    db: DbSession,
+    user: CurrentUser,
+    avis_id: str | None = Query(default=None),
+    modele_id: str | None = Query(default=None),
+) -> Response:
+    """Les sections à faire écrire ailleurs. Les rubriques opposables n'y sont pas à écrire."""
+    poste = await get_poste_or_404(db, poste_id)
+    mandat, avis, gabarit, reglages = await _sources_de_l_avis(db, poste, avis_id, modele_id)
+    lot = redaction_externe.exporter_avis(poste, avis, mandat, gabarit, reglages)
+    await audit.record(
+        db,
+        action="avis.redaction_exportee",
+        entity_type="poste",
+        entity_id=poste.id,
+        user_id=user.id,
+        details={"sections": len(lot["taches"])},
+    )
+    await db.commit()
+    return Response(
+        json.dumps(lot, ensure_ascii=False, indent=1),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="redaction-avis.json"'},
+    )
+
+
+@router.post("/postes/{poste_id}/avis/redaction-externe", response_model=RedactionAvisOut)
+async def importer_redaction_avis(
+    poste_id: str,
+    db: DbSession,
+    _: CurrentUser,
+    fichier: UploadFile = File(...),
+    avis_id: str | None = Form(default=None),
+    modele_id: str | None = Form(default=None),
+) -> RedactionAvisOut:
+    """Assemble l'avis à partir de la prose reçue. Rien n'est enregistré sans relecture."""
+    poste = await get_poste_or_404(db, poste_id)
+    mandat, avis, gabarit, reglages = await _sources_de_l_avis(db, poste, avis_id, modele_id)
+    contenu = await fichier.read(5 * 1024 * 1024 + 1)
+    if len(contenu) > 5 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Fichier trop volumineux.")
+    try:
+        texte, _lecteur = redaction_externe.verser_avis(
+            poste, avis, mandat, gabarit, reglages, contenu
+        )
+    except redaction_externe.ResultatInvalide as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    return RedactionAvisOut(
+        texte=texte, propose=True, avertissement=_avertissement_redaction(poste, reglages)
     )
 
 

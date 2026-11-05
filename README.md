@@ -253,6 +253,14 @@ its pieces changed in between, the result is refused.
    writes `result.json`. The text reaches Anthropic by being read there, so this is a decision for
    each batch.
 
+Reports and avis work the same way, with their own format (`tricv-redaction/1`), from
+**Rédaction externe** in a report and **Exporter pour rédaction externe** in the avis editor. Only
+the prose travels: a report's data carries figures and no candidate name, and its tables stay here.
+An avis gets its deadline, documents and links from the code at import, so a file cannot change them.
+A section someone wrote is never replaced, a validated report is refused, and what comes in remains
+a proposal to re-read. `lecteur_local.py --fichier` and the `lire-dossiers` skill both handle these
+files. The always-on reader takes dossiers only.
+
 Every dossier records who read it last, shown in « En bref ». Whatever the reader, an experience read
 as ongoing keeps the end date the dossier gives, and the reviewer is told.
 
