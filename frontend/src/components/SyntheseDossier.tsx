@@ -24,6 +24,12 @@ export default function SyntheseDossier({ synthese }: { synthese: Synthese | nul
           ))}
         </ul>
       )}
+      {synthese.lecteur && (
+        <p className="mt-2 text-xs text-ink-500">
+          Lu par {synthese.lecteur}
+          {synthese.remarques ? ` : ${synthese.remarques}` : '.'}
+        </p>
+      )}
       {synthese.a_verifier.length > 0 && (
         <div className="mt-2.5 border-t border-ink-100 pt-2">
           <p className="text-xs font-medium text-ink-700">À vérifier</p>

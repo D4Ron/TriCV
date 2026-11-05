@@ -538,10 +538,31 @@ def _appliquer_parcours(
     return nouveaux
 
 
+def vocabulaire_du_poste(poste) -> list[str]:
+    """Les intitulés de domaine que le poste emploie."""
+    if poste is None:
+        return []
+    return [
+        *(poste.domaines_experience or []),
+        *(poste.domaines_acceptes or []),
+        # Les domaines de chaque expérience spécifique attendue comptent autant :
+        # ce sont eux que la grille compare, et un poste qui en déclare plusieurs
+        # n'a plus rien dans `domaines_experience`.
+        *(d for e in poste.experiences_specifiques or () for d in e.get("domaines") or ()),
+    ]
+
+
 async def depouiller(
-    db: AsyncSession, candidature: Candidature, *, ia: bool = True
+    db: AsyncSession,
+    candidature: Candidature,
+    *,
+    ia: bool = True,
+    lu: DossierExtrait | None = None,
 ) -> ResultatDepouillement:
     """Lit les pièces, propose un parcours, réévalue. Ne commit pas.
+
+    `lu` : ce qu'un lecteur extérieur a rendu. Il tient lieu de réponse du modèle
+    et passe par les mêmes contrôles.
 
     `ia=False` : lecture locale seule, sans appel au modèle — c'est ce qui
     tourne à l'arrivée de chaque dossier. Avec `ia=True`, le modèle est
@@ -606,17 +627,7 @@ async def depouiller(
     #    le poste dit « gestion des ressources humaines », et quinze points
     #    tombent à zéro sur un parcours qui les méritait.
     poste = candidature.poste
-    vocabulaire: list[str] = []
-    if poste is not None:
-        vocabulaire = [
-            *(poste.domaines_experience or []),
-            *(poste.domaines_acceptes or []),
-        ]
-        # Les domaines de chaque expérience spécifique attendue comptent
-        # autant : ce sont eux que la grille compare, et un poste qui en
-        # déclare plusieurs n'a plus rien dans `domaines_experience`.
-        for exigence in poste.experiences_specifiques or ():
-            vocabulaire.extend(exigence.get("domaines") or ())
+    vocabulaire = vocabulaire_du_poste(poste)
 
     lexique = (poste.lexique if poste is not None else None) or {}
 
@@ -631,8 +642,8 @@ async def depouiller(
             ):
                 locale.diplomes.append(copie)
 
-    dossier_ia: DossierExtrait | None = None
-    if ia:
+    dossier_ia: DossierExtrait | None = lu
+    if ia and lu is None:
         try:
             # Le brouillon vient du texte brut : il passe par l'expurgation
             # comme le reste, avant tout envoi.

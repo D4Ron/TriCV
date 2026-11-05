@@ -225,6 +225,37 @@ be an OCR slip. An unreadable JSON answer gets one repair attempt.
 assembly scored 2/4 and the new one 4/4 on `ministral-14b-latest`, a small set aimed at known
 failures. `tools.evaluer_extraction` stays at 14/14 and 18/18 on single clean CVs.
 
+### Reading outside the server
+
+Three routes share one format (`tricv-lecture/1`) and one way in, `app/services/lecture_externe.py`.
+What leaves is the redacted text and a candidature id: no name, no file name. What comes back is what
+was **read**, never a score: the barème stays computed here, the same way for everyone, and a score
+found in a result is ignored and reported. Every result goes through the same protection as a server
+reading, so it can only propose on a confirmed dossier. A fingerprint travels with each dossier: if
+its pieces changed in between, the result is refused.
+
+1. **`result.json` by hand.** **Plus › Exporter pour lecture externe**, read it anywhere, then **Plus ›
+   Importer un result.json**. The export is confidential even redacted: `lectures/`, `lecture.json`
+   and `result*.json` are gitignored.
+2. **The local reader.** Create a key in **Paramètres › Général › Lecteur local**, then on a machine
+   with Ollama:
+
+       python backend/tools/lecteur_local.py --url https://recrutement.kapiconsult.tg --cle <the key>
+
+   It needs Python and Ollama only, and calls the platform: nothing is opened on the machine. While
+   it runs, the queue keeps AI readings for it and nothing goes to a provider, even during a quota
+   wait. Stopped for 90 seconds, the server takes over. A dossier it dropped returns to the queue
+   after 10 minutes. Only the key's hash is stored, and it opens these two addresses and nothing
+   else. `--fichier lecture.json --sortie result.json` does the same on an exported file, offline.
+   Measured on an RTX 4070 Laptop (8 GB) with `qwen3:8b`: about 50 seconds a dossier, 4/4 on
+   `tools.evaluer_dossiers`.
+3. **Through Claude Code.** Put `lecture.json` in `lectures/` and ask for it: the `lire-dossiers` skill
+   writes `result.json`. The text reaches Anthropic by being read there, so this is a decision for
+   each batch.
+
+Every dossier records who read it last, shown in « En bref ». Whatever the reader, an experience read
+as ongoing keeps the end date the dossier gives, and the reviewer is told.
+
 ### Automatic reading, and what it never touches
 
 Every dossier that arrives is read locally at once, then by the AI through the queue, by mail, bulk

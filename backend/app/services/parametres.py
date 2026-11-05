@@ -66,6 +66,8 @@ INSCRIPTION_LIBRE = "allow_self_registration"
 CANDIDATURES_SPONTANEES = "candidatures_spontanees"
 # Lire chaque dossier reçu par l'IA, sans attendre qu'on le demande.
 LECTURE_IA_AUTO = "lecture_ia_auto"
+# L'empreinte de la clé du lecteur local. La clé elle-même n'est gardée nulle part.
+LECTEUR_CLE = "lecteur_cle_empreinte"
 # La version de lecture déjà passée sur les dossiers : voir `travaux`.
 VERSION_LECTURE = "version_lecture"
 

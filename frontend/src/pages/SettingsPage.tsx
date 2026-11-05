@@ -5,6 +5,7 @@ import type { DeploymentSettings, FournisseurIa } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { Callout, ErrorState, Field, PageLoader, Spinner, Toggle } from '@/components/ui'
 import PanneauUtilisateurs from '@/components/PanneauUtilisateurs'
+import LecteurLocal from '@/components/LecteurLocal'
 import AssistantMicrosoft365 from '@/components/AssistantMicrosoft365'
 import EtatApplication from '@/components/EtatApplication'
 
@@ -670,6 +671,8 @@ export default function SettingsPage() {
           onCle={(nom, valeur) => setCles((c) => ({ ...c, [nom]: valeur }))}
           revenirServeur={revenirServeur}
         />
+
+        <LecteurLocal estAdmin={estAdmin} />
 
         <SecoursGroq
           s={s}

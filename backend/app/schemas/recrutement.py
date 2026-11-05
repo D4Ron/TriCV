@@ -574,6 +574,8 @@ class SyntheseOut(BaseModel):
     domaines_specifiques: list[str] = Field(default_factory=list)
     # Pour chaque pièce, ce qui y a été retrouvé du parcours.
     par_piece: dict[str, dict[str, list[str]]] = Field(default_factory=dict)
+    lecteur: str | None = None
+    remarques: str | None = None
 
 
 class LigneAjusteeIn(BaseModel):

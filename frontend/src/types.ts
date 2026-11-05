@@ -342,6 +342,8 @@ export interface FournisseurIaEtat {
   repos_secondes: number
   /** Faux tant qu'aucun appel n'a été fait depuis le démarrage. */
   quota_lu: boolean
+  /** Le lecteur local : rien ne part à un fournisseur. */
+  local?: boolean
   requetes_limite: number | null
   requetes_restantes: number | null
   periode_requetes: string | null
@@ -493,6 +495,17 @@ export interface SyntheseDossier {
   domaines_specifiques: string[]
   /** Pour chaque pièce, ce qu'on y retrouve du parcours. */
   par_piece: Record<string, { diplomes: string[]; experiences: string[] }>
+  /** Qui a lu le dossier hors du serveur, et ce qu'il en dit. */
+  lecteur?: string | null
+  remarques?: string | null
+}
+
+/** Ce qu'une lecture faite ailleurs a donné, une fois versée. */
+export interface CompteRenduLecture {
+  lecteur: string
+  comptes: Record<string, number>
+  propositions: number
+  notes_ignorees: number
 }
 
 export interface GroupePieces {

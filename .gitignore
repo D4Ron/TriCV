@@ -96,3 +96,8 @@ backend/tools/resultats/
 
 # Dossiers de démonstration : régénérés par les scripts de demo/, jamais suivis.
 demo/dossiers-comptables/
+
+# Lots de lecture : texte de dossiers, même expurgé.
+lectures/
+lecture.json
+result*.json

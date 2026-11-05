@@ -16,6 +16,7 @@ import type {
   Poste,
   CandidateDetail,
   CriterionDraft,
+  CompteRenduLecture,
   DeploymentSettings,
   EtatLectures,
   HrStatus,
@@ -705,6 +706,24 @@ export const recrutementApi = {
       method: 'POST',
       body: { motif: justification },
     }),
+  /** Verse un `result.json`. */
+  importerLecture: (posteId: string, fichier: File) => {
+    const formData = new FormData()
+    formData.append('fichier', fichier)
+    return request<CompteRenduLecture>(`/postes/${posteId}/lecture-externe`, {
+      method: 'POST',
+      formData,
+    })
+  },
+  /** Le lot à lire ailleurs : texte expurgé, sans nom ni fichier. */
+  exporterLecture: async (posteId: string): Promise<Blob> => {
+    const token = useAuthStore.getState().accessToken
+    const response = await fetch(`${BASE}/postes/${posteId}/lecture-externe`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) throw new Error('Export impossible')
+    return response.blob()
+  },
   /** Accepte ou écarte ce qu'une relecture propose ; `ids` à null : tout. */
   trancherPropositions: (id: string, ids: string[] | null, accepter: boolean) =>
     request<Candidature>(`/candidatures/${id}/propositions`, {
@@ -1417,6 +1436,13 @@ export const settingsApi = {
   }) => request<DeploymentSettings>('/settings', { method: 'PATCH', body: payload }),
   /** Oublie le modèle d'IA réglé à l'écran : le fichier du serveur reprend la main. */
   revenirIaServeur: () => request<DeploymentSettings>('/settings/ia', { method: 'DELETE' }),
+  /** Le lecteur local : son état, et sa clé, montrée une seule fois. */
+  etatLecteur: () =>
+    request<{ configure: boolean; actif: boolean; vu_il_y_a: number | null; modele: string }>(
+      '/settings/lecteur',
+    ),
+  creerCleLecteur: () => request<{ cle: string }>('/settings/lecteur/cle', { method: 'POST' }),
+  retirerCleLecteur: () => request<void>('/settings/lecteur/cle', { method: 'DELETE' }),
   /** Retire la clé du dernier secours. */
   retirerGroq: () => request<DeploymentSettings>('/settings/ia/groq', { method: 'DELETE' }),
   /** Vérifie l'accès à la boîte d'envoi sans rien envoyer. */

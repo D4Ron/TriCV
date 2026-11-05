@@ -944,6 +944,31 @@ def fusionner(
 
     jour = aujourd_hui or date.today()
     maintenant = jour.year * 12 + jour.month
+    # « En poste » quand le document donne une date de fin : un petit modèle le
+    # fait, et chaque mois compté en trop rapporte des points. La date écrite
+    # l'emporte, et le relecteur le voit. Seulement si elle est passée : « 2015 -
+    # 2026 » écrit en 2026 veut souvent dire que le poste continue.
+    if ia.experiences:
+        for experience in resultat.experiences:
+            if experience.fin is not None or not experience.debut:
+                continue
+            ecrite = next(
+                (
+                    l
+                    for l in locale.experiences
+                    if l.fin
+                    and l.debut
+                    and int(l.fin[:4]) < jour.year
+                    and _recouvrement(experience, l, maintenant) >= 0.6
+                ),
+                None,
+            )
+            if ecrite is not None:
+                experience.fin = ecrite.fin
+                notes.append(
+                    f"« {experience.poste} » : lu comme toujours en poste, mais le dossier donne "
+                    f"une fin en {ecrite.fin}. La date du dossier est retenue."
+                )
     if ia.experiences:
         for lue in locale.experiences:
             deja = any(

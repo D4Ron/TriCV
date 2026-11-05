@@ -1376,6 +1376,45 @@ export default function PosteDetailPage() {
     },
     onError: (e) => setErreur(e instanceof Error ? e.message : 'Lecture impossible'),
   })
+  // Une lecture faite ailleurs : Ollama, ou Claude Code. Voir le README.
+  const exporterLecture = useMutation({
+    mutationFn: async () => {
+      const blob = await recrutementApi.exporterLecture(posteId)
+      const url = URL.createObjectURL(blob)
+      const lien = document.createElement('a')
+      lien.href = url
+      lien.download = 'lecture.json'
+      lien.click()
+      URL.revokeObjectURL(url)
+    },
+    onSuccess: () => {
+      setErreur(null)
+      setCompteRendu(
+        'Fichier enregistré : le texte y est sans noms ni coordonnées, mais il reste confidentiel. Une fois lu, importez le result.json.',
+      )
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Export impossible'),
+  })
+  const importerLecture = useMutation({
+    mutationFn: (fichier: File) => recrutementApi.importerLecture(posteId, fichier),
+    onSuccess: (r) => {
+      setErreur(null)
+      const refuses = Object.entries(r.comptes)
+        .filter(([etat]) => etat !== 'lu')
+        .reduce((total, [, n]) => total + n, 0)
+      setCompteRendu(
+        `${r.comptes.lu ?? 0} dossier(s) versé(s), lus par ${r.lecteur}` +
+          (r.propositions ? ` · ${r.propositions} proposition(s) à examiner` : '') +
+          (refuses ? ` · ${refuses} refusé(s) : pièces changées depuis l’export, ou fichier incomplet` : '') +
+          (r.notes_ignorees ? ' · les notes du fichier sont ignorées, le barème les calcule' : ''),
+      )
+      void queryClient.invalidateQueries({ queryKey: ['grille', posteId] })
+      void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
+      void queryClient.invalidateQueries({ queryKey: ['lectures', posteId] })
+    },
+    onError: (e) => setErreur(e instanceof Error ? e.message : 'Import impossible'),
+  })
+  const champResultat = useRef<HTMLInputElement | null>(null)
   // Les dossiers arrivés avant que le nom ne soit lu dans le CV.
   const relireNoms = useMutation({
     mutationFn: () => recrutementApi.relireNoms({ poste_id: posteId }),
@@ -1647,6 +1686,16 @@ export default function PosteDetailPage() {
                       },
                       lancerLectures.isPending || g.nombre_candidatures === 0,
                     ],
+                    [
+                      exporterLecture.isPending ? 'Préparation…' : 'Exporter pour lecture externe',
+                      () => exporterLecture.mutate(),
+                      exporterLecture.isPending || g.nombre_candidatures === 0,
+                    ],
+                    [
+                      importerLecture.isPending ? 'Import…' : 'Importer un result.json',
+                      () => champResultat.current?.click(),
+                      importerLecture.isPending || g.nombre_candidatures === 0,
+                    ],
                   ] as Array<[string, () => void, boolean]>
                 ).map(([libelle, action, inactif]) => (
                   <button
@@ -1706,6 +1755,18 @@ export default function PosteDetailPage() {
         </div>
       )}
 
+      <input
+        ref={champResultat}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        aria-label="Importer un result.json"
+        onChange={(e) => {
+          const fichier = e.target.files?.[0]
+          e.target.value = ''
+          if (fichier) importerLecture.mutate(fichier)
+        }}
+      />
       <SuiviDesLectures posteId={posteId} />
 
       {compteRendu && (

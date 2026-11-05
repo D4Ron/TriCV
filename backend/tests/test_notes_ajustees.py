@@ -317,3 +317,40 @@ async def test_le_suivi_mesure_et_annonce_le_temps_restant(client, auth, monkeyp
     assert etat["secondes_restantes"] == 20 + travaux.PAUSE_ENTRE_APPELS
     assert etat["cause"] == "lecture"
     assert etat["dossiers_a_lire"] == 1
+
+
+def test_un_poste_lu_en_cours_garde_la_fin_que_le_dossier_ecrit():
+    locale = DossierExtrait(
+        experiences=[ExperienceExtraite(poste="Chef", employeur="TT", debut="2018-01", fin="2022-12")]
+    )
+    ia = DossierExtrait(
+        experiences=[ExperienceExtraite(poste="Chef de quai", employeur="Togo Transit", debut="2018-01", fin=None)]
+    )
+    dossier, notes = lecture_locale.fusionner(locale, ia, date(2026, 11, 4))
+
+    assert dossier.experiences[0].fin == "2022-12"
+    assert any("toujours en poste" in n for n in notes)
+
+
+def test_un_poste_vraiment_en_cours_le_reste():
+    locale = DossierExtrait(
+        experiences=[ExperienceExtraite(poste="Chef", employeur="TT", debut="2018-01", fin=None)]
+    )
+    ia = DossierExtrait(
+        experiences=[ExperienceExtraite(poste="Chef de quai", employeur="Togo Transit", debut="2018-01", fin=None)]
+    )
+    dossier, _ = lecture_locale.fusionner(locale, ia, date(2026, 11, 4))
+
+    assert dossier.experiences[0].fin is None
+
+
+def test_une_fin_dans_l_annee_en_cours_ne_prouve_pas_que_le_poste_a_cesse():
+    locale = DossierExtrait(
+        experiences=[ExperienceExtraite(poste="Chef", employeur="TT", debut="2018-01", fin="2026-01")]
+    )
+    ia = DossierExtrait(
+        experiences=[ExperienceExtraite(poste="Chef de quai", employeur="Togo Transit", debut="2018-01", fin=None)]
+    )
+    dossier, _ = lecture_locale.fusionner(locale, ia, date(2026, 11, 4))
+
+    assert dossier.experiences[0].fin is None

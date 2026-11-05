@@ -403,6 +403,9 @@ class Candidature(Base, TimestampMixin):
     # Ici et non sur la notation, pour la même raison : un recalcul ne défait
     # pas ce qu'un humain a décidé en lisant le document.
     ajustements_note: Mapped[dict | None] = mapped_column(JsonB)
+    # Qui a lu le dossier en dernier : {"lecteur", "le", "remarques"}. Plusieurs
+    # lecteurs se partagent un mandat, et il faut pouvoir dire lequel.
+    derniere_lecture: Mapped[dict | None] = mapped_column(JsonB)
 
     # Catégorie remise au client — fortement / partiellement / non qualifié.
     # Calculée à l'évaluation, mais réinscriptible : c'est un avis, et le

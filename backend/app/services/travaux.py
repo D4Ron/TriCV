@@ -92,9 +92,40 @@ async def ajouter(
     return ajoutes
 
 
+# Le lecteur local se signale à chaque appel. En mémoire : le serveur tourne en
+# un seul processus, et un lecteur vu avant un redémarrage se reverra aussitôt.
+LECTEUR_ACTIF_SECONDES = 90
+_lecteur: dict = {"instant": None, "modele": ""}
+
+
+def lecteur_vu(modele: str = "") -> None:
+    _lecteur["instant"] = time.monotonic()
+    if modele:
+        _lecteur["modele"] = modele
+
+
+def lecteur_oublie() -> None:
+    _lecteur.update(instant=None, modele="")
+
+
+def lecteur_vu_il_y_a() -> int | None:
+    return None if _lecteur["instant"] is None else round(time.monotonic() - _lecteur["instant"])
+
+
+def lecteur_actif() -> bool:
+    vu = lecteur_vu_il_y_a()
+    return vu is not None and vu <= LECTEUR_ACTIF_SECONDES
+
+
+def lecteur_modele() -> str:
+    return _lecteur["modele"]
+
+
 async def ia_disponible(db: AsyncSession) -> bool:
     """La lecture automatique est-elle voulue, et possible ?"""
-    return (await parametres.lire(db)).lecture_ia_auto and bool(_fournisseurs())
+    if not (await parametres.lire(db)).lecture_ia_auto:
+        return False
+    return lecteur_actif() or bool(_fournisseurs())
 
 
 async def apres_arrivee(db: AsyncSession, candidature_id: str, poste_id: str | None) -> None:
@@ -207,6 +238,25 @@ async def _etat_des_fournisseurs(db: AsyncSession) -> list[dict]:
     maintenant = time.monotonic()
 
     rendu = []
+    if lecteur_actif():
+        rendu.append(
+            {
+                "nom": f"Lecteur local ({lecteur_modele() or 'Ollama'})",
+                "disponible": True,
+                "repos_secondes": 0,
+                "quota_lu": True,
+                "local": True,
+                "requetes_limite": None,
+                "requetes_restantes": None,
+                "periode_requetes": None,
+                "jetons_limite": None,
+                "jetons_restants": None,
+                "periode_jetons": None,
+                "lectures_du_jour": sum(a for n, (a, _) in consommes.items() if n.startswith("ollama:")),
+                "jetons_du_jour": sum(int(j) for n, (_, j) in consommes.items() if n.startswith("ollama:")),
+                "indicatif": None,
+            }
+        )
     for fournisseur in _fournisseurs():
         releve = quotas.releve(fournisseur.name)
         appels, jetons = consommes.get(fournisseur.name, (0, 0))
@@ -406,15 +456,17 @@ async def _executer(db: AsyncSession, travail: Travail) -> None:
 
 async def _suivant(db: AsyncSession) -> Travail | None:
     maintenant = utcnow()
+    requete = select(Travail).where(
+        Travail.etat == ATTENTE,
+        (Travail.pas_avant.is_(None)) | (Travail.pas_avant <= maintenant),
+    )
+    # Tant que le lecteur local est là, les lectures sont pour lui : rien ne part
+    # à un fournisseur. Arrêté, elles reviennent au serveur.
+    if lecteur_actif():
+        requete = requete.where(Travail.nature != LECTURE_IA)
     resultat = await db.execute(
-        select(Travail)
-        .where(
-            Travail.etat == ATTENTE,
-            (Travail.pas_avant.is_(None)) | (Travail.pas_avant <= maintenant),
-        )
         # Ce qui ne coûte aucun quota passe d'abord.
-        .order_by(case((Travail.nature == LECTURE_IA, 1), else_=0), Travail.created_at)
-        .limit(1)
+        requete.order_by(case((Travail.nature == LECTURE_IA, 1), else_=0), Travail.created_at).limit(1)
     )
     return resultat.scalars().first()
 
@@ -485,7 +537,9 @@ async def traiter_un() -> str | None:
 async def reprendre() -> None:
     """Au démarrage : ce qu'un arrêt a interrompu repart, le vieux s'efface."""
     async with SessionLocal() as db:
-        await db.execute(update(Travail).where(Travail.etat == EN_COURS).values(etat=ATTENTE))
+        await db.execute(
+            update(Travail).where(Travail.etat == EN_COURS).values(etat=ATTENTE, pas_avant=None)
+        )
         await db.execute(
             delete(Travail).where(
                 Travail.etat.in_((FAIT, ECHEC)), Travail.created_at < utcnow() - CONSERVATION

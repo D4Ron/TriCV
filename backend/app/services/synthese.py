@@ -55,6 +55,9 @@ class Synthese:
     domaines_specifiques: list[str] = field(default_factory=list)
     # Pour chaque pièce, les diplômes et expériences qu'on y retrouve.
     par_piece: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+    # Qui a lu le dossier hors du serveur, et ce qu'il en dit.
+    lecteur: str | None = None
+    remarques: str | None = None
 
 
 def duree_en_lettres(mois: int) -> str:
@@ -268,4 +271,6 @@ def rediger(candidature: Candidature, reference: date | None = None) -> Synthese
         a_verifier=_a_verifier(profil, candidature, reference),
         domaines_specifiques=domaines,
         par_piece=_par_piece(candidature),
+        lecteur=(candidature.derniere_lecture or {}).get("lecteur"),
+        remarques=(candidature.derniere_lecture or {}).get("remarques"),
     )
