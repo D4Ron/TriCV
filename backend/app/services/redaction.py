@@ -38,8 +38,10 @@ GENDER = "GENDER"
 AGE = "AGE"
 MARITAL_STATUS = "MARITAL_STATUS"
 NATIONALITY = "NATIONALITY"
+# Une personne que cite le candidat - référent, signataire - et qui n'est pas lui.
+REFERENT = "REFERENT"
 
-DIRECT_IDENTIFIERS = (NAME, EMAIL, PHONE, ADDRESS, ID_NUMBER, URL)
+DIRECT_IDENTIFIERS = (NAME, EMAIL, PHONE, ADDRESS, ID_NUMBER, URL, REFERENT)
 # Per spec 6.2 date of birth is a demographic attribute, not a direct
 # identifier, so it follows REDACT_DEMOGRAPHICS (which defaults to true).
 DEMOGRAPHIC_TYPES = (GENDER, AGE, DOB, MARITAL_STATUS, NATIONALITY)
@@ -51,6 +53,7 @@ PRIORITY = {
     EMAIL: 0,
     URL: 1,
     NAME: 2,
+    REFERENT: 2,
     ID_NUMBER: 3,
     DOB: 4,
     ADDRESS: 5,
@@ -207,9 +210,11 @@ RE_PHONE_LABELLED = re.compile(
 RE_DOB = re.compile(
     # « Né(e) le » est la forme la plus courante des CV d'ici : la parenthèse
     # faisait échouer la reconnaissance et la date de naissance partait en clair.
-    r"(?:date\s+de\s+naissance|n[ée]{1,2}\s*\(?e\)?\s+le|n[ée]{1,2}\s+le"
-    r"|born(?:\s+on)?|date\s+of\s+birth|d\.?o\.?b\.?)"
-    r"\s*[:\-]?\s*"
+    # « Né(e): 03/05/1979 », « Date de naissance : le 14/02/1990 », « Born in
+    # ACCRA, Ghana, on 11 March 1979 » : trois formes qui passaient en clair.
+    r"(?:date\s+de\s+naissance|\bn[ée]{1,2}\s*\(?e\)?\s*(?:le\b)?|\bn[ée]{1,2}\s+le"
+    r"|\bborn(?:\s+in\s+[^\n\d]{2,60}?\bon|\s+on)?|date\s+of\s+birth|d\.?o\.?b\.?)"
+    r"\s*[:\-]?\s*(?:le\s+)?"
     r"(?P<v>\d{1,2}[\s/.\-]\d{1,2}[\s/.\-]\d{2,4}"
     r"|\d{1,2}\s+[A-Za-zÀ-ÿ]{3,10}\.?\s+\d{4}"
     r"|[A-Za-zÀ-ÿ]{3,10}\s+\d{1,2},?\s+\d{4})",
@@ -217,9 +222,12 @@ RE_DOB = re.compile(
 )
 
 RE_ID_NUMBER = re.compile(
-    r"(?:cni|carte\s+d['e]identit[ée]|num[ée]ro\s+(?:de\s+)?(?:passeport|cni|s[ée]curit[ée])"
-    r"|passeport|passport(?:\s+(?:no|number))?|nif|cnss|ssn|social\s+security)"
-    r"\s*(?:n[°o]|#|no\.?|:|-)?\s*(?P<v>[A-Z0-9][A-Z0-9\-]{4,19})",
+    # \b de part et d'autre du libellé : sans eux, « nif » mordait dans
+    # « planification » ou « significative », et la fin du mot passait pour un
+    # numéro. Le numéro lui-même porte au moins un chiffre.
+    r"\b(?:cni|carte\s+d['e]identit[ée]|num[ée]ro\s+(?:de\s+)?(?:passeport|cni|s[ée]curit[ée])"
+    r"|passeport|passport(?:\s+(?:no|number))?|nif|cnss|ssn|social\s+security)\b"
+    r"\s*(?:n[°o]|#|no\.?|:|-)?\s*(?P<v>(?=[A-Z\-]*\d)[A-Z0-9][A-Z0-9\-]{4,19})",
     re.IGNORECASE,
 )
 
@@ -259,12 +267,15 @@ _APRES_DUREE = (
     r"(?!\s*(?:d[’']|de\s+)"
     r"(?:exp[ée]rience|exp[ée]riences|anciennet[ée]|pratique|m[ée]tier|carri[èe]re"
     r"|service|activit[ée]|exercice))"
+    # « 11 ans en industrie », « 7 ans dans la logistique » : une carrière.
+    r"(?!\s+(?:en|dans|chez|au|aux)\b)"
 )
 _AVANT_DUREE = r"(?<!pendant )(?<!depuis )(?<!durant )(?<!plus de )(?<!environ )(?<!soit )"
 
 RE_AGE = re.compile(
     rf"{_AVANT_DUREE}\b(?P<v>\d{{2}})\s*ans\b{_APRES_DUREE}"
-    r"|(?:[âa]ge|age)\s*[:\-]?\s*(?P<v2>\d{2})\b"
+    # \b : « Dépannage : 22 10 00 00 » ou « entreposage\n10. » ne sont pas des âges.
+    r"|\b(?:[âa]ge|age)\b[ \t]*[:\-]?[ \t]*(?P<v2>\d{2})\b(?![ \t]*\d)"
     r"|\b(?P<v3>\d{2})\s+years?\s+old\b",
     re.IGNORECASE,
 )
@@ -287,6 +298,78 @@ RE_NATIONALITY = re.compile(
     rf"(?P<v>{_MOT}(?:[ \t]+{_MOT})?)",
     re.IGNORECASE,
 )
+
+
+# Une adresse coupée par un retour à la ligne, ou lue par l'OCR avec des
+# espaces : « prenom.nom\n@gmail.com », « nom_et 73@yahoo de », « nom3@gma ».
+RE_EMAIL_LOOSE = re.compile(
+    r"[A-Za-z0-9._%+\-]{3,}(?:[ \t][A-Za-z0-9._%+\-]{1,10})?[ \t]*\n?[ \t]*@[ \t]?"
+    r"[A-Za-z0-9\-]{2,}(?:[.\s][A-Za-z]{2,4}\b)?"
+)
+
+# Le lieu de naissance suit la date : « né le 3 mai 1979 à Aného (Préf. des
+# Lacs) », « Born in ACCRA », « Lieu de naissance : Lomé ».
+_LIEU = r"[A-ZÀ-Þ][A-Za-zÀ-ÿ'’\-]+(?:[ \t]*[(/\-]?[ \t]*[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’\-.)]*){0,3}"
+RE_BIRTHPLACE = re.compile(
+    r"(?:\bn[ée]{1,2}(?:\s*\(e\))?|\bborn)\b[^\n]{0,40}?\d{4}[ \t,]*(?:[àa]|at|in)[ \t]+(?P<v>" + _LIEU + r")"
+    r"|(?:lieu\s+de\s+naissance|place\s+of\s+birth|\bborn\s+in)[ \t]*[:\-]?[ \t]*(?:[àa][ \t]+)?(?P<v2>"
+    + _LIEU
+    + r")",
+    re.IGNORECASE,
+)
+
+# Le nom d'épouse : « Afi épse AMEGAN », « Madame X Epouse Y ».
+RE_NOM_MARITAL = re.compile(
+    r"\b(?:[ée]p(?:ou)?se|[ée]pse|ep\.|veuve)\s+(?P<v>[A-ZÀ-Þ][A-Za-zÀ-ÿ'’\-]+)"
+)
+
+# Les référents : une rubrique « Références », puis des lignes de noms, de
+# fonctions et de contacts, jusqu'à la première qui reprend le parcours.
+_TITRE_REFERENCES = re.compile(
+    r"^\W*(?:quelques\s+)?(?:r[ée]f[ée]rences?(?:\s+professionnelles)?"
+    r"|personnes?\s+(?:de\s+r[ée]f[ée]rences?|ressources?)|adresses?\s+de\s+r[ée]f[ée]rences?)\W*$",
+    re.IGNORECASE,
+)
+# « Prénom NOM » ou « NOM Prénom », civilité facultative.
+_PERSONNE = re.compile(
+    r"(?:\b(?:M\.|Mr\.?|Mme|Mlle|Monsieur|Madame|Dr\.?|Pr\.?)\s+)?"
+    r"(?:[A-ZÀ-Þ][a-zà-ÿ'’]+(?:[ \-][A-ZÀ-Þ][a-zà-ÿ'’]+){0,2}\s+[A-ZÀ-Þ][A-ZÀ-Þ'’\-]{2,}(?:\s+[A-ZÀ-Þ][A-ZÀ-Þ'’\-]{2,})?"
+    r"|[A-ZÀ-Þ][A-ZÀ-Þ'’\-]{2,}(?:\s+[A-ZÀ-Þ][A-ZÀ-Þ'’\-]{2,})?\s+[A-ZÀ-Þ][a-zà-ÿ'’]+(?:[ \-][A-ZÀ-Þ][a-zà-ÿ'’]+){0,2})"
+)
+_LIGNES_DE_REFERENCES = 15
+# « Groupe SOLARIS », « Cabinet KAPI » : un organisme, pas une personne.
+_MOTS_D_ORGANISME = frozenset(
+    """groupe societe cabinet entreprise entreprises banque universite institut ministere compagnie
+    agence direction port office centre ecole lycee hotel clinique hopital fondation association
+    projet programme bureau service departement cooperation union conseil commission""".split()
+)
+
+
+def _referent_spans(text: str) -> list[_Span]:
+    """Les personnes citées sous une rubrique « Références »."""
+    from app.services.lecture_locale import plages
+
+    spans: list[_Span] = []
+    position = 0
+    restantes = 0
+    for ligne in text.splitlines(keepends=True):
+        propre = ligne.strip()
+        if len(propre) <= 45 and _TITRE_REFERENCES.match(propre):
+            restantes = _LIGNES_DE_REFERENCES
+        elif restantes:
+            if propre and (
+                plages(propre) or len(propre) > 110 or (len(propre) <= 45 and _TITRES_RUBRIQUE.match(propre))
+            ):
+                restantes = 0
+            else:
+                restantes -= 1
+                for m in _PERSONNE.finditer(ligne):
+                    mots = m.group(0).split()
+                    if strip_accents(mots[0]).lower() in _MOTS_D_ORGANISME or _mot_reserve(mots[-1]):
+                        continue
+                    spans.append(_Span(position + m.start(), position + m.end(), REFERENT, m.group(0)))
+        position += len(ligne)
+    return spans
 
 
 def _digits(value: str) -> str:
@@ -349,7 +432,24 @@ def _name_variants(full_name: str) -> list[str]:
     variants.extend(
         _loose_pattern(p) for p in parts if len(p) >= 3 and not _mot_reserve(p)
     )
+    # La fiche ne découpe pas toujours le nom comme les pièces : « AGBO KLA
+    # Ya Ovi » sur la fiche, « AGBOKLA Yaovi » sur l'attestation ; et un
+    # certificat imprime « AG BO KLA », un autre « N'DOSSOU » ou « NDOSSOU ».
+    # Chaque suite de morceaux consécutifs, lue lettre à lettre avec un
+    # séparateur facultatif, couvre ces formes.
+    lettres = [re.sub(r"[^a-z]", "", strip_accents(p).lower()) for p in parts]
+    for debut in range(len(lettres)):
+        for fin in range(debut + 1, len(lettres) + 1):
+            mot = "".join(lettres[debut:fin])
+            if len(mot) >= 4 and not _mot_reserve(mot):
+                variants.append(_lettre_a_lettre(mot))
     return list(dict.fromkeys(variants))
+
+
+def _lettre_a_lettre(mot: str) -> str:
+    """« ndossou » → n'importe quelle graphie : N'DOSSOU, N DOSSOU, NDOSSOU, N-Dossou."""
+    morceaux = [f"[{_ACCENT_CLASSES[c]}]" if c in _ACCENT_CLASSES else re.escape(c) for c in mot]
+    return r"[ \t'’\-.]?".join(morceaux)
 
 
 # --- spaCy NER --------------------------------------------------------------
@@ -666,6 +766,9 @@ def redact_sync(
 
     for pattern, kind in (
         (RE_EMAIL, EMAIL),
+        (RE_EMAIL_LOOSE, EMAIL),
+        (RE_BIRTHPLACE, ADDRESS),
+        (RE_NOM_MARITAL, NAME),
         (RE_URL, URL),
         (RE_ID_NUMBER, ID_NUMBER),
         (RE_DOB, DOB),
@@ -685,6 +788,8 @@ def redact_sync(
                 continue
             detected.append(span)
 
+    detected.extend(_referent_spans(text))
+
     ner_spans, person_names = _ner_spans(text)
     detected.extend(ner_spans)
     # A name spaCy found in the header applies to the whole document.
@@ -697,7 +802,7 @@ def redact_sync(
 
     # Harvest the values worth keeping before anything is replaced.
     for span in spans:
-        if span.kind == EMAIL and "email" not in contacts:
+        if span.kind == EMAIL and "email" not in contacts and RE_EMAIL.fullmatch(span.value):
             contacts["email"] = span.value
         elif span.kind == PHONE and "phone" not in contacts:
             contacts["phone"] = span.value
@@ -788,13 +893,13 @@ def describe(counts: dict[str, int], lang: str = "en") -> str:
         NAME: "name", EMAIL: "email", PHONE: "phone", ADDRESS: "address",
         DOB: "date of birth", ID_NUMBER: "ID number", URL: "URL",
         GENDER: "gender", AGE: "age", MARITAL_STATUS: "marital status",
-        NATIONALITY: "nationality",
+        NATIONALITY: "nationality", REFERENT: "third party",
     }
     labels_fr = {
         NAME: "nom", EMAIL: "email", PHONE: "téléphone", ADDRESS: "adresse",
         DOB: "date de naissance", ID_NUMBER: "numéro d'identité", URL: "URL",
         GENDER: "genre", AGE: "âge", MARITAL_STATUS: "situation familiale",
-        NATIONALITY: "nationalité",
+        NATIONALITY: "nationalité", REFERENT: "tiers",
     }
     labels = labels_fr if lang == "fr" else labels_en
 

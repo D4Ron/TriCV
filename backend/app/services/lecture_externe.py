@@ -44,7 +44,9 @@ _CHAMPS_DE_NOTE = frozenset(
 SCHEMA_DE_REPONSE = (
     "Pour chaque dossier, rendez : candidature_id et empreinte recopiés tels quels, diplomes, "
     "experiences, langues, certifications, et remarques (ce qu'un recruteur doit savoir, sans avis "
-    "sur la personne). Ne rendez aucune note : le barème est calculé par la plateforme."
+    "sur la personne). Ne rendez aucune note : le barème est calculé par la plateforme. "
+    "Ajoutez « exhaustif » : true seulement si chaque pièce a été vérifiée : la lecture n'est alors "
+    "plus complétée par celle de la plateforme."
 )
 
 
@@ -60,6 +62,9 @@ class ResultatDossier(BaseModel):
     langues: list[str] = Field(default_factory=list)
     certifications: list[str] = Field(default_factory=list)
     remarques: str = Field(default="", max_length=2000)
+    # Le lecteur a vérifié chaque pièce : sa lecture remplace celle par règles
+    # au lieu de la compléter.
+    exhaustif: bool = False
 
 
 def empreinte_du_dossier(candidature: Candidature) -> str:
@@ -161,6 +166,7 @@ async def verser(
             langues=lu.langues,
             certifications=lu.certifications,
         ),
+        exhaustif=lu.exhaustif,
     )
     rechargee = await charger_candidature(db, lu.candidature_id)
     rechargee.derniere_lecture = {

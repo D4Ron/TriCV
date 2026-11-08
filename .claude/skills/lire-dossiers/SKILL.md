@@ -34,7 +34,8 @@ batch is fictional. Never copy dossier text into code, tests, commits or chat.
       "experiences": [{"poste": "", "employeur": "", "debut": "2015-01", "fin": null, "domaines": [""], "pays": ""}],
       "langues": [""],
       "certifications": [""],
-      "remarques": ""
+      "remarques": "",
+      "exhaustif": true
     }
   ]
 }
@@ -43,7 +44,16 @@ batch is fictional. Never copy dossier text into code, tests, commits or chat.
 4. `remarques` tells a recruiter what to look at: a gap, a date that disagrees between two pieces, a
    piece that seems unrelated. Never an opinion on the person. **No scores**: the platform computes
    them, and ignores any it finds.
-5. Tell the user how many dossiers you read and where the file is. Report only counts.
+5. The score for specific experience counts every month of every experience whose `domaines` name
+   one of the poste's sector headings. When the job asks for experience *of a kind* in those
+   sectors — management, supervision — put the sector heading only on the experiences that are of
+   that kind; give the others the words of the dossier (`"Transport et Logistique"`, `"maintenance
+   mecanique"`). A diploma the dossier itself says is unfinished (« en cours », mémoire not yet
+   defended) is left out; one the CV declares stays, with what is missing said in `remarques`.
+6. Set `"exhaustif": true` once every piece of the dossier has been checked. The platform then
+   takes the reading as it is, instead of completing it with its rule-based reading — which would
+   put back a diploma or a sector you left out on purpose.
+7. Tell the user how many dossiers you read and where the file is. Report only counts.
 
 ## Writing a report or an avis
 

@@ -127,6 +127,21 @@ def type_de_page(texte: str) -> tuple[str | None, str | None]:
         return PieceDossier.CERTIFICAT_MEDICAL.value, None
     if any(m in tete for m in (" acte de naissance ", " extrait d acte de naissance ", " jugement suppletif ")):
         return AUTRE, "Acte de naissance"
+    if " declaration de naissance " in tete:
+        return AUTRE, "Acte de naissance"
+    # Une carte, un permis, un titre de séjour : peu de texte, des champs
+    # d'état civil et une date de délivrance ou d'expiration. Le CV qui dit
+    # « Permis de conduire : B » n'a pas cette forme — il a des rubriques.
+    # Une attestation qui porte « Nom : … Prénom : … délivrée le » atteste ou
+    # certifie : elle n'est pas une pièce d'identité.
+    if len(t) < 900 and rubriques_de_cv(texte) < 2 and not re.search(
+        r" (?:attest\w*|certifi\w*|diplome|releve|en qualite de|employe\w*|a travaille) ", t
+    ) and (
+        " sejour " in t
+        or " permis de conduire " in tete
+        or (" nom " in t and " prenom" in t and any(m in t for m in (" delivrance ", " expire ", " expiration ", " delivree le ")))
+    ):
+        return PieceDossier.PIECE_IDENTITE.value, None
 
     rubriques = rubriques_de_cv(texte)
     if rubriques >= 3 or " curriculum vitae " in tete:
@@ -439,6 +454,69 @@ async def preparer(nom: str, donnees: bytes, type_mime: str, type_impose: str | 
     import asyncio
 
     return await asyncio.to_thread(preparer_sync, nom, donnees, type_mime, type_impose)
+
+
+# Ce qui ouvre un document dans un texte déjà extrait, seul sur sa ligne : les
+# pages d'un PDF fusionné y sont mises bout à bout, et c'est tout ce qui reste
+# pour retrouver où une attestation finit et la suivante commence.
+_OUVERTURES = (
+    " attestation de travail ", " certificat de travail ", " attestation d emploi ", " attestation de service ",
+    " attestation de stage ", " certificat de stage ", " attestation de bonne fin ", " ordre de mission ",
+    " attestation de reussite ", " attestation de diplome ", " attestation d admissibilite ",
+    " certificat de reussite ", " releve de notes ", " certificat de formation ", " attestation de formation ",
+    " attestation de fin de formation ", " certificate of ", " bulletin n 3 ", " casier judiciaire ",
+    " certificat de nationalite ", " declaration de naissance ", " acte de naissance ",
+    " carte nationale d identite ", " permis de conduire ", " curriculum vitae ", " lettre de motivation ",
+)
+# Seuls sur leur ligne, et rien d'autre : « MASTER » en tête d'un diplôme,
+# pas « Master en logistique — 2014 » dans la rubrique Formation d'un CV.
+_OUVERTURES_SEULES = (
+    " diplome ", " master ", " maitrise ", " licence ", " attestation ", " certificat ", " certificate ",
+    " passeport ", " passport ",
+)
+_DOCUMENT_MIN = 120
+
+
+def _ouvre_un_document(ligne: str) -> bool:
+    if re.match(r"\s*P<[A-Z]{3}", ligne):
+        return True
+    plat = _plat(ligne)
+    if len(plat.split()) > 8:
+        return False
+    return plat in _OUVERTURES_SEULES or any(plat.startswith(o) for o in _OUVERTURES)
+
+
+def documents_du_texte(texte: str, type_piece: str | None = None) -> list[tuple[str | None, str]]:
+    """Les documents qu'un texte de pièce met bout à bout, chacun avec son type.
+
+    Un candidat envoie souvent une seule pièce « attestations » de huit pages,
+    ou tout son dossier dans un PDF. Lu d'un bloc, le premier document prend
+    toute la place : les suivants n'arrivent jamais au modèle, et une pièce
+    d'identité glissée au milieu part avec le reste. Découpé, chaque document
+    a sa place et son type, et l'état civil peut être écarté.
+
+    Un morceau dont on ne reconnaît pas le type reste avec ce qui le précède.
+    """
+    lignes = (texte or "").splitlines(keepends=True)
+    coupes = [0]
+    position = 0
+    for ligne in lignes:
+        if position - coupes[-1] >= _DOCUMENT_MIN and _ouvre_un_document(ligne):
+            coupes.append(position)
+        position += len(ligne)
+    morceaux = [texte[a:b] for a, b in zip(coupes, [*coupes[1:], len(texte or "")])]
+
+    documents: list[tuple[str | None, str]] = []
+    for morceau in morceaux:
+        if not morceau.strip():
+            continue
+        type_lu, _ = type_de_page(morceau)
+        if documents and type_lu is None:
+            precedent_type, precedent = documents[-1]
+            documents[-1] = (precedent_type, precedent + morceau)
+            continue
+        documents.append((type_lu or type_piece, morceau))
+    return documents or [(type_piece, texte or "")]
 
 
 def completer_types(pieces: list[PiecePreparee]) -> None:

@@ -485,3 +485,26 @@ def test_le_fichier_fabrique_par_le_script_se_lit_comme_un_resultat(tmp_path, mo
     rendu = json.loads(sortie.read_text(encoding="utf-8"))
     assert rendu["lecteur"] == "ollama:qwen3:8b"
     assert lecture_externe.ResultatDossier.model_validate(rendu["dossiers"][0]).empreinte == "e"
+
+
+@pytest.mark.parametrize("exhaustif, attendus", [
+    (False, ["Chef de quai", "Responsable logistique"]),
+    (True, ["Chef de quai"]),
+])
+async def test_une_lecture_exhaustive_n_est_pas_completee_par_les_regles(client, auth, exhaustif, attendus):
+    """Le lecteur qui a tout vérifié a pu écarter un poste à dessein : on ne le remet pas."""
+    async with SessionLocal() as db:
+        poste, identifiant = await monter(db)
+    d = (await lot(client, auth, poste))["dossiers"][0]
+    lu = {**LU, "experiences": [LU["experiences"][1]], "exhaustif": exhaustif}
+
+    reponse = await client.post(
+        f"{API}/postes/{poste}/lecture-externe",
+        files=fichier({"format": lecture_externe.FORMAT, "lecteur": "claude-code",
+                       "dossiers": [{"candidature_id": identifiant, "empreinte": d["empreinte"], **lu}]}),
+        headers=auth,
+    )
+    assert reponse.status_code == 200, reponse.text
+
+    corps = (await client.get(f"{API}/candidatures/{identifiant}", headers=auth)).json()
+    assert sorted(e["poste"] for e in corps["candidat"]["experiences"]) == attendus

@@ -228,8 +228,8 @@ def extraction_system_prompt(domaines: Sequence[str] = ()) -> str:
 
 def extraction_user_prompt(texte: str) -> str:
     """Le texte expurgé du dossier, tronqué pour rester dans la fenêtre."""
-    extrait = texte[:24_000]
-    suffixe = "\n\n[…document tronqué…]" if len(texte) > 24_000 else ""
+    extrait = texte[:40_000]
+    suffixe = "\n\n[…document tronqué…]" if len(texte) > 40_000 else ""
     return f"Dossier à dépouiller :\n\n{extrait}{suffixe}"
 
 

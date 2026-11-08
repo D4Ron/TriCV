@@ -45,6 +45,7 @@ from app.models import (
     Provenance,
 )
 from app.services import (
+    decoupage,
     extraction,
     identite,
     lecture_locale,
@@ -140,16 +141,33 @@ _LIBELLES_POUR_IA = {
     PieceDossier.ATTESTATIONS_TRAVAIL.value: "Attestation de travail",
     PieceDossier.LETTRE_RECOMMANDATION.value: "Lettre de recommandation",
 }
+#
+# Les budgets valent par *document*, pas par fichier : huit attestations dans
+# un PDF ont chacune leur part, et un diplôme n'a besoin que de son en-tête —
+# le programme de dix pages d'un MBA n'apprend rien de plus que son intitulé.
 _BUDGETS_POUR_IA = {
     PieceDossier.CV.value: 14_000,
     PieceDossier.LETTRE_MOTIVATION.value: 1_200,
-    PieceDossier.COPIE_DIPLOMES.value: 1_200,
-    PieceDossier.ATTESTATIONS_TRAVAIL.value: 1_800,
+    PieceDossier.COPIE_DIPLOMES.value: 900,
+    PieceDossier.ATTESTATIONS_TRAVAIL.value: 1_500,
     PieceDossier.LETTRE_RECOMMANDATION.value: 800,
 }
-_BUDGET_AUTRE = 1_000
-_ENVOI_MAX = 22_000
+_BUDGET_AUTRE = 700
+_ENVOI_MAX = 36_000
+# Ce qui passe en premier quand la place manque : le parcours, puis ses preuves.
+_ORDRE_POUR_IA = {
+    PieceDossier.CV.value: 0,
+    PieceDossier.COPIE_DIPLOMES.value: 1,
+    PieceDossier.ATTESTATIONS_TRAVAIL.value: 2,
+    PieceDossier.LETTRE_MOTIVATION.value: 3,
+    PieceDossier.LETTRE_RECOMMANDATION.value: 4,
+}
 _BROUILLON_MAX = 1_800
+
+
+def _acte_d_etat_civil(texte: str) -> bool:
+    type_lu, intitule = decoupage.type_de_page(texte)
+    return type_lu in _ETAT_CIVIL or intitule == "Acte de naissance"
 
 
 def brouillon_pour_ia(locale) -> str:
@@ -173,15 +191,32 @@ def composer_pour_ia(pieces: list[tuple[str, str]], locale=None) -> str:
     `pieces` : (type de pièce, texte), dans l'ordre de lecture. Le modèle sait
     alors qu'une attestation confirme un emploi du CV au lieu d'en être un autre.
     """
+    documents = [
+        (type_doc, morceau)
+        for type_piece, texte in pieces
+        if type_piece not in _ETAT_CIVIL
+        for type_doc, morceau in decoupage.documents_du_texte(texte, type_piece)
+        # Une pièce d'identité rangée parmi les autres ne part pas davantage.
+        if type_doc not in _ETAT_CIVIL and not _acte_d_etat_civil(morceau)
+    ]
+    documents.sort(key=lambda d: _ORDRE_POUR_IA.get(d[0], 5))
+
     blocs: list[str] = []
     reste = _ENVOI_MAX
-    for type_piece, texte in pieces:
-        libelle = _LIBELLES_POUR_IA.get(type_piece, "Autre document")
-        extrait = texte[: min(_BUDGETS_POUR_IA.get(type_piece, _BUDGET_AUTRE), reste)]
+    cv_restant = _BUDGETS_POUR_IA[PieceDossier.CV.value]
+    for type_doc, texte in documents:
+        libelle = _LIBELLES_POUR_IA.get(type_doc, "Autre document")
+        budget = _BUDGETS_POUR_IA.get(type_doc, _BUDGET_AUTRE)
+        if type_doc == PieceDossier.CV.value:
+            # Deux versions du CV se partagent la part du CV.
+            budget = cv_restant
+        extrait = texte.strip()[: min(budget, reste)]
         if not extrait.strip():
             continue
         blocs.append(f"=== PIÈCE : {libelle} ===\n{extrait}")
         reste -= len(extrait)
+        if type_doc == PieceDossier.CV.value:
+            cv_restant -= len(extrait)
     brouillon = brouillon_pour_ia(locale) if locale is not None else ""
     if brouillon:
         blocs.append(brouillon)
@@ -558,11 +593,18 @@ async def depouiller(
     *,
     ia: bool = True,
     lu: DossierExtrait | None = None,
+    exhaustif: bool = False,
 ) -> ResultatDepouillement:
     """Lit les pièces, propose un parcours, réévalue. Ne commit pas.
 
     `lu` : ce qu'un lecteur extérieur a rendu. Il tient lieu de réponse du modèle
     et passe par les mêmes contrôles.
+
+    `exhaustif` : le lecteur extérieur a vérifié chaque pièce et rend le
+    parcours entier. Sa lecture tient lieu de tout : la lecture par règles n'y
+    ajoute ni ligne, ni domaine, ni emploi tiré d'une attestation — elle
+    remettrait ce qu'il a écarté à dessein (un master « en cours », un poste
+    sans encadrement rangé hors du secteur exigé).
 
     `ia=False` : lecture locale seule, sans appel au modèle — c'est ce qui
     tourne à l'arrivée de chaque dossier. Avec `ia=True`, le modèle est
@@ -669,7 +711,11 @@ async def depouiller(
                 rechargee = await charger_candidature(db, candidature.id)
                 await evaluer_candidature(db, rechargee)
                 return resultat
-    dossier, notes = lecture_locale.fusionner(locale, dossier_ia)
+    exhaustif = exhaustif and lu is not None
+    if exhaustif:
+        dossier, notes = lu.model_copy(deep=True), []
+    else:
+        dossier, notes = lecture_locale.fusionner(locale, dossier_ia)
     resultat.avertissements.extend(notes)
     if dossier_ia is not None:
         resultat.avertissements.extend(lecture_locale.non_ancrees(dossier_ia, texte))
@@ -677,7 +723,7 @@ async def depouiller(
 
     # Le secteur se lit souvent à l'employeur seul, et l'IA ne connaît ni les
     # familles ni le lexique du poste : on repasse sur ce qu'elle a rendu.
-    for experience in dossier.experiences:
+    for experience in ([] if exhaustif else dossier.experiences):
         experience.domaines = list(
             dict.fromkeys(
                 [
@@ -690,7 +736,7 @@ async def depouiller(
         )
     # Une attestation est la parole de l'employeur : elle confirme un emploi du
     # CV et lui apporte ses domaines, ou ajoute celui que le CV ne dit pas.
-    for piece, texte_piece in parcours:
+    for piece, texte_piece in ([] if exhaustif else parcours):
         if piece.type_piece != PieceDossier.ATTESTATIONS_TRAVAIL.value:
             continue
         attestee = lecture_locale.experience_d_une_attestation(

@@ -205,7 +205,7 @@ def test_un_long_cv_ne_chasse_plus_les_attestations():
         [(P.CV.value, "x" * 40_000), (P.ATTESTATIONS_TRAVAIL.value, "EMPLOI ATTESTE")]
     )
     assert "EMPLOI ATTESTE" in texte
-    assert len(texte) < 24_000
+    assert len(texte) < 40_000
 
 
 def test_ce_que_l_ia_oublie_et_que_la_lecture_a_vu_s_ajoute():
