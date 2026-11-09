@@ -328,6 +328,9 @@ def _domaine_apres(p: str, m: re.Match) -> str:
     return " ".join(domaine.split()[:8]).strip()
 
 
+_EN_COURS = re.compile(r"\b(?:en cours|in progress|ongoing|non soutenu)\b")
+
+
 def diplomes(sections: dict[str, list[str]], texte: str) -> list[DiplomeExtrait]:
     lignes = sections.get("formation") or []
     if not lignes:
@@ -356,6 +359,11 @@ def diplomes(sections: dict[str, list[str]], texte: str) -> list[DiplomeExtrait]
         index, p, niveau, m = reconnu
         intitule = retirer_dates(morceaux[index]).strip()
         if not plat(intitule):
+            continue
+        # « Master 2024 — 2026 | Mémoire en cours », « Parcours MBA » : le CV
+        # dit lui-même que le diplôme n'est pas obtenu. Le compter donnait un
+        # Bac+5 à qui n'a qu'une licence.
+        if _EN_COURS.search(plat(ligne)) or plat(intitule).split()[:1] == ["parcours"]:
             continue
         domaine = _domaine_apres(p, m)
         # L'établissement : dans la même ligne, ou sur la suivante.

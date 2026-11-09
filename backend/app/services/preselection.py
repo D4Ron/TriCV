@@ -35,8 +35,9 @@ from app.domain import (
     evaluer_eligibilite,
     noter,
 )
-from app.domain.referentiel import NiveauDiplome
+from app.domain.referentiel import MotifElimination, NiveauDiplome
 from app.domain.serialisation import bareme_depuis_dict, bareme_vers_dict
+from app.models.base import utcnow
 from app.models.enums import Provenance, StatutCandidature
 from app.models.recrutement import (
     Avis,
@@ -256,7 +257,9 @@ async def evaluer_candidature(
 
     indices = indices_des_motifs(motifs, profil, exigences, candidature, poste.lexique)
 
-    await _remplacer_eliminations(db, candidature, motifs, provenances, indices)
+    await _remplacer_eliminations(
+        db, candidature, motifs, provenances, indices, ajustements=ajustements, notation=notation
+    )
     enregistrement = await _remplacer_notation(db, candidature, notation, bareme, ajustements)
 
     # La note **retenue** — celle que la grille affiche et qui a servi à classer
@@ -285,8 +288,18 @@ async def _remplacer_eliminations(
     motifs,
     provenances: dict[str, Provenance],
     indices: dict | None = None,
+    *,
+    ajustements: dict | None = None,
+    notation: Notation | None = None,
 ) -> None:
     """Réécrit les motifs, en préservant ceux qu'un humain a levés.
+
+    Une ligne de note corrigée à la main au-dessus de zéro dit que l'exigence
+    est remplie : « 3/5 en expérience générale » et « expérience insuffisante,
+    4 ans » ne peuvent pas tenir ensemble, et faire lever le motif à part
+    obligeait les RH à dire deux fois la même chose. Le motif correspondant est
+    donc levé avec la correction, et revient si la correction est retirée. Une
+    levée faite à la main, elle, reste.
 
     Un motif que le dossier pourrait contredire attend qu'un humain ait relu :
     une fois le dossier confirmé, l'indice reste affiché mais ne retient plus.
@@ -295,9 +308,14 @@ async def _remplacer_eliminations(
     d'un même flush, si bien que les nouveaux motifs entreraient en collision
     avec les anciens sur uq_elimination_motif.
     """
-    levees = {e.motif: e for e in candidature.eliminations if e.leve_le is not None}
+    levees = {
+        e.motif: e
+        for e in candidature.eliminations
+        if e.leve_le is not None and not (e.leve_motif or "").startswith(_LEVEE_PAR_CORRECTION)
+    }
     indices = indices or {}
     relu = candidature.candidat.verifie_le is not None
+    corriges = _motifs_contredits(ajustements or {}, notation)
 
     for existante in list(candidature.eliminations):
         await db.delete(existante)
@@ -306,6 +324,7 @@ async def _remplacer_eliminations(
 
     for motif in motifs:
         precedente = levees.get(motif.motif)
+        correction = corriges.get(motif.motif) if precedente is None else None
         db.add(
             Elimination(
                 candidature_id=candidature.id,
@@ -318,13 +337,45 @@ async def _remplacer_eliminations(
                     or (motif.motif in indices and not relu)
                 ),
                 indice=indices.get(motif.motif),
-                leve_le=precedente.leve_le if precedente else None,
+                leve_le=precedente.leve_le if precedente else (utcnow() if correction else None),
                 leve_par_id=precedente.leve_par_id if precedente else None,
-                leve_motif=precedente.leve_motif if precedente else None,
+                leve_motif=precedente.leve_motif if precedente else correction,
             )
         )
     await db.flush()
     await db.refresh(candidature, ["eliminations"])
+
+
+# Ce qui marque une levée faite par une correction de note, et non à la main.
+_LEVEE_PAR_CORRECTION = "Note corrigée"
+# Le motif que chaque ligne de note contredit quand un relecteur lui donne des points.
+_LIGNES_DES_MOTIFS = {
+    MotifElimination.EXPERIENCE_INSUFFISANTE.value: ("EXPERIENCE_GENERALE",),
+    MotifElimination.EXPERIENCE_SPECIFIQUE_INSUFFISANTE.value: ("EXPERIENCE_SPECIFIQUE",),
+    MotifElimination.FORMATION_INSUFFISANTE.value: ("FORMATION",),
+}
+
+
+def _motifs_contredits(ajustements: dict, notation: Notation | None) -> dict[str, str]:
+    """{motif: phrase de levée} pour les motifs qu'une correction de note contredit.
+
+    Plusieurs expériences spécifiques donnent plusieurs lignes
+    (EXPERIENCE_SPECIFIQUE_1, _2…) : le motif n'est levé que si chacune a des
+    points et qu'au moins une a été corrigée.
+    """
+    if not ajustements or notation is None:
+        return {}
+    points = {l.code: l.points for l in notation.lignes}
+    contredits: dict[str, str] = {}
+    for motif, prefixes in _LIGNES_DES_MOTIFS.items():
+        codes = [c for c in points if any(c == p or c.startswith(p + "_") for p in prefixes)]
+        corriges = [c for c in codes if c in ajustements]
+        if not corriges or not all(points[c] > 0 for c in codes):
+            continue
+        raisons = [str(ajustements[c].get("motif") or "").strip() for c in corriges]
+        raison = " ; ".join(r for r in raisons if r) or "sans motif écrit"
+        contredits[motif] = f"{_LEVEE_PAR_CORRECTION} par un relecteur : {raison}"[:1000]
+    return contredits
 
 
 async def _remplacer_notation(

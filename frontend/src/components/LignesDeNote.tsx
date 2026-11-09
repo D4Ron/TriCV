@@ -122,6 +122,13 @@ function Ligne({
             ))}
           </div>
           {erreur && <p className="text-xs text-red-700">{erreur}</p>}
+          {/* Le bouton grisé sans un mot laissait chercher ce qui manquait. */}
+          {!erreur && points.trim() !== '' && horsBornes && (
+            <p className="text-xs text-red-700">Entre 0 et {ligne.points_max} points.</p>
+          )}
+          {!erreur && !horsBornes && !motif.trim() && (
+            <p className="text-xs text-ink-500">Écrivez pourquoi : la correction est relue et peut être contestée.</p>
+          )}
           <div className="flex gap-1.5">
             <button
               type="button"

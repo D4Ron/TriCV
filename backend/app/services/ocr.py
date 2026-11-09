@@ -19,6 +19,7 @@ import logging
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from functools import lru_cache
 
 from app.config import settings
@@ -96,35 +97,108 @@ def _lettres(texte: str) -> int:
     return sum(1 for c in texte if c.isalpha())
 
 
+# Un mot dont Tesseract est sûr à ce point est presque toujours juste ; sur un
+# fond tramé ou guilloché, la plupart des « mots » lus sont du bruit et restent
+# bien en dessous. La part de lettres sûres dit donc si la lecture tient.
+_CONFIANCE_SURE = 80
+# Au-delà, la première lecture suffit : on ne paie pas d'autres passes.
+_PART_SUFFISANTE = 0.8
+# En deçà, la page n'a rien donné d'exploitable : mieux vaut ne rien rendre
+# que du bruit, que le modèle prendrait pour un diplôme ou un employeur.
+_SURES_MINIMUM = 40
+
+
+@dataclass(frozen=True, slots=True)
+class _Lecture:
+    texte: str
+    sures: int  # lettres des mots lus avec assurance
+    lettres: int
+
+    @property
+    def part(self) -> float:
+        return self.sures / self.lettres if self.lettres else 0.0
+
+
+_VIDE = _Lecture("", 0, 0)
+
+
 def lire_image(png: bytes) -> str:
     """Le texte d'une image PNG. Chaîne vide si Tesseract est absent ou échoue.
 
     Constaté sur des dossiers réels : une page scannée au téléphone, au fond
     gris, ressortait vide — le seuillage global de Tesseract la noircissait ou
-    la blanchissait en entier, et seul le filigrane « Scanné avec CamScanner »
-    restait lisible. Quand la première lecture ne rend presque rien, on relit
-    avec un seuillage adaptatif (Sauvola), qui suit les variations du fond.
+    la blanchissait en entier. Et les diplômes imprimés sur fond tramé ou
+    guilloché, ou sur papier de couleur, ressortaient en bouillie : le motif se
+    lisait comme des lettres. Aucun prétraitement ne vaut pour tous : selon la
+    page, c'est le seuillage adaptatif, l'isolement de l'encre sombre ou le
+    lissage du motif qui l'emporte.
+
+    Quand la première lecture est peu sûre, on relit donc l'image sous
+    plusieurs formes et on garde celle dont Tesseract est le plus sûr — c'est
+    sa propre confiance, mot par mot, qui départage. Une page qui ne donne rien
+    de sûr sous aucune forme rend une chaîne vide : la pièce est alors signalée
+    comme illisible au lieu d'envoyer du bruit.
 
     Ne lève pas : une page illisible ne doit pas faire échouer la lecture du
     reste du dossier.
     """
     if not disponible():
         return ""
-    texte = _lire(png, adaptatif=False)
-    if _lettres(texte) < 120:
-        relu = _lire(png, adaptatif=True)
-        if _lettres(relu) > _lettres(texte):
-            texte = relu
-    return texte
+    lecture = _lire(png, adaptatif=False)
+    if lecture.part < _PART_SUFFISANTE or lecture.lettres < 120:
+        for image, adaptatif in _variantes(png):
+            essai = _lire(image, adaptatif)
+            if essai.sures > lecture.sures:
+                lecture = essai
+            if lecture.part >= 0.9 and lecture.sures >= 300:
+                break
+    if lecture.sures < _SURES_MINIMUM:
+        return ""
+    return lecture.texte
 
 
-def _lire(png: bytes, adaptatif: bool) -> str:
+def _variantes(png: bytes):
+    """Les autres formes sous lesquelles relire une page peu sûre.
+
+    Pillow et numpy viennent avec les dépendances (reportlab, spaCy) ; s'ils
+    manquaient, seul le seuillage adaptatif de Tesseract resterait.
+    """
+    yield png, True
+    try:
+        import io
+
+        import numpy as np
+        from PIL import Image, ImageFilter, ImageOps
+    except ImportError:  # pragma: no cover - dépendances transitives
+        return
+
+    def en_png(image) -> bytes:
+        tampon = io.BytesIO()
+        image.save(tampon, "PNG")
+        return tampon.getvalue()
+
+    try:
+        couleur = Image.open(io.BytesIO(png)).convert("RGB")
+    except Exception:  # noqa: BLE001 - une image que Pillow ne lit pas : on s'arrête là
+        return
+    gris = couleur.convert("L")
+    # L'encre est sombre sur les trois canaux ; un fond de couleur, un
+    # guilloché bleu ou orange ne l'est pas sur tous.
+    sombre = np.asarray(couleur).max(axis=2)
+    for seuil in (150, 110):
+        yield en_png(Image.fromarray(np.where(sombre < seuil, 0, 255).astype(np.uint8))), False
+    # Un fond tramé ou guilloché : lisser le motif avant de seuiller.
+    yield en_png(ImageOps.autocontrast(gris.filter(ImageFilter.MedianFilter(5)), cutoff=2)), True
+    yield en_png(ImageOps.autocontrast(gris.filter(ImageFilter.GaussianBlur(2)), cutoff=1)), True
+
+
+def _lire(png: bytes, adaptatif: bool) -> _Lecture:
     # PSM 1 (orientation détectée) a besoin du modèle « osd » ; s'il manque,
     # on retombe sur la segmentation automatique simple.
     for psm in (1, 3):
         try:
             sortie = subprocess.run(
-                _arguments(psm, adaptatif),
+                [*_arguments(psm, adaptatif), "-c", "tessedit_create_tsv=1"],
                 input=png,
                 capture_output=True,
                 timeout=DELAI_PAR_PAGE,
@@ -132,10 +206,42 @@ def _lire(png: bytes, adaptatif: bool) -> str:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("OCR impossible : %s", exc)
-            return ""
+            return _VIDE
         if sortie.returncode == 0:
-            return sortie.stdout.decode("utf-8", errors="replace")
+            return _depuis_tsv(sortie.stdout.decode("utf-8", errors="replace"))
         logger.info(
             "Tesseract (psm %s) a échoué : %s", psm, sortie.stderr.decode("utf-8", "replace")[:300]
         )
-    return ""
+    return _VIDE
+
+
+def _depuis_tsv(tsv: str) -> _Lecture:
+    """Le texte, ligne par ligne et paragraphe par paragraphe, et sa part sûre."""
+    lignes: list[str] = []
+    courante: list[str] = []
+    cle_ligne = cle_paragraphe = None
+    sures = 0
+    for brut in tsv.splitlines()[1:]:
+        champs = brut.split("\t")
+        if len(champs) != 12 or not champs[11].strip():
+            continue
+        mot = champs[11].strip()
+        paragraphe = (champs[2], champs[3])
+        ligne = (*paragraphe, champs[4])
+        if ligne != cle_ligne:
+            if courante:
+                lignes.append(" ".join(courante))
+            if cle_paragraphe is not None and paragraphe != cle_paragraphe:
+                lignes.append("")
+            courante, cle_ligne, cle_paragraphe = [], ligne, paragraphe
+        courante.append(mot)
+        try:
+            confiance = float(champs[10])
+        except ValueError:
+            confiance = 0.0
+        if confiance >= _CONFIANCE_SURE and _lettres(mot) >= 2:
+            sures += _lettres(mot)
+    if courante:
+        lignes.append(" ".join(courante))
+    texte = "\n".join(lignes)
+    return _Lecture(texte, sures, _lettres(texte))

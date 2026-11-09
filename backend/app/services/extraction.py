@@ -206,7 +206,9 @@ def _rendre(page) -> bytes:
     import fitz
 
     matrice = fitz.Matrix(ocr.RESOLUTION / 72, ocr.RESOLUTION / 72)
-    return page.get_pixmap(matrix=matrice, colorspace=fitz.csGRAY).tobytes("png")
+    # En couleur : un guilloché bleu ou un papier orange se distingue de
+    # l'encre noire par sa couleur, que le gris effaçait.
+    return page.get_pixmap(matrix=matrice, colorspace=fitz.csRGB).tobytes("png")
 
 
 def _extract_pdf(data: bytes) -> ExtractedDocument:

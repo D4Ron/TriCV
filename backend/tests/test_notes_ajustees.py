@@ -354,3 +354,102 @@ def test_une_fin_dans_l_annee_en_cours_ne_prouve_pas_que_le_poste_a_cesse():
     dossier, _ = lecture_locale.fusionner(locale, ia, date(2026, 11, 4))
 
     assert dossier.experiences[0].fin is None
+
+
+# --- une correction contredit le motif qu'elle dément -------------------------
+
+
+async def exiger_dix_ans(identifiant: str) -> None:
+    async with SessionLocal() as db:
+        candidature = await charger_candidature(db, identifiant)
+        candidature.poste.annees_experience_min = 10
+        await evaluer_candidature(db, candidature)
+        await db.commit()
+
+
+def motif(corps, code):
+    return next(e for e in corps["eliminations"] if e["motif"] == code)
+
+
+async def test_une_ligne_corrigee_leve_le_motif_qu_elle_dement_et_le_rend_si_on_la_retire(client, auth):
+    async with SessionLocal() as db:
+        identifiant = await monter(db)
+    await exiger_dix_ans(identifiant)
+    url = f"{API}/candidatures/{identifiant}/lignes/EXPERIENCE_GENERALE"
+    avant = (await client.get(f"{API}/candidatures/{identifiant}", headers=auth)).json()
+    assert motif(avant, "EXPERIENCE_INSUFFISANTE")["leve_le"] is None
+
+    corps = (await client.patch(url, json={"points": 3, "motif": "Deux emplois oubliés par la lecture"}, headers=auth)).json()
+
+    leve = motif(corps, "EXPERIENCE_INSUFFISANTE")
+    assert leve["leve_le"] is not None
+    assert "Deux emplois oubliés" in leve["leve_motif"]
+
+    rendu = (await client.patch(url, json={"points": None}, headers=auth)).json()
+    assert motif(rendu, "EXPERIENCE_INSUFFISANTE")["leve_le"] is None
+
+
+async def test_une_correction_a_zero_ne_leve_rien(client, auth):
+    async with SessionLocal() as db:
+        identifiant = await monter(db)
+    await exiger_dix_ans(identifiant)
+
+    corps = (
+        await client.patch(
+            f"{API}/candidatures/{identifiant}/lignes/EXPERIENCE_GENERALE",
+            json={"points": 0, "motif": "Confirmé"}, headers=auth,
+        )
+    ).json()
+
+    assert motif(corps, "EXPERIENCE_INSUFFISANTE")["leve_le"] is None
+
+
+async def test_une_levee_faite_a_la_main_survit_au_retrait_d_une_correction(client, auth):
+    async with SessionLocal() as db:
+        identifiant = await monter(db)
+    await exiger_dix_ans(identifiant)
+    leve = await client.post(
+        f"{API}/candidatures/{identifiant}/eliminations/EXPERIENCE_INSUFFISANTE/lever",
+        json={"motif": "Équivalence accordée par le client"}, headers=auth,
+    )
+    assert leve.status_code == 200, leve.text
+    url = f"{API}/candidatures/{identifiant}/lignes/EXPERIENCE_GENERALE"
+    await client.patch(url, json={"points": 3, "motif": "Vérifié"}, headers=auth)
+
+    corps = (await client.patch(url, json={"points": None}, headers=auth)).json()
+
+    garde = motif(corps, "EXPERIENCE_INSUFFISANTE")
+    assert garde["leve_le"] is not None
+    assert garde["leve_motif"] == "Équivalence accordée par le client"
+
+
+async def test_la_synthese_suit_la_correction_au_lieu_de_la_contredire(client, auth):
+    async with SessionLocal() as db:
+        identifiant = await monter(db)
+    avant = (await client.get(f"{API}/candidatures/{identifiant}", headers=auth)).json()
+    assert "Bac+5" in avant["synthese"]["profil"]
+
+    corps = (
+        await client.patch(
+            f"{API}/candidatures/{identifiant}/lignes/FORMATION",
+            json={"points": 0, "motif": "Master en cours, mémoire non soutenu"}, headers=auth,
+        )
+    ).json()
+
+    assert "Bac+5" not in corps["synthese"]["profil"]
+    assert "formation revue par un relecteur" in corps["synthese"]["profil"]
+    assert corps["synthese"]["notes"][0] == "Note corrigée — formation : 0 pt (Master en cours, mémoire non soutenu)"
+
+
+def test_un_diplome_que_le_cv_dit_en_cours_n_est_pas_compte():
+    cv = (
+        "FORMATION\n"
+        "Master Professionnel – Génie mécanique | 2024 — 2026 | Mémoire en cours | École fictive\n"
+        "Licence Professionnelle – Génie mécanique | 2021 — 2024 | École fictive\n"
+        "Parcours MBA (Sécurité et environnement)\n"
+        "EXPÉRIENCE PROFESSIONNELLE\n2015 - 2020 : Chef de quai, Port Sec\n"
+    )
+
+    lus = lecture_locale.lire(cv, []).diplomes
+
+    assert [(d.niveau, d.annee) for d in lus] == [(3, 2024)]

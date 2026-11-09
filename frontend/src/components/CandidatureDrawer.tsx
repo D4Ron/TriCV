@@ -719,6 +719,9 @@ export default function CandidatureDrawer({
   const rafraichir = () => {
     void queryClient.invalidateQueries({ queryKey: ['candidature', candidatureId] })
     void queryClient.invalidateQueries({ queryKey: ['grille', posteId] })
+    // La liste du poste affiche la note : sans cela, elle gardait l'ancienne
+    // jusqu'au rechargement de la page.
+    void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
   }
 
   const lever = useMutation({

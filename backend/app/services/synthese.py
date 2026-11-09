@@ -102,7 +102,15 @@ def _lisible(valeur: str) -> bool:
     return bool(valeur) and "non précisé" not in valeur
 
 
-def _phrase_profil(profil: ProfilCandidat, specifiques: list[tuple[str, int]], reference: date) -> str:
+def _phrase_profil(
+    profil: ProfilCandidat,
+    specifiques: list[tuple[str, int]],
+    reference: date,
+    corrigees: frozenset[str] = frozenset(),
+) -> str:
+    """La phrase « En bref ». Ce qu'un relecteur a corrigé dans la note n'y
+    est pas répété d'après la lecture : « Bac+5 » à côté d'une formation
+    corrigée à 0 dirait le contraire de la note."""
     morceaux: list[str] = []
     champs = _champs(profil, reference)
     recente = _plus_recente(profil)
@@ -112,12 +120,19 @@ def _phrase_profil(profil: ProfilCandidat, specifiques: list[tuple[str, int]], r
         morceaux.append(f"Profil de {recente.poste}")
 
     principal = profil.diplome_principal
-    if principal is not None:
+    if "FORMATION" in corrigees:
+        morceaux.append("formation revue par un relecteur")
+    elif principal is not None:
         niveau = "Bac" if not principal.niveau else f"Bac+{int(principal.niveau)}"
         titre = principal.intitule.strip()
         morceaux.append(f"{niveau} ({titre})" if titre else niveau)
 
     total = profil.mois_experience(reference)
+    if "EXPERIENCE_GENERALE" in corrigees:
+        morceaux.append("expérience revue par un relecteur")
+        total = 0
+    if any(c.startswith("EXPERIENCE_SPECIFIQUE") for c in corrigees):
+        specifiques = []
     if total:
         experience = (
             f"plus de {duree_en_lettres(total)} d'expérience"
@@ -139,8 +154,29 @@ def _phrase_profil(profil: ProfilCandidat, specifiques: list[tuple[str, int]], r
     return phrase
 
 
+_LIBELLES_DES_LIGNES = {
+    "CONSISTANCE": "consistance",
+    "FORMATION": "formation",
+    "EXPERIENCE_GENERALE": "expérience générale",
+    "EXPERIENCE_SPECIFIQUE": "expérience spécifique",
+}
+
+
+def _corrections(candidature: Candidature) -> list[str]:
+    """« Note corrigée — formation : 0 pt (master en cours) », pour chaque ligne revue."""
+    phrases = []
+    for code, ajustement in (candidature.ajustements_note or {}).items():
+        libelle = _LIBELLES_DES_LIGNES.get(code, code.replace("_", " ").lower())
+        points = ajustement.get("points")
+        valeur = f"{points:g} pt" + ("s" if points and points > 1 else "") if points is not None else ""
+        motif = str(ajustement.get("motif") or "").strip()
+        phrase = f"Note corrigée — {libelle} : {valeur}"
+        phrases.append(f"{phrase} ({motif})" if motif else phrase)
+    return phrases
+
+
 def _notes(profil: ProfilCandidat, candidature: Candidature) -> list[str]:
-    notes: list[str] = []
+    notes: list[str] = _corrections(candidature)
     for diplome in profil.diplomes:
         intitule = f" {diplome.intitule.lower()} "
         etablissement = f" {(diplome.etablissement or '').lower()} "
@@ -173,7 +209,10 @@ def _notes(profil: ProfilCandidat, candidature: Candidature) -> list[str]:
     pays = sorted({e.pays for e in profil.experiences if e.pays and e.pays.casefold() not in _LOCAUX})
     if pays:
         notes.append("Expérience hors du Togo : " + ", ".join(pays[:3]))
-    return list(dict.fromkeys(notes))[:_MAX_NOTES]
+    # Les corrections passent avant tout : elles ne se tronquent pas.
+    corrections = _corrections(candidature)
+    reste = [n for n in dict.fromkeys(notes) if n not in corrections]
+    return corrections + reste[: max(_MAX_NOTES - len(corrections), 0)]
 
 
 def _trous(profil: ProfilCandidat, reference: date) -> list[str]:
@@ -265,8 +304,9 @@ def rediger(candidature: Candidature, reference: date | None = None) -> Synthese
             if e.domaines
         ]
         domaines = sorted({d for e in exigences.specifiques for d in e.domaines})
+    corrigees = frozenset((candidature.ajustements_note or {}).keys())
     return Synthese(
-        profil=_phrase_profil(profil, specifiques, reference),
+        profil=_phrase_profil(profil, specifiques, reference, corrigees),
         notes=_notes(profil, candidature),
         a_verifier=_a_verifier(profil, candidature, reference),
         domaines_specifiques=domaines,
