@@ -63,6 +63,7 @@ from app.schemas.recrutement import (
 )
 from app.services import (
     lots,
+    confiance,
     audit,
     decoupage,
     extraction,
@@ -80,6 +81,7 @@ from app.services import (
     uploads,
 )
 from app.services.preselection import (
+    _CHARGEMENT_COMPLET,
     charger_candidature,
     construire_bareme,
     evaluer_candidature,
@@ -534,6 +536,84 @@ async def depot_multiple(
         "doublons": sum(1 for r in acceptes if r["doublons"]),
         "resultats": resultats,
     }
+
+
+@router.get("/postes/{poste_id}/confiance")
+async def confiance_du_poste(poste_id: str, db: DbSession, _: CurrentUser) -> dict:
+    """La voie de chaque dossier : à relire, une question, sûr, ou déjà fait.
+
+    Les RH ne voient d'abord que ce que la plateforme n'a pas su trancher seule.
+    """
+    await get_poste_or_404(db, poste_id)
+    resultat = await db.execute(
+        select(Candidature)
+        .where(Candidature.poste_id == poste_id)
+        .options(*_CHARGEMENT_COMPLET)
+    )
+    dossiers: dict[str, dict] = {}
+    comptes = {
+        confiance.RELIRE: 0, confiance.QUESTION: 0, confiance.SUR: 0, confiance.ECARTE: 0, confiance.FAIT: 0,
+    }
+    for candidature in resultat.scalars().all():
+        avis = confiance.evaluer(candidature)
+        comptes[avis.voie] += 1
+        dossiers[candidature.id] = {
+            "voie": avis.voie,
+            "controle": avis.controle,
+            "signaux": [{"code": s.code, "gravite": s.gravite, "texte": s.texte} for s in avis.signaux],
+        }
+    return {"comptes": comptes, "dossiers": dossiers}
+
+
+@router.post("/postes/{poste_id}/confiance/confirmer")
+async def confirmer_les_dossiers_surs(
+    poste_id: str,
+    db: DbSession,
+    user: CurrentUser,
+    voie: str = Query(default="SUR", pattern="^(SUR|ECARTE)$"),
+) -> dict:
+    """Confirme d'un coup les données des dossiers que rien ne signale.
+
+    `voie=ECARTE` confirme de même les dossiers que seul un motif net écarte :
+    leurs motifs deviennent opposables, ce qui les élimine. C'est le geste des
+    RH, dit en toutes lettres à l'écran, jamais celui de la plateforme seule.
+
+    La voie est recalculée ici, au moment de confirmer : un dossier qu'un signe
+    a fait passer en question entre-temps n'est pas emporté avec les autres. Un
+    dossier tiré pour contrôle n'est pas « sûr » et reste à regarder.
+    """
+    await get_poste_or_404(db, poste_id)
+    resultat = await db.execute(
+        select(Candidature)
+        .where(Candidature.poste_id == poste_id)
+        .options(*_CHARGEMENT_COMPLET)
+    )
+    confirmes: list[str] = []
+    maintenant = utcnow()
+    for candidature in resultat.scalars().all():
+        if confiance.evaluer(candidature).voie != voie:
+            continue
+        candidat = candidature.candidat
+        if candidat.provenance is Provenance.EXTRAIT_IA:
+            candidat.provenance = Provenance.VERIFIE_RH
+        for ligne in [*candidat.diplomes, *candidat.experiences]:
+            if ligne.provenance is Provenance.EXTRAIT_IA:
+                ligne.provenance = Provenance.VERIFIE_RH
+        candidat.verifie_le = maintenant
+        candidat.verifie_par_id = user.id
+        await db.flush()
+        await evaluer_candidature(db, candidature)
+        confirmes.append(candidature.id)
+    await audit.record(
+        db,
+        action="poste.confirmer_dossiers_surs",
+        entity_type="poste",
+        entity_id=poste_id,
+        user_id=user.id,
+        details={"confirmes": len(confirmes), "voie": voie},
+    )
+    await db.commit()
+    return {"confirmes": len(confirmes), "voie": voie}
 
 
 @router.get("/postes/{poste_id}/candidatures", response_model=CandidaturesPage)

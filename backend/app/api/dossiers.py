@@ -265,6 +265,114 @@ async def archive_des_dossiers(
     )
 
 
+# --- un seul PDF à imprimer -------------------------------------------------
+
+
+class ImpressionDossiers(SelectionDossiers):
+    avec_pieces: bool = True
+    recto_verso: bool = True
+
+
+@router.post("/postes/{poste_id}/dossiers.pdf")
+async def dossiers_a_imprimer(
+    poste_id: str, payload: ImpressionDossiers, db: DbSession, user: CurrentUser
+) -> FileResponse:
+    """Tous les dossiers choisis en un PDF, dans l'ordre du classement.
+
+    Une fiche par candidat (note ligne par ligne, synthèse, points à vérifier),
+    puis ses pièces telles que reçues ; un sommaire en tête et un pied de page
+    sur chaque feuille. Voir `services.impression`.
+    """
+    from app.services import confiance, impression, synthese
+    from app.services.preselection import charger_candidature
+
+    poste = await get_poste_or_404(db, poste_id)
+    demandes = list(dict.fromkeys(payload.candidature_ids))
+    chargees = [await charger_candidature(db, i) for i in demandes]
+    if any(c is None or c.poste_id != poste_id for c in chargees):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Certains dossiers demandés n'appartiennent pas à ce poste.",
+        )
+    chargees.sort(
+        key=lambda c: (
+            -(float(c.notation.note_retenue) if c.notation is not None else -1),
+            c.candidat.nom.lower(),
+            (c.candidat.prenom or "").lower(),
+        )
+    )
+
+    depot = storage.get_storage()
+    dossiers: list[impression.DossierAImprimer] = []
+    for rang, candidature in enumerate(chargees, start=1):
+        candidat = candidature.candidat
+        resume = synthese.rediger(candidature)
+        avis = confiance.evaluer(candidature)
+        pieces = []
+        for piece in candidature.pieces:
+            donnees = None
+            if piece.chemin_stockage and piece.purge_le is None:
+                try:
+                    donnees = await depot.read(piece.chemin_stockage)
+                except (FileNotFoundError, OSError):
+                    donnees = None
+            pieces.append(
+                impression.PieceAImprimer(
+                    nom=piece.nom_fichier or piece.type_piece,
+                    type_piece=piece.type_piece,
+                    type_mime=piece.type_mime or "",
+                    donnees=donnees,
+                    texte=piece.texte_extrait or "",
+                )
+            )
+        notation = candidature.notation
+        lignes = [
+            (
+                f"{l.libelle}",
+                f"{float(l.points):g}/{float(l.points_max):g}",
+                f"{l.ajustement_motif} (le calcul donnait {float(l.points_calcules):g})"
+                if l.points_calcules is not None
+                else "",
+            )
+            for l in (notation.lignes if notation is not None else [])
+        ]
+        dossiers.append(
+            impression.DossierAImprimer(
+                rang=rang,
+                nom=f"{candidat.nom.upper()} {candidat.prenom or ''}".strip(),
+                note=f"{_note(candidature)}/{float(notation.total_max):g}" if notation is not None else "—",
+                statut=LIBELLES_STATUT.get(candidature.statut, str(candidature.statut)),
+                lignes=lignes,
+                profil=resume.profil,
+                notes=resume.notes,
+                a_verifier=list(dict.fromkeys([*(s.texte for s in avis.signaux), *resume.a_verifier]))[:10],
+                pieces=pieces,
+            )
+        )
+
+    contenu = impression.composer(
+        dossiers, poste.intitule, avec_pieces=payload.avec_pieces, recto_verso=payload.recto_verso
+    )
+    descripteur, chemin = tempfile.mkstemp(prefix="tricv-impression-", suffix=".pdf")
+    with os.fdopen(descripteur, "wb") as fichier:
+        fichier.write(contenu)
+
+    await audit.record(
+        db,
+        action="poste.imprimer_dossiers",
+        entity_type="poste",
+        entity_id=poste.id,
+        user_id=user.id,
+        details={"dossiers": len(dossiers), "avec_pieces": payload.avec_pieces},
+    )
+    await db.commit()
+
+    nom = _nom_sur(f"Dossiers à imprimer - {poste.intitule} - {utcnow():%Y-%m-%d}", 120) + ".pdf"
+    return FileResponse(
+        chemin, media_type="application/pdf", filename=nom, background=BackgroundTask(os.unlink, chemin)
+    )
+
+
 # --- les dossiers sans poste ------------------------------------------------
 
 

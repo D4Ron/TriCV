@@ -722,6 +722,8 @@ export default function CandidatureDrawer({
     // La liste du poste affiche la note : sans cela, elle gardait l'ancienne
     // jusqu'au rechargement de la page.
     void queryClient.invalidateQueries({ queryKey: ['candidatures', posteId] })
+    // Une correction peut faire changer le dossier de voie.
+    void queryClient.invalidateQueries({ queryKey: ['confiance', posteId] })
   }
 
   const lever = useMutation({

@@ -1247,19 +1247,45 @@ export interface PosteActif {
   client: string
 }
 
+/** Ce que la plateforme n'a pas su trancher seule, dossier par dossier. */
+export type VoieConfiance = 'RELIRE' | 'QUESTION' | 'SUR' | 'ECARTE' | 'FAIT'
+export interface SignalConfiance {
+  code: string
+  gravite: 'RELIRE' | 'QUESTION' | 'DECISION'
+  texte: string
+}
+export interface ConfianceDuPoste {
+  comptes: Record<VoieConfiance, number>
+  dossiers: Record<string, { voie: VoieConfiance; controle: boolean; signaux: SignalConfiance[] }>
+}
+
+export const confianceApi = {
+  duPoste: (posteId: string) => request<ConfianceDuPoste>(`/postes/${posteId}/confiance`),
+  /** Confirme d'un coup une voie : les dossiers sûrs, ou les écartés nets. */
+  confirmerVoie: (posteId: string, voie: 'SUR' | 'ECARTE') =>
+    request<{ confirmes: number }>(`/postes/${posteId}/confiance/confirmer?voie=${voie}`, {
+      method: 'POST',
+    }),
+}
+
 export const dossiersApi = {
   duPoste: (posteId: string, portee: PorteeEnvoi) =>
     request<LigneDossier[]>(`/postes/${posteId}/dossiers?portee=${portee}`),
   /** Une archive : le jeton ne passe pas dans un lien, on la récupère puis
    *  on la remet au navigateur. */
-  telechargerArchive: async (posteId: string, ids: string[]): Promise<void> => {
-    const response = await fetch(`${BASE}/postes/${posteId}/dossiers.zip`, {
+  telechargerArchive: async (
+    posteId: string,
+    ids: string[],
+    impression?: { avec_pieces: boolean; recto_verso: boolean },
+  ): Promise<void> => {
+    // Le même geste rend une archive ZIP, ou un seul PDF prêt à imprimer.
+    const response = await fetch(`${BASE}/postes/${posteId}/dossiers.${impression ? 'pdf' : 'zip'}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${useAuthStore.getState().accessToken ?? ''}`,
       },
-      body: JSON.stringify({ candidature_ids: ids }),
+      body: JSON.stringify({ candidature_ids: ids, ...(impression ?? {}) }),
     })
     if (!response.ok) {
       const corps = await response.json().catch(() => null)
@@ -1272,7 +1298,7 @@ export const dossiersApi = {
     const etoile = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
     const nom = etoile
       ? decodeURIComponent(etoile)
-      : (/filename="?([^";]+)"?/.exec(disposition)?.[1] ?? 'dossiers.zip')
+      : (/filename="?([^";]+)"?/.exec(disposition)?.[1] ?? (impression ? 'dossiers.pdf' : 'dossiers.zip'))
     const url = URL.createObjectURL(await response.blob())
     const lien = document.createElement('a')
     lien.href = url

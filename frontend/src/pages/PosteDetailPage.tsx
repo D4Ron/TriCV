@@ -22,6 +22,7 @@ import { PUBLIC_URL } from '@/lib/config'
 import EnvoyerAuxCandidats from '@/components/EnvoyerAuxCandidats'
 import ChoisirDestinataires from '@/components/ChoisirDestinataires'
 import TelechargerDossiers from '@/components/TelechargerDossiers'
+import VoiesDeRelecture from '@/components/VoiesDeRelecture'
 import { resumeFusion, resumeRelectureNoms, useInterfaceClassique } from '@/lib/interface'
 import ChoisirExportGrille from '@/components/ChoisirExportGrille'
 import FichePosteEditeur from '@/components/FichePosteEditeur'
@@ -1645,10 +1646,10 @@ export default function PosteDetailPage() {
             type="button"
             className="btn-ghost"
             disabled={g.nombre_candidatures === 0}
-            title="Les fichiers reçus, un dossier par candidat, en une archive ZIP — pour imprimer ou copier sur une clé USB."
+            title="Un seul PDF prêt à imprimer, dans l'ordre du classement — ou les fichiers reçus en une archive ZIP."
             onClick={() => setDossiersOuverts(true)}
           >
-            Télécharger les dossiers
+            Imprimer ou télécharger les dossiers
           </button>
           <button
             type="button"
@@ -1699,7 +1700,7 @@ export default function PosteDetailPage() {
                     ['Modifier la fiche', () => setFicheOuverte(true), false],
                     ["Grille d'entretien", () => setGrilleOuverte(true), false],
                     [
-                      'Télécharger les dossiers (ZIP)',
+                      'Imprimer ou télécharger les dossiers',
                       () => setDossiersOuverts(true),
                       g.nombre_candidatures === 0,
                     ],
@@ -2081,41 +2082,12 @@ export default function PosteDetailPage() {
                   relecteur ne les a pas confirmées, aucun motif ne peut les éliminer.
                 </Callout>
               </div>
-              {aVerifier.data?.items.length === 0 ? (
-                <EmptyState title="Rien à vérifier" hint="Tous les dossiers ont été relus." />
-              ) : (
-                <div className="card divide-y divide-ink-100">
-                  {aVerifier.data?.items.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => setSelection(item.id)}
-                      className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-ink-50"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-ink-900">
-                          {item.nom.toUpperCase()} {item.prenom}
-                        </p>
-                        <p className="truncate text-xs text-ink-500">
-                          {classique
-                            ? `${item.motifs.length} motif(s) en attente de confirmation`
-                            : item.motifs.length > 0
-                              ? `À relire · ${item.motifs.length} motif(s) d'élimination à confirmer`
-                              : 'À relire — rien ne l’écarte pour l’instant'}
-                          {item.doublons > 0 && (
-                            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800">
-                              {item.doublons} doublon(s)
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                      <span className="text-sm font-semibold tabular-nums text-ink-700">
-                        {item.note ?? '—'}
-                        <span className="text-ink-400">/{item.total_max ?? ''}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
+              {aVerifier.data && (
+                <VoiesDeRelecture
+                  posteId={posteId}
+                  items={aVerifier.data.items}
+                  onOuvrir={(id) => setSelection(id)}
+                />
               )}
             </div>
           )}

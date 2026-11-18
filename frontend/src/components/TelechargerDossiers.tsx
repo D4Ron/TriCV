@@ -31,6 +31,10 @@ export default function TelechargerDossiers({
 }) {
   const [portee, setPortee] = useState<PorteeEnvoi>('preselectionnes')
   const [coches, setCoches] = useState<Set<string>>(new Set())
+  // Un seul PDF, prêt pour l'imprimante : fiche, pièces, sommaire, pied de page.
+  const [format, setFormat] = useState<'pdf' | 'zip'>('pdf')
+  const [avecPieces, setAvecPieces] = useState(true)
+  const [rectoVerso, setRectoVerso] = useState(true)
 
   const liste = useQuery({
     queryKey: ['dossiers', posteId, portee],
@@ -48,9 +52,14 @@ export default function TelechargerDossiers({
       dossiersApi.telechargerArchive(
         posteId,
         (liste.data ?? []).filter((l) => coches.has(l.candidature_id)).map((l) => l.candidature_id),
+        format === 'pdf' ? { avec_pieces: avecPieces, recto_verso: rectoVerso } : undefined,
       ),
     onSuccess: () => {
-      onTelecharge(`${coches.size} dossier(s) téléchargé(s) dans une archive ZIP.`)
+      onTelecharge(
+        format === 'pdf'
+          ? `${coches.size} dossier(s) dans un PDF à imprimer, dans l'ordre du classement.`
+          : `${coches.size} dossier(s) téléchargé(s) dans une archive ZIP.`,
+      )
       onClose()
     },
   })
@@ -60,11 +69,52 @@ export default function TelechargerDossiers({
   const toutCoche = lignes.length > 0 && lignes.every((l) => coches.has(l.candidature_id))
 
   return (
-    <Modal open title="Télécharger des dossiers" onClose={onClose}>
-      <p className="text-sm text-ink-600">
-        Une archive ZIP : un dossier par candidat, avec les fichiers tels qu&apos;ils ont été
-        reçus, et un sommaire à ouvrir dans Excel. Pour imprimer ou copier sur une clé USB.
-      </p>
+    <Modal open title="Télécharger ou imprimer des dossiers" onClose={onClose}>
+      <div className="flex gap-1.5">
+        {(
+          [
+            ['pdf', 'Un PDF à imprimer'],
+            ['zip', 'Archive ZIP'],
+          ] as const
+        ).map(([cle, libelle]) => (
+          <button
+            key={cle}
+            type="button"
+            aria-pressed={format === cle}
+            onClick={() => setFormat(cle)}
+            className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+              format === cle
+                ? 'border-brand-400 bg-brand-50 text-brand-800'
+                : 'border-ink-200 text-ink-600 hover:border-ink-300'
+            }`}
+          >
+            {libelle}
+          </button>
+        ))}
+      </div>
+      {format === 'pdf' ? (
+        <div className="mt-2 space-y-1.5">
+          <p className="text-sm text-ink-600">
+            Un seul fichier, dans l&apos;ordre du classement : un sommaire, puis pour chaque
+            candidat une fiche (note, synthèse, points à vérifier) suivie de ses pièces. Chaque
+            page porte le rang et le nom du candidat. Les pièces d&apos;identité ne sont pas
+            imprimées.
+          </p>
+          <label className="flex items-center gap-2 text-sm text-ink-700">
+            <input type="checkbox" checked={avecPieces} onChange={() => setAvecPieces((v) => !v)} />
+            Joindre les pièces (sinon, les fiches seules — pour un comité)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-ink-700">
+            <input type="checkbox" checked={rectoVerso} onChange={() => setRectoVerso((v) => !v)} />
+            Recto-verso : chaque dossier commence sur une nouvelle feuille
+          </label>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-ink-600">
+          Une archive ZIP : un dossier par candidat, avec les fichiers tels qu&apos;ils ont été
+          reçus, et un sommaire à ouvrir dans Excel. Pour copier sur une clé USB.
+        </p>
+      )}
 
       <div className="mt-4 flex flex-wrap gap-1.5">
         {PORTEES.map((p) => (
@@ -161,7 +211,8 @@ export default function TelechargerDossiers({
           onClick={() => telecharger.mutate()}
         >
           {telecharger.isPending && <Spinner />}
-          Télécharger {coches.size > 0 ? `${coches.size} dossier(s)` : ''}
+          {format === 'pdf' ? 'Préparer le PDF' : 'Télécharger'}{' '}
+          {coches.size > 0 ? `${coches.size} dossier(s)` : ''}
         </button>
       </div>
     </Modal>
